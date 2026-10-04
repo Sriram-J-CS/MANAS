@@ -1,12 +1,40 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 interface InkCanvasProps {
   brand: string;
-  textures?: Array<[string, string, string]>;
 }
+
+interface StrokePoint {
+  x: number;
+  y: number;
+  radius: number;
+  life: number; // 1.0 down to 0.0
+  decay: number;
+}
+
+interface SatelliteDroplet {
+  x: number;
+  y: number;
+  radius: number;
+  life: number;
+  decay: number;
+}
+
+const TEXTURES = [
+  { id: 'foil_violet', label: 'PURPLE FOIL', url: '/assets/textures/foil_violet.jpg' },
+  { id: 'puffed_cushion', label: 'PUFFED CUSHION', url: '/assets/textures/puffed_cushion.jpg' },
+  { id: 'soap_foam', label: 'SOAP FOAM', url: '/assets/textures/soap_foam.jpg' },
+  { id: 'foil_pink', label: 'PINK FOIL', url: '/assets/textures/foil_pink.jpg' },
+];
 
 export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [activeTextureIndex, setActiveTextureIndex] = useState(0);
+
+  // Switch texture directly via UI button or click
+  const handleSwitchTexture = useCallback((idx: number) => {
+    setActiveTextureIndex(idx % TEXTURES.length);
+  }, []);
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -14,11 +42,11 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
 
-    // Off-screen canvas for smooth black liquid trail
+    // Off-screen canvas for rendering crisp black liquid ink trail
     const trail = document.createElement('canvas');
     const tctx = trail.getContext('2d');
 
-    // Off-screen canvas for 3D metallic foil balloon texture
+    // Off-screen canvas for 3D tactile material
     const tex = document.createElement('canvas');
     const xctx = tex.getContext('2d');
     if (!tctx || !xctx) return;
@@ -29,32 +57,29 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     let dpr = 1;
     let animId: number;
 
-    const mouse = {
+    // Active strokes & satellite droplets
+    const points: StrokePoint[] = [];
+    const droplets: SatelliteDroplet[] = [];
+
+    // Pointer state with smooth velocity easing
+    const pointer = {
       x: -999,
       y: -999,
+      prevX: -999,
+      prevY: -999,
       easedX: -999,
       easedY: -999,
-      px: -999,
-      py: -999,
-      lastMove: 0,
-      isTouch: false,
+      isDown: false,
+      lastMoveTime: 0,
     };
 
-    let texIdx = 0;
-    let lastSwap = 0;
-
-    // Load authentic 3D metallic foil balloon textures (matching reference image)
-    const foilTextures: HTMLImageElement[] = [];
-    const textureUrls = [
-      '/assets/textures/foil_pink.jpg',
-      '/assets/textures/foil_violet.jpg',
-    ];
-
-    textureUrls.forEach((url) => {
+    // Preload textures
+    const loadedImages: (HTMLImageElement | null)[] = [null, null, null, null];
+    TEXTURES.forEach((texMeta, i) => {
       const img = new Image();
-      img.src = url;
+      img.src = texMeta.url;
       img.onload = () => {
-        foilTextures.push(img);
+        loadedImages[i] = img;
       };
     });
 
@@ -78,32 +103,85 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       tctx.scale(dpr, dpr);
       xctx.scale(dpr, dpr);
 
-      // Giant wordmark: about 23vw, centered in viewport
+      // Giant wordmark: ~23vw, centered in viewport
       fs = Math.min(W * 0.23, H * 0.38);
-
-      // If initial mouse is unset, place at starting orbit point
-      if (mouse.px < -900) {
-        const radiusX = Math.min(W * 0.28, 420);
-        mouse.px = W / 2 + radiusX;
-        mouse.py = H / 2;
-        mouse.easedX = mouse.px;
-        mouse.easedY = mouse.py;
-      }
     };
 
     size();
     window.addEventListener('resize', size);
 
-    const onPointerMove = (e: PointerEvent) => {
-      mouse.x = e.clientX;
-      mouse.y = e.clientY;
-      mouse.lastMove = performance.now();
-      if (e.pointerType === 'touch') {
-        mouse.isTouch = true;
+    // Add ink point with speed-dependent dynamic width and subtle satellite droplets
+    const addInkPoint = (x: number, y: number, px: number, py: number) => {
+      const dist = Math.hypot(x - px, y - py);
+      if (dist < 1.0) return;
+
+      const speedFactor = Math.min(dist / 35, 1.0);
+      const baseRadius = Math.max(50, Math.min(W * 0.062, 95));
+      // Taper at higher velocities, pool when slow
+      const radius = baseRadius * (1.1 - speedFactor * 0.35);
+
+      // Interpolate intermediate steps for silky unbroken ribbon stroke
+      const steps = Math.max(1, Math.ceil(dist / 6));
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps;
+        const ix = px + (x - px) * t;
+        const iy = py + (y - py) * t;
+
+        points.push({
+          x: ix,
+          y: iy,
+          radius,
+          life: 1.0,
+          decay: 0.0075, // Smooth ~2.2s dissipation
+        });
+      }
+
+      // Organic satellite splatter droplets occasionally on quick flicks
+      if (dist > 18 && Math.random() < 0.28) {
+        const angle = Math.atan2(y - py, x - px) + (Math.random() - 0.5) * 1.6;
+        const offset = radius * (1.2 + Math.random() * 0.6);
+        droplets.push({
+          x: x + Math.cos(angle) * offset,
+          y: y + Math.sin(angle) * offset,
+          radius: Math.max(4, radius * (0.12 + Math.random() * 0.15)),
+          life: 1.0,
+          decay: 0.008,
+        });
       }
     };
 
+    const onPointerMove = (e: PointerEvent) => {
+      pointer.x = e.clientX;
+      pointer.y = e.clientY;
+      pointer.lastMoveTime = performance.now();
+
+      if (pointer.easedX < -900) {
+        pointer.easedX = pointer.x;
+        pointer.easedY = pointer.y;
+        pointer.prevX = pointer.x;
+        pointer.prevY = pointer.y;
+      }
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      pointer.isDown = true;
+      pointer.x = e.clientX;
+      pointer.y = e.clientY;
+      pointer.prevX = pointer.x;
+      pointer.prevY = pointer.y;
+      pointer.easedX = pointer.x;
+      pointer.easedY = pointer.y;
+      pointer.lastMoveTime = performance.now();
+      addInkPoint(pointer.x, pointer.y, pointer.x, pointer.y);
+    };
+
+    const onPointerUp = () => {
+      pointer.isDown = false;
+    };
+
     window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
 
     const drawWord = (c: CanvasRenderingContext2D, fill: string | CanvasGradient | CanvasPattern) => {
       c.save();
@@ -118,13 +196,11 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const frame = (now: number) => {
-      // Pause rendering when tab is hidden to save GPU & battery
       if (document.hidden) {
         animId = requestAnimationFrame(frame);
         return;
       }
 
-      // Respect prefers-reduced-motion
       if (prefersReducedMotion) {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, W, H);
@@ -132,84 +208,89 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         return;
       }
 
-      // 1. Gently fade previous trail so it melts away like real smooth ink
-      tctx.globalCompositeOperation = 'destination-out';
-      tctx.fillStyle = 'rgba(0, 0, 0, 0.034)';
-      tctx.fillRect(0, 0, W, H);
-      tctx.globalCompositeOperation = 'source-over';
+      // 1. Process pointer movement smoothly with easing
+      const timeSinceMove = now - pointer.lastMoveTime;
+      const isActivelyMoving = timeSinceMove < 350 && pointer.x > 0;
 
-      // 2. Determine position: Smooth circular/oval orbit when idle ("simply round that effects")
-      const isIdle = now - mouse.lastMove > 900 || mouse.x < 0;
+      if (isActivelyMoving) {
+        // Smooth easing factor
+        pointer.easedX += (pointer.x - pointer.easedX) * 0.32;
+        pointer.easedY += (pointer.y - pointer.easedY) * 0.32;
 
-      let curX: number;
-      let curY: number;
+        if (pointer.prevX > -900) {
+          addInkPoint(pointer.easedX, pointer.easedY, pointer.prevX, pointer.prevY);
+        }
 
-      if (isIdle) {
-        // Orbit smoothly in a clean round loop through the letters (as in reference image 2)
-        const t = now * 0.0011; // calm, graceful speed
-        const orbitRadiusX = Math.min(W * 0.28, 400);
-        const orbitRadiusY = Math.min(H * 0.24, 250);
-        curX = W / 2 + Math.cos(t) * orbitRadiusX;
-        curY = H / 2 + Math.sin(t) * orbitRadiusY;
-        mouse.easedX = curX;
-        mouse.easedY = curY;
+        pointer.prevX = pointer.easedX;
+        pointer.prevY = pointer.easedY;
       } else {
-        if (mouse.easedX < -900) {
-          mouse.easedX = mouse.x;
-          mouse.easedY = mouse.y;
-        } else {
-          // Subtle, calm cursor lag with smooth easing
-          mouse.easedX += (mouse.x - mouse.easedX) * 0.18;
-          mouse.easedY += (mouse.y - mouse.easedY) * 0.18;
+        pointer.prevX = -999;
+        pointer.prevY = -999;
+      }
+
+      // 2. Render crisp jet-black liquid ink trail with smooth shrinking falloff
+      tctx.clearRect(0, 0, W, H);
+
+      // Draw points with shrinking radius as life dissipates
+      if (points.length > 0 || droplets.length > 0) {
+        tctx.save();
+        tctx.fillStyle = '#000000';
+        tctx.strokeStyle = '#000000';
+        tctx.lineCap = 'round';
+        tctx.lineJoin = 'round';
+
+        // Draw main ink ribbon points
+        for (let i = points.length - 1; i >= 0; i--) {
+          const pt = points[i];
+          pt.life -= pt.decay;
+
+          if (pt.life <= 0) {
+            points.splice(i, 1);
+            continue;
+          }
+
+          // Smooth dissipation curve: stays full width for first 60% of life, then smoothly shrinks to zero
+          const shrinkFactor = pt.life > 0.4 ? 1.0 : Math.pow(pt.life / 0.4, 0.65);
+          const r = pt.radius * shrinkFactor;
+
+          if (r > 0.5) {
+            tctx.beginPath();
+            tctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+            tctx.fill();
+          }
         }
-        curX = mouse.easedX;
-        curY = mouse.easedY;
-      }
 
-      // 3. Draw smooth, continuous rounded liquid stroke (NO bumpy discrete circle clouds)
-      if (mouse.px > -900) {
-        const dist = Math.hypot(curX - mouse.px, curY - mouse.py);
-        if (dist > 0.5) {
-          const brushRadius = Math.max(46, Math.min(W * 0.052, 78));
+        // Draw satellite splatter droplets
+        for (let i = droplets.length - 1; i >= 0; i--) {
+          const drop = droplets[i];
+          drop.life -= drop.decay;
 
-          tctx.save();
-          tctx.strokeStyle = '#000000';
-          tctx.fillStyle = '#000000';
-          tctx.lineCap = 'round';
-          tctx.lineJoin = 'round';
-          tctx.lineWidth = brushRadius * 2;
+          if (drop.life <= 0) {
+            droplets.splice(i, 1);
+            continue;
+          }
 
-          tctx.beginPath();
-          tctx.moveTo(mouse.px, mouse.py);
-          tctx.lineTo(curX, curY);
-          tctx.stroke();
+          const shrinkFactor = drop.life > 0.4 ? 1.0 : Math.pow(drop.life / 0.4, 0.65);
+          const r = drop.radius * shrinkFactor;
 
-          // Ensure the cap is smoothly filled
-          tctx.beginPath();
-          tctx.arc(curX, curY, brushRadius, 0, Math.PI * 2);
-          tctx.fill();
-
-          tctx.restore();
+          if (r > 0.5) {
+            tctx.beginPath();
+            tctx.arc(drop.x, drop.y, r, 0, Math.PI * 2);
+            tctx.fill();
+          }
         }
+
+        tctx.restore();
       }
 
-      mouse.px = curX;
-      mouse.py = curY;
-
-      // Cycle between pink and violet 3D metallic foil balloon textures every ~4 seconds
-      if (foilTextures.length > 1 && now - lastSwap > 4000) {
-        texIdx = (texIdx + 1) % foilTextures.length;
-        lastSwap = now;
-      }
-
-      // 4. Render 3D Foil Balloon Texture clipped to Wordmark & Trail
+      // 3. Render 3D tactile material clipped inside the letters where the ink trail passes
       xctx.globalCompositeOperation = 'source-over';
       xctx.clearRect(0, 0, W, H);
 
-      const activeFoil = foilTextures[texIdx] || foilTextures[0];
-      if (activeFoil && activeFoil.complete && activeFoil.naturalWidth > 0) {
-        // Draw 3D foil image covering the canvas preserving aspect ratio
-        const imgRatio = activeFoil.naturalWidth / activeFoil.naturalHeight;
+      const activeImg = loadedImages[activeTextureIndex];
+      if (activeImg && activeImg.complete && activeImg.naturalWidth > 0) {
+        // Draw 3D texture covering canvas preserving aspect ratio
+        const imgRatio = activeImg.naturalWidth / activeImg.naturalHeight;
         const canvasRatio = W / H;
         let drawW = W;
         let drawH = H;
@@ -226,39 +307,39 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
           offsetX = (W - drawW) / 2;
         }
 
-        xctx.drawImage(activeFoil, offsetX, offsetY, drawW, drawH);
+        xctx.drawImage(activeImg, offsetX, offsetY, drawW, drawH);
       } else {
-        // High-gloss metallic gradient fallback if image is still loading
+        // High-gloss metallic purple fallback
         const g = xctx.createLinearGradient(0, H * 0.2, W, H * 0.8);
-        g.addColorStop(0, '#c0156d');
-        g.addColorStop(0.28, '#ff5ea8');
-        g.addColorStop(0.48, '#ffffff');
-        g.addColorStop(0.68, '#c0156d');
-        g.addColorStop(1, '#660534');
+        g.addColorStop(0, '#581c87');
+        g.addColorStop(0.3, '#9333ea');
+        g.addColorStop(0.5, '#ffffff');
+        g.addColorStop(0.7, '#7e22ce');
+        g.addColorStop(1, '#3b0764');
         xctx.fillStyle = g;
         xctx.fillRect(0, 0, W, H);
       }
 
-      // Mask 1: Clip foil texture strictly to the wordmark letters
+      // Clip 1: Strictly constrain 3D texture inside the letters
       xctx.globalCompositeOperation = 'destination-in';
       drawWord(xctx, '#000000');
 
-      // Mask 2: Clip foil texture strictly to where the liquid trail is
+      // Clip 2: Strictly constrain 3D texture to the active ink trail
       xctx.globalCompositeOperation = 'destination-in';
       xctx.drawImage(trail, 0, 0, W, H);
 
-      // 5. Compose Final Screen:
-      // A. Crisp pure white background
+      // 4. Final Canvas Composition:
+      // A. Pure white background (#ffffff)
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, W, H);
 
-      // B. Smooth continuous black liquid trail on white background
+      // B. Solid black ink trail on white background
       ctx.drawImage(trail, 0, 0, W, H);
 
-      // C. Base solid black wordmark for all unrevealed letter areas
+      // C. Base deep solid black wordmark for un-inked areas
       drawWord(ctx, '#000000');
 
-      // D. Revealed 3D metallic foil balloon material inside the letters!
+      // D. Revealed 3D tactile material inside the inked letters!
       ctx.drawImage(tex, 0, 0, W, H);
 
       animId = requestAnimationFrame(frame);
@@ -270,15 +351,39 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', size);
       window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
     };
-  }, [brand]);
+  }, [brand, activeTextureIndex]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      id="stage"
-      className="absolute inset-0 w-full h-full block cursor-crosshair select-none"
-      aria-label={`${brand} interactive liquid ink and 3D metallic foil balloon canvas`}
-    />
+    <div className="absolute inset-0 w-full h-full">
+      <canvas
+        ref={canvasRef}
+        id="stage"
+        className="w-full h-full block cursor-crosshair select-none touch-none"
+        aria-label={`${brand} interactive fluid ink and 3D tactile material canvas`}
+      />
+
+      {/* Material Selector Pill Tabs at top right (matching screenshots) */}
+      <div className="absolute top-[80px] right-[22px] z-30 pointer-events-auto flex items-center gap-1.5 bg-black/5 hover:bg-black/10 backdrop-blur-md p-1.5 rounded-full border border-black/10 shadow-sm transition-all">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-black/50 font-bold px-2 hidden md:inline">
+          3D MATERIAL:
+        </span>
+        {TEXTURES.map((tex, idx) => (
+          <button
+            key={tex.id}
+            onClick={() => handleSwitchTexture(idx)}
+            className={`px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider transition-all cursor-pointer ${
+              activeTextureIndex === idx
+                ? 'bg-black text-white shadow-md scale-[1.03]'
+                : 'text-black/70 hover:text-black hover:bg-black/5'
+            }`}
+          >
+            {tex.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 };

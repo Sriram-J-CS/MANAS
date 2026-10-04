@@ -43,9 +43,9 @@ export const Hero: React.FC<HeroProps> = ({
   };
 
   return (
-    <section className="relative h-screen w-full bg-[#ffffff] text-[#000000] overflow-hidden select-none" id="hero">
-      {/* 2D Canvas with Organic Ink Trail & 3D Glossy Texture Inside Letters */}
-      <InkCanvas brand={config.brand} textures={config.textures} />
+    <section className="relative h-screen w-full bg-[#ffffff] text-[#000000] overflow-hidden select-none z-10" id="hero">
+      {/* 2D Canvas with Organic Ink Trail & 3D Tactile Material Inside Letters */}
+      <InkCanvas brand={config.brand} />
 
       {/* Top-Left: Two-line tagline */}
       <div className="absolute top-[80px] left-[22px] z-20 max-w-[460px] pointer-events-none">
