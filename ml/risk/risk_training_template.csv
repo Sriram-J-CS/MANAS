@@ -1,0 +1,51 @@
+id,text,language,risk_level,underlying_intent,trigger_category,clinical_rationale
+1,"I'm feeling really stressed about my upcoming semester exams",en,low,comfort,exams,Expressing academic stress without self-harm or hopelessness
+2,"I want to end my life tonight, I have pills ready",en,imminent,crisis,suicide_plan,Explicit lethal intent and immediate plan
+3,"Sometimes I feel like I'm a burden and everybody would be better off without me",en,high,crisis,passive_suicidal_ideation,Passive suicidal ideation expressing worthlessness
+4,"I haven't slept in three days because of panic attacks",en,moderate,comfort,panic,Severe somatic anxiety needing grounding and support
+5,"Can you explain what CBT cognitive reframing means?",en,none,advice,psychoeducation,Inquiry regarding therapeutic terminology
+6,"எனக்கு வாழவே பிடிக்கல, தற்கொலை பண்ணிக்க போறேன்",ta,imminent,crisis,suicide_intent,Explicit suicide declaration in Tamil
+7,"எக்ஸாம் நினைச்சா ரொம்ப பயமா இருக்கு, தூக்கம் வரல",ta,low,comfort,exams,Exam anxiety without self-harm ideation
+8,"நான் யாருக்கும் தேவையில்லை, செத்து போயிடலாம்னு தோணுது",ta,high,crisis,suicidal_ideation,Hopelessness and desire to die in Tamil
+9,"मुझे जीने की कोई इच्छा नहीं बची, मैं सब खत्म करने जा रहा हूँ",hi,imminent,crisis,suicide_plan,Explicit suicidal intent in Hindi
+10,"ऑफिस के काम से बहुत तनाव हो रहा है",hi,low,vent,burnout,Work-related stress without risk
+11,"अगर मैं कल सुबह ना जागूँ तो किसी को फर्क नहीं पड़ेगा",hi,high,crisis,passive_suicidal_ideation,Indirect passive death wish
+12,"నా ప్రాణం తీసుకోవాలనిపిస్తుంది, భరించలేకపోతున్నాను",te,imminent,crisis,suicide_intent,Explicit suicide urge in Telugu
+13,"చదువులో మార్కులు తక్కువ వస్తాయని భయంగా ఉంది",te,low,comfort,exams,Academic anxiety in Telugu
+14,"నన్ను ఎవరూ అర్థం చేసుకోవడం లేదు, చనిపోవడమే మేలు",te,high,crisis,suicidal_ideation,Hopelessness and desire to die in Telugu
+15,"ನನಗೆ ಬದುಕಲು ಇಷ್ಟವಿಲ್ಲ, ನಾನು ಸಾಯಲು ಬಯಸುತ್ತೇನೆ",kn,imminent,crisis,suicide_intent,Direct suicide intent in Kannada
+16,"ಕೆಲಸದ ಒತ್ತಡದಿಂದ ತಲೆನೋವು ಬರುತ್ತಿದೆ",kn,low,comfort,work,Workplace tension in Kannada
+17,"ಎಲ್ಲರೂ ನನ್ನನ್ನು ದ್ವೇಷಿಸುತ್ತಾರೆ, ನಾನು ಸತ್ತರೆ ಎಲ್ಲರಿಗೂ ನೆಮ್ಮದಿ",kn,high,crisis,passive_suicidal_ideation,Belief that others are better off if deceased
+18,"എനിക്ക് മരിക്കണം, ഇനി സഹിക്കാൻ വയ്യ",ml,imminent,crisis,suicide_intent,Explicit suicide wish in Malayalam
+19,"പരീക്ഷയെ പേടിയാണ്, ടെൻഷൻ കുറയ്ക്കാൻ എന്ത് ചെയ്യണം",ml,low,advice,exams,Exam tension seeking advice in Malayalam
+20,"ഞാൻ ഒരു ഭാരമാണ് എല്ലാവർക്കും, ഒടുവിൽ ഒരു വഴി മാത്രമെയുള്ളൂ",ml,high,crisis,passive_suicidal_ideation,Perceived burdensomeness and contemplation of death
+21,"I'm cutting my wrists right now",en,imminent,crisis,active_self_harm,Immediate self-injury underway
+22,"I used to cut myself two years ago but haven't recently",en,low,vent,past_self_harm,Past history without active intent
+23,"My heart is pounding and I feel like I can't breathe",en,moderate,comfort,panic,Acute panic symptoms
+24,"My partner broke up with me today and I feel crushed",en,moderate,comfort,grief,Acute interpersonal loss
+25,"Just checking in, hope you are having a nice day",en,none,just_be_heard,casual,Casual polite greeting
+26,"I failed my mock test and I hate myself",en,moderate,comfort,self_blame,Self-directed harsh criticism
+27,"I wrote goodbye letters to my family today",en,high,crisis,suicide_preparation,Preparatory suicidal behavior
+28,"Can you suggest a breathing exercise to calm down?",en,none,practical_help,grounding,Request for regulated breathing
+29,"Why do bad things always happen to me?",en,low,perspective,rumination,Cognitive distortion (overgeneralization)
+30,"I drank alcohol until I threw up because I wanted to forget everything",en,moderate,vent,substance_coping,Maladaptive coping mechanism
+31,"நாளைக்கு நடக்கும் இன்டர்வியூ பத்தி கவலையா இருக்கு",ta,low,comfort,career,Interview nervousness in Tamil
+32,"யாராவது என் பேச்சை கேட்டா போதும்",ta,none,just_be_heard,loneliness,Need to be heard in Tamil
+33,"என் அப்பா என் கூட பேச மாட்டேங்குறாரு, ரொம்ப கஷ்டமா இருக்கு",ta,low,comfort,family,Family friction in Tamil
+34,"आज बहुत दिन बाद पार्क में टहला, थोड़ा सुकून मिला",hi,none,just_be_heard,positive,Positive self-care update in Hindi
+35,"मुझे नींद नहीं आ रही पिछले एक हफ्ते से",hi,low,comfort,sleep,Insomnia complaint in Hindi
+36,"क्या आप मुझे 4-7-8 सांस लेने का तरीका बता सकते हैं?",hi,none,practical_help,grounding,Grounding exercise query in Hindi
+37,"నేను ఈ రోజు స్నేహితులతో సరదాగా గడిపాను",te,none,just_be_heard,positive,Social connection update in Telugu
+38,"ఒత్తిడి వల్ల తిండి తినాలనిపించట్లేదు",te,low,comfort,appetite,Stress-induced appetite loss in Telugu
+39,"నాకు ధ్యానం చేయడం ఎలాగో నేర్పిస్తారా?",te,none,practical_help,meditation,Meditation learning in Telugu
+40,"ನನ್ನ ಸ್ನೇಹಿತ ನನ್ನೊಂದಿಗೆ ಜಗಳವಾಡಿದ್ದಾನೆ",kn,low,comfort,friendship,Interpersonal conflict in Kannada
+41,"ನನಗೆ ತುಂಬಾ ಆಯಾಸವಾಗಿದೆ ಮತ್ತು ದುಃಖವಾಗುತ್ತಿದೆ",kn,low,comfort,fatigue,Sadness and exhaustion in Kannada
+42,"എന്റെ സുഹൃത്തുക്കൾ എന്നെ ഒറ്റപ്പെടുത്തുന്നു",ml,low,comfort,loneliness,Social isolation in Malayalam
+43,"തലവേദന കൊണ്ട് വായിക്കാൻ പറ്റുന്നില്ല",ml,low,comfort,health,Headache distress in Malayalam
+44,"I want to jump in front of a train today",en,imminent,crisis,suicide_plan,Explicit lethal action plan
+45,"Nobody cares if I vanish from the face of the earth",en,high,crisis,passive_suicidal_ideation,Perceived burdensomeness
+46,"I'm angry at my boss for giving me all this overtime",en,low,vent,workplace,Workplace irritation
+47,"Can I take 50 sleeping tablets at once?",en,imminent,crisis,lethal_means_inquiry,Lethal overdose inquiry
+48,"Feeling grateful for the sunshine today",en,none,just_be_heard,gratitude,Gratitude reflection
+49,"I have a knot in my stomach whenever the phone rings",en,low,comfort,anxiety,Somatic anticipation anxiety
+50,"I am saying goodbye to all my online friends forever tonight",en,high,crisis,farewell_behavior,Farewell message indicative of suicide risk

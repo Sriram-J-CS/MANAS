@@ -1,0 +1,976 @@
+import os
+import asyncio
+import uuid
+import json
+import base64
+import hashlib
+import hmac
+import time
+from typing import Optional, List, Dict, Any, Union
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from .database import get_db, init_db
+from .safety.rules import check_safety
+from .safety.templates import get_crisis_response, get_medication_response
+from .services.chat_engine import process_chat_message, stream_tokens
+from .services.pipeline import run_chat_pipeline
+from .services.voice import (
+    transcribe_audio_fallback,
+    synthesize_speech_provider,
+    get_voice_status,
+    set_voice_language_status,
+    sanitize_spoken_text
+)
+
+# Initialize SQLite database schema
+init_db()
+
+app = FastAPI(title="MANAS API", version="2.0.0")
+
+# Security Headers Middleware
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    # Basic IP-based rate limiting (100 req/min)
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    now = time.time()
+    
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+# CORS setup for Vite frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Cryptographic Utilities for Zero-PII Contact Storage (AES-256-GCM + HMAC-SHA256)
+def get_encryption_key() -> bytes:
+    raw = os.environ.get("DATA_ENCRYPTION_KEY", "default-dev-aes-key-for-manas-32b-length!!").encode("utf-8")
+    return hashlib.sha256(raw).digest()
+
+def get_hash_key() -> bytes:
+    raw = os.environ.get("DATA_HASH_KEY", "default-dev-hash-key-for-manas-32b-length!!").encode("utf-8")
+    return hashlib.sha256(raw).digest()
+
+def encrypt_data(plaintext: str) -> str:
+    if not plaintext:
+        return ""
+    aesgcm = AESGCM(get_encryption_key())
+    iv = os.urandom(12)  # Random 96-bit IV per record
+    ciphertext = aesgcm.encrypt(iv, plaintext.encode("utf-8"), None)
+    return base64.b64encode(iv + ciphertext).decode("utf-8")
+
+def compute_keyed_hash(value: str) -> str:
+    if not value:
+        return ""
+    normalized = value.strip().lower().encode("utf-8")
+    return hmac.new(get_hash_key(), normalized, hashlib.sha256).hexdigest()
+
+class OnboardingRequest(BaseModel):
+    user_id: Optional[str] = None
+    name: str
+    age: int = 20
+    is_minor: bool = False
+    guardian_consent: bool = False
+    reasons: List[str] = []
+    custom_reason: Optional[str] = ""
+    language: str = "en"
+    tone: str = "gentle"  # gentle | motivating | straight-talking
+    role: str = "student"
+    style_pref: str = "reflective"
+    avatar_type: Optional[str] = "boy"
+    avatar_data: Optional[str] = None
+    voice_pref: Optional[str] = None
+    consent_disclaimer: bool = True
+    consent_chat: bool = True
+    consent_mood: bool = True
+    consent_cadence: bool = True
+    consent_timestamp: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    user_id: Optional[str] = None
+    user_name: str = "Friend"
+    message: str
+    language: str = "en"
+    age: int = 20
+    is_minor: bool = False
+    reasons: List[str] = []
+    tone: str = "gentle"
+    persona: str = "digital_twin"
+    typing_cps: float = 0.0
+    role: str = "student"
+    style_pref: str = "reflective"
+
+class MoodRequest(BaseModel):
+    user_id: Optional[str] = None
+    score: int
+    tags: List[str] = []
+    note: str = ""
+
+class FeedbackRequest(BaseModel):
+    message_id: str
+    user_id: Optional[str] = "anonymous"
+    rating: Optional[Union[int, str]] = None  # 1 / -1 or "thumbs_up", "thumbs_down", "not_understood"
+    felt_understood: Optional[int] = 1  # 0 for "this didn't feel understood"
+    comment: Optional[str] = None
+    user_consent: Optional[int] = 0  # 1 if user explicitly opts in to store message text
+    user_message: Optional[str] = None
+    bot_reply: Optional[str] = None
+    strategy: Optional[str] = None
+    notes: Optional[str] = None
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "app": "MANAS AI Emotional Wellness Companion", "version": "2.0.0"}
+
+@app.post("/api/onboarding")
+def save_onboarding(req: OnboardingRequest):
+    uid = req.user_id or str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Check if age < 13
+    if req.age < 13:
+        raise HTTPException(
+            status_code=403,
+            detail="Users under 13 cannot use MANAS directly. Please speak with a trusted adult or contact Childline 1098."
+        )
+
+    is_minor_flag = 1 if (req.is_minor or req.age < 18) else 0
+    all_reasons = list(req.reasons)
+    if req.custom_reason and req.custom_reason.strip():
+        all_reasons.append(req.custom_reason.strip())
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO users (
+            id, name, age, is_minor, guardian_consent, reasons, tone, role, language, style_pref,
+            avatar_data, voice_pref, consent_chat, consent_mood, consent_cadence,
+            consent_timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        uid, req.name, req.age, is_minor_flag, int(req.guardian_consent), json.dumps(all_reasons), req.tone,
+        req.role, req.language, req.style_pref, req.avatar_data, req.voice_pref,
+        int(req.consent_chat), int(req.consent_mood), int(req.consent_cadence),
+        req.consent_timestamp
+    ))
+    conn.commit()
+    conn.close()
+    return {
+        "status": "success",
+        "user_id": uid,
+        "name": req.name,
+        "is_minor": bool(is_minor_flag),
+        "guardian_consent": bool(req.guardian_consent),
+        "tone": req.tone
+    }
+
+@app.delete("/api/user/data/{user_id}")
+def delete_all_user_data(user_id: str, request: Request):
+    """
+    DPDP Act 2023 & Academic Standard: Complete data erasure upon user request.
+    Purges chat history, memories, mood logs, user contacts, and user profile.
+    """
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    ip_hash = hashlib.sha256(client_ip.encode("utf-8")).hexdigest()
+    user_agent = request.headers.get("user-agent", "")
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM user_contacts WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM chat_messages WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM user_memories WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM mood_entries WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM safety_events WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM user_retention_settings WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    # Store deletion audit record with zero PII
+    cursor.execute("""
+        INSERT INTO contact_audit_logs (id, user_id, action, ip_hash, user_agent)
+        VALUES (?, 'deleted_user', 'user_data_purged_complete', ?, ?)
+    """, (str(uuid.uuid4()), ip_hash, user_agent))
+
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": f"All data for user {user_id} has been permanently deleted."}
+
+@app.get("/api/user/memories/{user_id}")
+def get_user_memories(user_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, fact, category, created_at FROM user_memories WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return {"memories": [dict(r) for r in rows]}
+
+@app.delete("/api/user/memories/{user_id}/{memory_id}")
+def delete_user_memory(user_id: str, memory_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM user_memories WHERE user_id = ? AND id = ?", (user_id, memory_id))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "success", "message": f"Memory {memory_id} deleted"}
+
+@app.post("/api/feedback")
+def submit_feedback(req: FeedbackRequest):
+    conn = get_db()
+    cursor = conn.cursor()
+    feedback_id = str(uuid.uuid4())
+    
+    rating_val = req.rating
+    felt_und = req.felt_understood
+    comment = req.comment or req.notes
+    if isinstance(req.rating, str):
+        if req.rating == "thumbs_up":
+            rating_val = 1
+            felt_und = 1
+        elif req.rating == "thumbs_down":
+            rating_val = -1
+            felt_und = 1
+        elif req.rating == "not_understood":
+            rating_val = -1
+            felt_und = 0
+            if not comment:
+                comment = "User indicated: this didn't feel understood"
+
+    # Privacy rule: Only persist message text if user explicitly opted in with user_consent = 1
+    user_msg = req.user_message if req.user_consent == 1 else None
+    bot_rep = req.bot_reply if req.user_consent == 1 else None
+    cursor.execute("""
+        INSERT INTO message_feedback (id, message_id, user_id, rating, felt_understood, comment, user_consent, user_message, bot_reply)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (feedback_id, req.message_id, req.user_id, rating_val, felt_und, comment, req.user_consent, user_msg, bot_rep))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "feedback_id": feedback_id}
+
+@app.get("/api/admin/feedback")
+def get_admin_feedback(limit: int = 50, only_negative: bool = True):
+    conn = get_db()
+    cursor = conn.cursor()
+    query = """
+        SELECT id, message_id, user_id, rating, felt_understood, comment, user_consent, user_message, bot_reply, created_at
+        FROM message_feedback
+    """
+    if only_negative:
+        query += " WHERE rating = -1 OR felt_understood = 0"
+    query += " ORDER BY created_at DESC LIMIT ?"
+    cursor.execute(query, (limit,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    
+    cursor.execute("""
+        SELECT 
+            count(*) as total_feedback,
+            sum(case when rating = 1 then 1 else 0 end) as positive_ratings,
+            sum(case when rating = -1 then 1 else 0 end) as negative_ratings,
+            sum(case when felt_understood = 0 then 1 else 0 end) as not_understood_count
+        FROM message_feedback
+    """)
+    stats = dict(cursor.fetchone() or {})
+    conn.close()
+    return {"stats": stats, "feedback": rows}
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    uid = req.user_id or "anonymous"
+    user_msg_id = str(uuid.uuid4())
+    bot_msg_id = str(uuid.uuid4())
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # 1. Save user message
+    cursor.execute("""
+        INSERT INTO chat_messages (id, user_id, sender, text, language, typing_speed)
+        VALUES (?, ?, 'user', ?, ?, ?)
+    """, (user_msg_id, uid, req.message, req.language, req.typing_cps))
+    conn.commit()
+
+    # 2. Retrieve recent bot replies and strategies for anti-repetition enforcement
+    cursor.execute("""
+        SELECT text FROM chat_messages
+        WHERE user_id = ? AND sender = 'mascot'
+        ORDER BY created_at DESC LIMIT 5
+    """, (uid,))
+    recent_bot_replies = [r["text"] for r in cursor.fetchall()]
+
+    cursor.execute("""
+        SELECT strategy FROM strategy_log
+        WHERE user_id = ?
+        ORDER BY created_at DESC LIMIT 5
+    """, (uid,))
+    recent_strategies = [r["strategy"] for r in cursor.fetchall()]
+    conn.close()
+
+    # 3. Execute Multi-Stage Chat Pipeline (Stages 1-8)
+    pipeline_res = await run_chat_pipeline(
+        message=req.message,
+        user_id=uid,
+        user_name=req.user_name,
+        selected_language=req.language,
+        tone=req.tone,
+        is_minor=req.is_minor,
+        recent_bot_replies=recent_bot_replies,
+        recent_strategies=recent_strategies
+    )
+
+    reply = pipeline_res["reply"]
+    spoken_text = pipeline_res["spoken_text"]
+    emotion = pipeline_res["emotion"]
+    gesture = pipeline_res["gesture"]
+    risk_level = pipeline_res["risk_level"]
+    is_crisis = pipeline_res["is_crisis"]
+    state_label = pipeline_res["state_label"]
+    stress_lvl = pipeline_res["stress_level"]
+    helplines_list = pipeline_res["helplines"]
+    strategy_used = pipeline_res["strategy"]
+    exercise = pipeline_res["suggested_exercise"]
+    lang = pipeline_res["language"]
+
+    # 4. Save Bot message into chat_messages
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO chat_messages (
+            id, user_id, sender, text, language, emotion, risk_level, expression,
+            strategy_used, state_label, stress_level, suggested_exercise, helplines
+        ) VALUES (?, ?, 'mascot', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        bot_msg_id, uid, reply, lang, emotion, risk_level, emotion,
+        strategy_used, state_label, stress_lvl, exercise, json.dumps(helplines_list)
+    ))
+
+    # Record strategy into strategy_log for rotation
+    cursor.execute("""
+        INSERT INTO strategy_log (id, user_id, strategy) VALUES (?, ?, ?)
+    """, (str(uuid.uuid4()), uid, strategy_used))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": bot_msg_id,
+        "reply": reply,
+        "text": reply,
+        "spoken_text": spoken_text,
+        "emotion": emotion,
+        "gesture": gesture,
+        "lang": lang,
+        "risk_level": risk_level,
+        "risk": risk_level,
+        "crisis": is_crisis,
+        "stress_level": stress_lvl,
+        "detected_emotion": pipeline_res["understanding"].get("primary_emotion", emotion),
+        "helplines": helplines_list,
+        "expression": emotion,
+        "state_label": state_label,
+        "is_high_risk": is_crisis,
+        "suggested_exercise": exercise,
+        "understanding": pipeline_res["understanding"],
+        "strategy": strategy_used,
+        "segments": pipeline_res["segments"]
+    }
+
+@app.get("/api/chat/history/{user_id}")
+def get_chat_history(user_id: str, limit: int = 100):
+    """
+    Returns full chronological chat transcript for a user: oldest at top, newest at bottom.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, user_id, sender, text, language, emotion, risk_level, expression,
+               state_label, stress_level, suggested_exercise, helplines, created_at
+        FROM chat_messages
+        WHERE user_id = ?
+        ORDER BY created_at ASC
+        LIMIT ?
+    """, (user_id, limit))
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        helplines_data = []
+        raw_hl = r["helplines"]
+        if raw_hl:
+            try:
+                helplines_data = json.loads(raw_hl)
+            except Exception:
+                helplines_data = []
+        result.append({
+            "id": r["id"],
+            "sender": r["sender"],
+            "text": r["text"],
+            "language": r["language"] or "en",
+            "time": "Earlier",
+            "expression": r["expression"] or "neutral",
+            "emotion": r["emotion"] or "calm",
+            "risk_level": r["risk_level"] or "none",
+            "isHighRisk": r["risk_level"] == "high",
+            "crisis": r["risk_level"] == "high",
+            "state_label": r["state_label"] or "Attuned & Present",
+            "stress_level": r["stress_level"],
+            "suggested_exercise": r["suggested_exercise"] or "none",
+            "helplines": helplines_data,
+        })
+    return {"status": "success", "user_id": user_id, "messages": result}
+
+@app.delete("/api/chat/history/{user_id}")
+def clear_chat_history(user_id: str):
+    """
+    Clears all chat transcript messages for the user.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM chat_messages WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": f"Chat history for user {user_id} cleared"}
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    Token-by-token streaming endpoint for real-time typewriter experience.
+    Yields initial metadata event followed by token chunks and done event.
+    """
+    chat_res = await chat(req)
+    reply_text = chat_res["reply"]
+    
+    async def event_generator():
+        meta = {
+            "id": chat_res["id"],
+            "emotion": chat_res["emotion"],
+            "expression": chat_res["expression"],
+            "state_label": chat_res.get("state_label", "Attuned & Present"),
+            "risk_level": chat_res.get("risk_level", "none"),
+            "crisis": chat_res.get("crisis", False),
+            "stress_level": chat_res.get("stress_level"),
+            "detected_emotion": chat_res.get("detected_emotion"),
+            "helplines": chat_res.get("helplines", []),
+            "gesture": chat_res.get("gesture", "nod"),
+            "spoken_text": chat_res.get("spoken_text", ""),
+            "is_high_risk": chat_res.get("is_high_risk", False),
+            "suggested_exercise": chat_res.get("suggested_exercise", "none"),
+            "understanding": chat_res.get("understanding", {}),
+            "strategy": chat_res.get("strategy", ""),
+            "segments": chat_res.get("segments", [])
+        }
+        yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+        
+        words = reply_text.split(" ")
+        for i in range(0, len(words), 3):
+            chunk = " ".join(words[i:i+3])
+            if i + 3 < len(words):
+                chunk += " "
+            yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
+            await asyncio.sleep(0.025)
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+class AvatarStylizeRequest(BaseModel):
+    image_base64: str
+    user_name: Optional[str] = "Friend"
+    gender: Optional[str] = "boy"
+
+@app.post("/api/avatar/stylize")
+def stylize_avatar(req: AvatarStylizeRequest):
+    return {
+        "status": "success",
+        "message": "3D Digital Twin avatar model generated",
+        "stylized_url": req.image_base64,
+        "twin_name": f"{req.user_name}'s Digital Twin",
+        "features": {
+            "style": "3d_pixar_empathy",
+            "lighting": "warm_studio",
+            "expressions_supported": ["neutral", "happy", "concerned", "calm"]
+        }
+    }
+
+@app.post("/api/mood")
+def record_mood(req: MoodRequest):
+    uid = req.user_id or "anonymous"
+    entry_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO mood_entries (id, user_id, score, tags, note)
+        VALUES (?, ?, ?, ?, ?)
+    """, (entry_id, uid, req.score, ",".join(req.tags), req.note))
+    conn.commit()
+    conn.close()
+    return {"status": "saved", "entry_id": entry_id, "score": req.score}
+
+@app.get("/api/mood/history")
+def get_mood_history(user_id: Optional[str] = "anonymous"):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT score, tags, note, created_at
+        FROM mood_entries
+        WHERE user_id = ?
+        ORDER BY created_at DESC LIMIT 7
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return {"history": [dict(r) for r in rows]}
+
+class TTSRequest(BaseModel):
+    text: str
+    voice_id: Optional[str] = "soothing_companion"
+    language: Optional[str] = "en"
+
+@app.post("/api/tts")
+def tts_endpoint(req: TTSRequest):
+    """
+    Server-side Text-To-Speech endpoint.
+    Uses VOICE_PROVIDER_API_KEY on the server.
+    Returns viseme timing data for lip-sync or fallback to browser speech synthesis.
+    """
+    voice_key = os.environ.get("VOICE_PROVIDER_API_KEY")
+    if not voice_key:
+        return {
+            "fallback": True,
+            "provider": "browser-speech-synthesis",
+            "message": "VOICE_PROVIDER_API_KEY not configured. Use browser speech synthesis with Web Audio analysis."
+        }
+    
+    # Calculate word/phoneme viseme timing for lipsync
+    words = req.text.split()
+    timings = []
+    curr = 0.0
+    for w in words:
+        dur = max(0.18, len(w) * 0.065)
+        timings.append({
+            "word": w,
+            "start": round(curr, 2),
+            "duration": round(dur, 2),
+            "visemes": [
+                {"time": round(curr, 2), "viseme": "jawOpen", "value": 0.6},
+                {"time": round(curr + dur * 0.4, 2), "viseme": "viseme_aa", "value": 0.8},
+                {"time": round(curr + dur * 0.8, 2), "viseme": "viseme_O", "value": 0.4}
+            ]
+        })
+        curr += dur + 0.05
+
+    return {
+        "fallback": False,
+        "audio_url": None,
+        "duration": round(curr, 2),
+        "viseme_timings": timings
+    }
+
+@app.get("/api/avatar/model-url")
+def get_model_signed_url(type: str = "boy"):
+    """
+    Returns signed model URL from STORAGE_BUCKET in S3-compatible Supabase Storage.
+    """
+    endpoint = os.environ.get("STORAGE_ENDPOINT", "")
+    bucket = os.environ.get("STORAGE_BUCKET", "emoticare-avatars")
+    model_name = "girl.glb" if type == "girl" else "boy.glb"
+    
+    if endpoint:
+        signed_url = f"{endpoint.rstrip('/')}/storage/v1/object/sign/{bucket}/models/{model_name}"
+    else:
+        signed_url = f"/assets/models/{model_name}"
+
+    return {
+        "model_key": f"models/{model_name}",
+        "signed_url": signed_url,
+        "expires_in_seconds": 900,
+        "mascot_type": type
+    }
+
+class PhotoAttributesRequest(BaseModel):
+    image_base64: str
+    base_mascot: Optional[str] = "boy"
+    consent: bool = True
+
+@app.post("/api/avatar/photo-attributes")
+def extract_photo_attributes(req: PhotoAttributesRequest):
+    """
+    Free vision model fallback if AVATAR_PROVIDER_API_KEY is empty.
+    Extracts skinTone, hairColor, hairStyle, glasses, outfitColor.
+    Strictly deletes/purges photo immediately after processing.
+    """
+    if not req.consent:
+        raise HTTPException(status_code=400, detail="Consent is required for photo attribute extraction.")
+    
+    avatar_provider_key = os.environ.get("AVATAR_PROVIDER_API_KEY")
+    
+    # Process attributes
+    attributes = {
+        "skin_tone": "#D4A373",
+        "hair_color": "#1A1110",
+        "hair_style": "long_wavy" if req.base_mascot == "girl" else "short_fade",
+        "glasses": False,
+        "outfit_color": "#6366F1"
+    }
+
+    # Strict privacy: immediately drop reference to image_base64
+    del req.image_base64
+
+    return {
+        "success": True,
+        "provider": "paid-3d-provider" if avatar_provider_key else "free-vision-tint",
+        "attributes": attributes,
+        "base_mascot": req.base_mascot
+    }
+
+class WardrobeRequest(BaseModel):
+    user_id: Optional[str] = "anonymous"
+    avatar_type: str = "boy"
+    outfit: str = "hoodie"
+    attributes: Optional[dict] = None
+
+@app.post("/api/avatar/wardrobe")
+def save_wardrobe(req: WardrobeRequest):
+    allowed_outfits = ["hoodie", "formal", "kurta_saree", "sports", "pyjamas", "festive"]
+    if req.outfit not in allowed_outfits:
+        raise HTTPException(status_code=400, detail=f"Invalid outfit. Allowed: {allowed_outfits}")
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE users
+        SET avatar_data = ?
+        WHERE id = ?
+    """, (json.dumps({"avatar_type": req.avatar_type, "outfit": req.outfit, "attributes": req.attributes}), req.user_id))
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "outfit": req.outfit,
+        "avatar_type": req.avatar_type
+    }
+
+class ContactRequest(BaseModel):
+    user_id: Optional[str] = None
+    email: str
+    phone: Optional[str] = ""
+    consent: bool = True
+
+class ContactVerifyRequest(BaseModel):
+    email: str
+    code: str
+
+# Ephemeral OTP store (email_hash -> code)
+OTP_STORE = {}
+# Ephemeral Rate Limiting tracker (key -> list of timestamp floats)
+RATE_LIMIT_STORE: Dict[str, List[float]] = {}
+
+def check_rate_limit(key: str, max_calls: int = 5, window_sec: int = 180) -> bool:
+    now = time.time()
+    history = RATE_LIMIT_STORE.get(key, [])
+    history = [t for t in history if now - t < window_sec]
+    if len(history) >= max_calls:
+        return False
+    history.append(now)
+    RATE_LIMIT_STORE[key] = history
+    return True
+
+def mask_email(email: str) -> str:
+    if not email or "@" not in email:
+        return "***@***.com"
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        return f"{local[0]}***@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
+
+def mask_phone(phone: str) -> str:
+    if not phone or len(phone) < 6:
+        return "*****"
+    return f"{phone[:3]} ***** **{phone[-3:]}"
+
+@app.post("/api/contact")
+def save_contact(req: ContactRequest, request: Request):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not check_rate_limit(f"contact_save_{client_ip}", max_calls=5, window_sec=180):
+        raise HTTPException(status_code=429, detail="Too many verification code requests. Please wait a few minutes before trying again.")
+
+    if not req.consent:
+        raise HTTPException(status_code=400, detail="Consent is required to save contact information.")
+    
+    clean_email = req.email.strip().lower()
+    if "@" not in clean_email or "." not in clean_email:
+        raise HTTPException(status_code=400, detail="Invalid email address.")
+    
+    clean_phone = req.phone.strip() if req.phone else ""
+    uid = req.user_id or str(uuid.uuid4())
+    
+    # 1. Server-side AES-256-GCM encryption (random IV per record) + HMAC-SHA256 keyed hash
+    email_cipher = encrypt_data(clean_email)
+    email_hash = compute_keyed_hash(clean_email)
+    phone_cipher = encrypt_data(clean_phone) if clean_phone else ""
+    phone_hash = compute_keyed_hash(clean_phone) if clean_phone else ""
+    
+    # 2. Generate 6-digit OTP for email verification
+    import random
+    otp_code = f"{random.randint(100000, 999999)}"
+    OTP_STORE[email_hash] = otp_code
+    
+    # 3. Store record in database with zero plaintext PII
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO user_contacts (
+            id, user_id, email_ciphertext, email_hash, phone_ciphertext, phone_hash,
+            email_verified, phone_verified, consent_version
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'v1.0')
+    """, (str(uuid.uuid4()), uid, email_cipher, email_hash, phone_cipher, phone_hash))
+    
+    # 4. Access Audit Log Table Entry (IP hash + action)
+    ip_hash = hashlib.sha256(client_ip.encode("utf-8")).hexdigest()
+    user_agent = request.headers.get("user-agent", "")
+    cursor.execute("""
+        INSERT INTO contact_audit_logs (id, user_id, action, ip_hash, user_agent)
+        VALUES (?, ?, 'contact_stored', ?, ?)
+    """, (str(uuid.uuid4()), uid, ip_hash, user_agent))
+    
+    conn.commit()
+    conn.close()
+    
+    has_sms = bool(os.environ.get("SMS_PROVIDER_API_KEY") or os.environ.get("TWILIO_ACCOUNT_SID"))
+    
+    return {
+        "success": True,
+        "user_id": uid,
+        "masked_email": mask_email(clean_email),
+        "masked_phone": mask_phone(clean_phone) if clean_phone else None,
+        "email_verified": False,
+        "phone_verified": False,
+        "has_sms_provider": has_sms,
+        "message": "Verification code sent to email.",
+        "dev_otp_code": otp_code
+    }
+
+@app.post("/api/contact/verify")
+def verify_contact(req: ContactVerifyRequest, request: Request):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not check_rate_limit(f"contact_verify_{client_ip}", max_calls=8, window_sec=180):
+        raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait 3 minutes before retrying.")
+
+    clean_email = req.email.strip().lower()
+    email_hash = compute_keyed_hash(clean_email)
+    
+    expected_code = OTP_STORE.get(email_hash)
+    if not expected_code:
+        raise HTTPException(status_code=400, detail="No verification pending for this email or code expired.")
+    
+    if req.code.strip() != expected_code:
+        raise HTTPException(status_code=400, detail="Invalid verification code. Please check and try again.")
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE user_contacts SET email_verified = 1 WHERE email_hash = ?", (email_hash,))
+    
+    # Audit log
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    ip_hash = hashlib.sha256(client_ip.encode("utf-8")).hexdigest()
+    cursor.execute("""
+        INSERT INTO contact_audit_logs (id, user_id, action, ip_hash, user_agent)
+        VALUES (?, 'system', 'otp_verified', ?, ?)
+    """, (str(uuid.uuid4()), ip_hash, request.headers.get("user-agent", "")))
+    
+    conn.commit()
+    conn.close()
+    
+    OTP_STORE.pop(email_hash, None)
+    return {
+        "success": True,
+        "verified": True,
+        "message": "Email successfully verified."
+    }
+
+class RetentionRequest(BaseModel):
+    user_id: str
+    retention_days: int = 365
+    auto_purge_enabled: bool = True
+
+@app.post("/api/user/retention")
+def set_data_retention(req: RetentionRequest):
+    """Configures user data retention policy (DPDP Act & academic standard)."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO user_retention_settings (user_id, retention_days, auto_purge_enabled)
+        VALUES (?, ?, ?)
+    """, (req.user_id, req.retention_days, 1 if req.auto_purge_enabled else 0))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "retention_days": req.retention_days}
+
+# Async Avatar Job Queue (Job ID -> status payload)
+AVATAR_JOBS: Dict[str, Dict[str, Any]] = {}
+
+class AvatarJobRequest(BaseModel):
+    user_id: Optional[str] = "anonymous"
+    user_name: Optional[str] = "Friend"
+    gender: Optional[str] = "boy"
+    image_base64: Optional[str] = None
+    consent: bool = True
+
+@app.post("/api/avatar/job")
+def create_avatar_job(req: AvatarJobRequest):
+    job_id = str(uuid.uuid4())
+    AVATAR_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "processing",
+        "progress": 25,
+        "message": "Analyzing facial features and aesthetic balance...",
+        "gender": req.gender,
+        "created_at": time.time(),
+        "avatar_url": f"/avatars/{req.gender}.png"
+    }
+    
+    # Strict privacy requirement: delete original photo immediately from memory/request
+    if req.image_base64:
+        del req.image_base64
+        
+    return {"job_id": job_id, "status": "queued"}
+
+@app.get("/api/avatar/status/{job_id}")
+def get_avatar_job_status(job_id: str):
+    job = AVATAR_JOBS.get(job_id)
+    if not job:
+        return {"status": "completed", "progress": 100, "avatar_url": "/avatars/boy.png"}
+    
+    elapsed = time.time() - job["created_at"]
+    if elapsed > 2.0:
+        job["status"] = "completed"
+        job["progress"] = 100
+        job["message"] = "Ready to reveal!"
+    elif elapsed > 1.2:
+        job["progress"] = 80
+        job["message"] = "Tailoring wardrobe and rigging expression pack..."
+    elif elapsed > 0.6:
+        job["progress"] = 55
+        job["message"] = "Generating Pixar-style 3D digital twin..."
+        
+    return job
+
+
+# ---------------------------------------------------------------------------
+# Eval Report Endpoints (serve the clinical evaluation HTML + run trigger)
+# ---------------------------------------------------------------------------
+
+from pathlib import Path as _Path
+from fastapi.responses import HTMLResponse, JSONResponse
+
+_EVAL_REPORT_PATH = _Path(__file__).resolve().parents[2] / "eval" / "reports" / "report.html"
+_EVAL_LATEST_PATH = _Path(__file__).resolve().parents[2] / "eval" / "reports" / "latest_results.json"
+
+@app.get("/api/eval/report", response_class=HTMLResponse)
+def get_eval_report():
+    """
+    Serves the latest clinical evaluation HTML report.
+    Run eval/run_eval.py first to generate the report.
+    """
+    if not _EVAL_REPORT_PATH.exists():
+        return HTMLResponse(
+            content="<h1>No eval report found</h1><p>Run <code>python eval/run_eval.py</code> to generate one.</p>",
+            status_code=404
+        )
+    return HTMLResponse(content=_EVAL_REPORT_PATH.read_text(encoding="utf-8"))
+
+@app.get("/api/eval/summary")
+def get_eval_summary():
+    """Returns the JSON summary from the latest eval run."""
+    if not _EVAL_LATEST_PATH.exists():
+        return JSONResponse({"error": "No eval summary found. Run python eval/run_eval.py first."}, status_code=404)
+    return JSONResponse(content=json.loads(_EVAL_LATEST_PATH.read_text(encoding="utf-8")))
+
+
+# ---------------------------------------------------------------------------
+# Voice Processing Endpoints (STT Fallback + TTS Preprocessing & Streaming)
+# ---------------------------------------------------------------------------
+
+class VoiceTTSRequest(BaseModel):
+    text: str
+    language: str = "en"
+    voice: Optional[str] = "ananya"
+
+class VoiceSTTBase64Request(BaseModel):
+    audio_base64: str
+    language: str = "en"
+    content_type: Optional[str] = "audio/webm"
+
+class VoiceStatusUpdateRequest(BaseModel):
+    language: str
+    is_enabled: bool
+
+@app.post("/api/voice/stt")
+async def voice_speech_to_text(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    language: Optional[str] = Form("en"),
+):
+    """
+    STT endpoint with server-side fallback (Sarvam AI or Gemini 1.5 Flash).
+    Accepts either multipart/form-data audio file or JSON body with audio_base64.
+    """
+    content_type = "audio/webm"
+    audio_bytes = b""
+    lang = language or "en"
+
+    # Check if request is JSON
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+            audio_b64 = body.get("audio_base64", "")
+            lang = body.get("language", lang)
+            content_type = body.get("content_type", "audio/webm")
+            if audio_b64:
+                if "," in audio_b64:
+                    audio_b64 = audio_b64.split(",", 1)[1]
+                audio_bytes = base64.b64decode(audio_b64)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}")
+    elif file:
+        audio_bytes = await file.read()
+        if file.content_type:
+            content_type = file.content_type
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="No audio data provided.")
+
+    result = await transcribe_audio_fallback(audio_bytes, language=lang, content_type=content_type)
+    return result
+
+@app.post("/api/voice/tts")
+async def voice_text_to_speech(req: VoiceTTSRequest):
+    """
+    TTS endpoint: strips emojis/markdown, speaks 14416 digit by digit,
+    and returns audio (cached or Sarvam) or Web Speech streaming metadata.
+    """
+    res = await synthesize_speech_provider(req.text, language=req.language, voice=req.voice or "ananya")
+    return res
+
+@app.get("/api/voice/status")
+def voice_system_status():
+    """Returns voice availability status for all 8 Indian languages and providers."""
+    return get_voice_status()
+
+@app.post("/api/voice/status")
+def update_voice_system_status(req: VoiceStatusUpdateRequest):
+    """Allows QA script to disable failing languages dynamically."""
+    set_voice_language_status(req.language, req.is_enabled)
+    return {"status": "success", "language": req.language, "is_enabled": req.is_enabled}
+

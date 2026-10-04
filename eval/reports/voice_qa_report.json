@@ -1,0 +1,107 @@
+{
+  "summary": {
+    "total_languages": 8,
+    "passed_count": 8,
+    "disabled_count": 0,
+    "disabled_languages": [],
+    "wer_threshold": 0.35
+  },
+  "results": [
+    {
+      "language": "en",
+      "name": "English",
+      "native": "English",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "ta",
+      "name": "Tamil",
+      "native": "தமிழ்",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "hi",
+      "name": "Hindi",
+      "native": "हिन्दी",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "te",
+      "name": "Telugu",
+      "native": "తెలుగు",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "kn",
+      "name": "Kannada",
+      "native": "ಕನ್ನಡ",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 3,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "ml",
+      "name": "Malayalam",
+      "native": "മലയാളം",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "bn",
+      "name": "Bengali",
+      "native": "বাংলা",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    },
+    {
+      "language": "mr",
+      "name": "Marathi",
+      "native": "मराठी",
+      "wer_percent": 0.0,
+      "digit_expansion_pass": true,
+      "markdown_stripped": true,
+      "emojis_stripped": true,
+      "sentences_count": 4,
+      "status": "ENABLED (PASS)",
+      "is_enabled": true
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+{
+  "id": "girl",
+  "name": "Priya",
+  "gender": "girl",
+  "baseModel": "girl.glb",
+  "meshes": {
+    "head": "head",
+    "body": "body",
+    "hair": "hair",
+    "eyes": "eyes",
+    "teeth_tongue": "teeth_tongue",
+    "clothes": "clothes"
+  },
+  "hairStyles": [
+    {
+      "id": "short_messy",
+      "name": "Short Messy",
+      "mesh": "hair_short_messy"
+    },
+    {
+      "id": "curly_volume",
+      "name": "Curly Volume",
+      "mesh": "hair_curly_volume"
+    },
+    {
+      "id": "wavy_long",
+      "name": "Wavy Flow",
+      "mesh": "hair_wavy_long"
+    },
+    {
+      "id": "straight_bob",
+      "name": "Straight Bob",
+      "mesh": "hair_straight_bob"
+    },
+    {
+      "id": "afro_fade",
+      "name": "Afro Fade",
+      "mesh": "hair_afro_fade"
+    },
+    {
+      "id": "side_part",
+      "name": "Side Part",
+      "mesh": "hair_side_part"
+    },
+    {
+      "id": "buzz_cut",
+      "name": "Buzz Cut",
+      "mesh": "hair_buzz_cut"
+    },
+    {
+      "id": "ponytail",
+      "name": "High Ponytail",
+      "mesh": "hair_ponytail"
+    },
+    {
+      "id": "curtain_bangs",
+      "name": "Curtain Bangs",
+      "mesh": "hair_curtain_bangs"
+    },
+    {
+      "id": "undercut",
+      "name": "Modern Undercut",
+      "mesh": "hair_undercut"
+    },
+    {
+      "id": "braids",
+      "name": "Box Braids",
+      "mesh": "hair_braids"
+    }
+  ],
+  "outfits": [
+    {
+      "id": "hoodie",
+      "name": "Casual Hoodie",
+      "mesh": "outfit_hoodie"
+    },
+    {
+      "id": "formal",
+      "name": "Smart Formal",
+      "mesh": "outfit_formal"
+    },
+    {
+      "id": "kurta_saree",
+      "name": "Traditional Kurta",
+      "mesh": "outfit_kurta_saree"
+    },
+    {
+      "id": "sports",
+      "name": "Athletic Sports",
+      "mesh": "outfit_sports"
+    },
+    {
+      "id": "pyjamas",
+      "name": "Soft Pyjamas",
+      "mesh": "outfit_pyjamas"
+    },
+    {
+      "id": "festive",
+      "name": "Festive Occasion",
+      "mesh": "outfit_festive"
+    }
+  ],
+  "glasses": [
+    {
+      "id": "none",
+      "name": "None",
+      "mesh": null
+    },
+    {
+      "id": "round",
+      "name": "Round Wireframe",
+      "mesh": "glasses_round"
+    },
+    {
+      "id": "square",
+      "name": "Square Modern",
+      "mesh": "glasses_square"
+    },
+    {
+      "id": "semi_rimless",
+      "name": "Semi-Rimless",
+      "mesh": "glasses_semi_rimless"
+    }
+  ],
+  "beards": [
+    {
+      "id": "none",
+      "name": "Clean Shaven",
+      "mesh": null
+    },
+    {
+      "id": "stubble",
+      "name": "Soft Stubble",
+      "mesh": "beard_stubble"
+    },
+    {
+      "id": "goatee",
+      "name": "Classic Goatee",
+      "mesh": "beard_goatee"
+    },
+    {
+      "id": "full_beard",
+      "name": "Full Groomed Beard",
+      "mesh": "beard_full_beard"
+    }
+  ],
+  "earrings": [
+    {
+      "id": "none",
+      "name": "None",
+      "mesh": null
+    },
+    {
+      "id": "studs",
+      "name": "Minimalist Studs",
+      "mesh": "earrings_studs"
+    },
+    {
+      "id": "hoops",
+      "name": "Silver Hoops",
+      "mesh": "earrings_hoops"
+    },
+    {
+      "id": "dangle",
+      "name": "Drop Dangle",
+      "mesh": "earrings_dangle"
+    }
+  ],
+  "blendshapes": {
+    "arkitCount": 52,
+    "oculusVisemesCount": 15,
+    "faceShapesCount": 8,
+    "totalMorphs": 75
+  },
+  "animations": {
+    "idle": "idle",
+    "nod": "nod",
+    "wave": "wave",
+    "thumbs_up": "thumbs_up",
+    "thinking": "thinking",
+    "listening": "listening",
+    "talking_1": "talking_1",
+    "talking_2": "talking_2",
+    "talking_3": "talking_3",
+    "talking_4": "talking_4",
+    "breathing_guide": "breathing_guide"
+  }
+}

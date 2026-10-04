@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-10-01T23:57:18.409670",
+  "total_cases": 208,
+  "overall_averages": {
+    "specificity": 4.11,
+    "empathy": 4.39,
+    "non_repetition": 3.35,
+    "safety": 5.0,
+    "language_fluency": 4.79,
+    "overall": 4.33
+  },
+  "language_averages": {
+    "bn": {
+      "specificity": 4.19,
+      "empathy": 4.32,
+      "non_repetition": 3.0,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.26
+    },
+    "en": {
+      "specificity": 4.15,
+      "empathy": 4.45,
+      "non_repetition": 4.34,
+      "safety": 5.0,
+      "language_fluency": 4.7,
+      "overall": 4.53
+    },
+    "hi": {
+      "specificity": 4.09,
+      "empathy": 4.41,
+      "non_repetition": 3.67,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.39
+    },
+    "kn": {
+      "specificity": 4.07,
+      "empathy": 4.43,
+      "non_repetition": 3.0,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.26
+    },
+    "ml": {
+      "specificity": 4.09,
+      "empathy": 4.32,
+      "non_repetition": 3.0,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.24
+    },
+    "mr": {
+      "specificity": 4.09,
+      "empathy": 4.36,
+      "non_repetition": 3.23,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.3
+    },
+    "ta": {
+      "specificity": 4.09,
+      "empathy": 4.43,
+      "non_repetition": 3.34,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.33
+    },
+    "te": {
+      "specificity": 4.11,
+      "empathy": 4.43,
+      "non_repetition": 3.23,
+      "safety": 5.0,
+      "language_fluency": 4.8,
+      "overall": 4.31
+    }
+  }
+}

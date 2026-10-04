@@ -1,0 +1,71 @@
+language,phrase,intent,status,reviewer_notes
+en,answer me,request_reply,needs native review,English conversational trigger
+en,give me the solution,request_solution,needs native review,English CBT/ESConv query
+en,what should i do,request_advice,needs native review,English action guidance trigger
+en,tell me what to do,request_advice,needs native review,English guidance prompt
+en,what do you think,request_reflection,needs native review,English reflection query
+en,please help me,request_assistance,needs native review,General empathy hook
+en,how can i fix this,request_solution,needs native review,Problem-solving trigger
+en,what is the solution,request_solution,needs native review,Direct solution request
+en,can you reply,request_reply,needs native review,Conversational turn handover
+en,tell me the answer,request_reply,needs native review,Direct response trigger
+en,what do i do now,request_advice,needs native review,Next steps query
+en,what do you suggest,request_advice,needs native review,Counselor suggestion request
+ta,பதில் சொல்லு,request_reply,needs native review,Informal direct Tamil prompt
+ta,பதில் சொல்லுங்க,request_reply,needs native review,Polite Tamil conversational turn
+ta,தீர்வு கொடுங்க,request_solution,needs native review,Tamil ESConv solution request
+ta,நான் என்ன செய்ய வேண்டும்,request_advice,needs native review,Formal Tamil inquiry
+ta,எனக்கு என்ன பண்ணனும்னு சொல்லுங்க,request_advice,needs native review,Colloquial spoken Tamil
+ta,பதில் தாங்க,request_reply,needs native review,Polite Tamil response demand
+ta,வழி சொல்லுங்க,request_advice,needs native review,Idiomatic Tamil "show me the path"
+ta,உதவி பண்ணுங்க,request_assistance,needs native review,Tamil help request
+ta,இப்ப நான் என்ன பண்ணட்டும்,request_advice,needs native review,Tamil immediate next-step question
+ta,தீர்வு என்ன,request_solution,needs native review,Tamil question for resolution
+hi,मुझे जवाब दो,request_reply,needs native review,Hindi direct prompt
+hi,समाधान बताओ,request_solution,needs native review,Hindi solution request
+hi,मुझे क्या करना चाहिए,request_advice,needs native review,Hindi CBT reflection prompt
+hi,हल बताओ,request_solution,needs native review,Hindi solution query
+hi,मेरी मदद करो,request_assistance,needs native review,Hindi emotional support hook
+hi,बताओ क्या करूँ,request_advice,needs native review,Hindi conversational action prompt
+hi,उत्तर दो,request_reply,needs native review,Hindi formal reply prompt
+hi,अब मैं क्या करूँ,request_advice,needs native review,Hindi next step question
+hi,मुझे सलाह दो,request_advice,needs native review,Hindi guidance prompt
+hi,उपाय बताओ,request_solution,needs native review,Hindi remedy/solution inquiry
+te,నాకు సమాధానం చెప్పు,request_reply,needs native review,Telugu reply trigger
+te,పరిష్కారం చెప్పు,request_solution,needs native review,Telugu solution inquiry
+te,నేను ఏమి చేయాలి,request_advice,needs native review,Telugu guidance prompt
+te,నాకు సహాయం చేయి,request_assistance,needs native review,Telugu support query
+te,ఏం చేయాలో చెప్పు,request_advice,needs native review,Telugu action prompt
+te,సలహా ఇవ్వండి,request_advice,needs native review,Polite Telugu advice request
+te,సమాధానం ఇవ్వండి,request_reply,needs native review,Polite Telugu reply prompt
+te,ఇప్పుడు నేనేం చేయాలి,request_advice,needs native review,Telugu next step query
+kn,ನನಗೆ ಉತ್ತರಿಸು,request_reply,needs native review,Kannada reply trigger
+kn,ಪರಿಹಾರ ನೀಡು,request_solution,needs native review,Kannada solution request
+kn,ನಾನು ಏನು ಮಾಡಬೇಕು,request_advice,needs native review,Kannada advice query
+kn,ನನಗೆ ಸಹಾಯ ಮಾಡು,request_assistance,needs native review,Kannada assistance prompt
+kn,ಏನು ಮಾಡಬೇಕೆಂದು ಹೇಳು,request_advice,needs native review,Kannada guidance prompt
+kn,ಉತ್ತರ ಕೊಡಿ,request_reply,needs native review,Polite Kannada reply prompt
+kn,ಪರಿಹಾರ ಹೇಳಿ,request_solution,needs native review,Polite Kannada remedy prompt
+kn,ಈಗ ನಾನು ಏನು ಮಾಡಲಿ,request_advice,needs native review,Kannada next-step question
+ml,എനിക്ക് ഉത്തരം തരൂ,request_reply,needs native review,Malayalam reply request
+ml,പരിഹാരം തരൂ,request_solution,needs native review,Malayalam solution prompt
+ml,ഞാൻ എന്തുചെയ്യണം,request_advice,needs native review,Malayalam advice inquiry
+ml,എന്നെ സഹായിക്കൂ,request_assistance,needs native review,Malayalam support query
+ml,എന്താണ് ചെയ്യേണ്ടത് എന്ന് പറയൂ,request_advice,needs native review,Malayalam guidance prompt
+ml,മറുപടി തരൂ,request_reply,needs native review,Malayalam reply prompt
+ml,വഴി പറഞ്ഞു തരൂ,request_advice,needs native review,Malayalam path guidance
+bn,আমাকে উত্তর দিন,request_reply,needs native review,Polite Bengali reply prompt
+bn,আমাকে সমাধান দিন,request_solution,needs native review,Bengali solution prompt
+আমার কী করা উচিত,request_advice,needs native review,Bengali guidance question
+bn,আমাকে সাহায্য করুন,request_assistance,needs native review,Bengali support request
+bn,কী করব বলো,request_advice,needs native review,Bengali conversational action prompt
+bn,উত্তর দাও,request_reply,needs native review,Bengali direct reply prompt
+bn,এখন আমি কী করব,request_advice,needs native review,Bengali next step question
+mr,मला उत्तर दे,request_reply,needs native review,Marathi direct reply prompt
+mr,मला उपाय सांग,request_solution,needs native review,Marathi solution request
+mr,मी काय करू,request_advice,needs native review,Marathi action query
+mr,मला मदत कर,request_assistance,needs native review,Marathi support prompt
+mr,मला काय करायला हवे,request_advice,needs native review,Marathi formal guidance prompt
+mr,उत्तर सांग,request_reply,needs native review,Marathi prompt
+mr,काहीतरी उपाय सांग,request_solution,needs native review,Marathi remedy prompt
+mr,आता मी काय करू,request_advice,needs native review,Marathi immediate question

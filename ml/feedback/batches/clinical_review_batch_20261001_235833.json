@@ -1,0 +1,17 @@
+[
+  {
+    "feedback_id": "2701b8ea-7010-4335-bb9e-c7d3f238cd69",
+    "message_id": "m1",
+    "pseudonym_user_id": "user_b5e2b65c9285",
+    "rating": 1,
+    "felt_understood": true,
+    "user_comment": "",
+    "scrubbed_user_message": "Feeling stressed",
+    "scrubbed_bot_reply": "I hear how heavy that feels.",
+    "timestamp": "2026-10-01 08:49:56",
+    "counselor_reviewer": "",
+    "clinical_diagnosis_of_failure": "",
+    "suggested_rewritten_reply": "",
+    "approved_for_golden_dataset": "NO"
+  }
+]

@@ -1,0 +1,110 @@
+text,language,intent,verified
+"I'm feeling so exhausted and burned out by work this week.",en,venting,1
+"I just feel like crying and I don't even know why.",en,venting,1
+"Nobody at my campus talks to me and it hurts.",en,venting,1
+"Everything feels so heavy and tangled inside today.",en,venting,1
+"I feel like a total failure after getting my exam results.",en,venting,1
+"naan romba tired aa irukken manasu valikithu.",ta,venting,1
+"yarum enkooda pesa maatanga romba thalaimuraya irukku.",ta,venting,1
+"எனக்கு ரொம்ப கஷ்டமா இருக்கு அழுகையா வருது.",ta,venting,1
+"என் மனசுல பயங்கர பாரமா இருக்கு என்னால தாங்க முடியல.",ta,venting,1
+"aaj bohot udas hoon kisi se baat karne ka mann nahi.",hi,venting,1
+"sab kuch bikhar gaya hai bohot akela lag raha hai.",hi,venting,1
+"मुझे बहुत अकेलापन महसूस हो रहा है सब कुछ खाली लगता है।",hi,venting,1
+"आज ऑफिस में बहुत बुरा दिन था बिल्कुल हिम्मत नहीं बची।",hi,venting,1
+"నాకు చాలా ఒంటరిగా ఉంది ఎవరూ అర్థం చేసుకోవడం లేదు.",te,venting,1
+"ఈ బాధని నేను భరించలేకపోతున్నాను చాలా భారంగా ఉంది.",te,venting,1
+"ಮನಸ್ಸಿಗೆ ತುಂಬಾ ನೋವಾಗ್ತಿದೆ ಯಾರೂ ನನ್ನ ಜೊತೆ ಇಲ್ಲ.",kn,venting,1
+"ಎಲ್ಲವೂ ಹಾಳಾಗಿದೆ ಅನ್ನೋ ಭಾವನೆ ಕಾಡ್ತಿದೆ.",kn,venting,1
+"എനിക്ക് വല്ലാത്ത ഏകാന്തതയും സങ്കടവും തോന്നുന്നു.",ml,venting,1
+"ഞാൻ ആകെ തകർന്നുപോയി ആരോടും സംസാരിക്കാൻ തോന്നുന്നില്ല.",ml,venting,1
+"আমার খুব একা লাগছে কেউ আমাকে বুঝতে পারছে না।",bn,venting,1
+"मला खूप एकटेपणा जाणवतोय आणि रडू येतंय.",mr,venting,1
+"give me a solution, how do I fix my sleep?",en,wants_solution,1
+"Answer me: how can I handle my toxic boss without quitting?",en,wants_solution,1
+"What should I do to study when I have severe exam panic?",en,wants_solution,1
+"Give me a practical solution for feeling overwhelmed by assignments.",en,wants_solution,1
+"How do I stop procrastinating on my final project?",en,wants_solution,1
+"Tell me what to do about my constant money stress.",en,wants_solution,1
+"How can I set boundaries with my overbearing parents?",en,wants_solution,1
+"enakku solution sollu epdi time manage panrathu?",ta,wants_solution,1
+"padikira appo focus panrathuku oru vazhi sollu.",ta,wants_solution,1
+"தூக்கம் வர என்ன செய்வது ஒரு நல்ல வழி சொல்லுங்கள்?",ta,wants_solution,1
+"தேர்வு பயத்தை போக்க நான் என்ன செய்ய வேண்டும்?",ta,wants_solution,1
+"neend nahi aa rahi hai koi solution batao.",hi,wants_solution,1
+"exam ke dar ko kam karne ke liye kya karna chahiye?",hi,wants_solution,1
+"मुझे बताइए कि मैं इस तनाव से कैसे बाहर निकलूँ?",hi,wants_solution,1
+"प्रोक्रास्टिनेशन रोकने का कोई ठोस उपाय बताएं।",hi,wants_solution,1
+"నిద్ర పట్టడం లేదు నేను ఏమి చేయాలి ఒక పరిష్కారం చెప్పండి?",te,wants_solution,1
+"పరీక్షల ఒత్తిడిని ఎలా తగ్గించుకోవాలి?",te,wants_solution,1
+"ಓದಿನಲ್ಲಿ ಗಮನ ಕೇಂದ್ರೀಕರಿಸಲು ಏನು ಮಾಡಬೇಕು?",kn,wants_solution,1
+"ಪರೀಕ್ಷಾ ಭಯವನ್ನು ಹೋಗಲಾಡಿಸಲು ಒಂದು ಉಪಾಯ ಹೇಳಿ.",kn,wants_solution,1
+"ഉറക്കം വരാൻ ഞാൻ എന്താണ് ചെയ്യേണ്ടത് ഒരു വഴി പറഞ്ഞുതരുമോ?",ml,wants_solution,1
+"പരീക്ഷാ പേടി മാറ്റാൻ എനിക്ക് എന്തെങ്കിലും പോംവഴി പറഞ്ഞുതരൂ.",ml,wants_solution,1
+"পড়াশোনায় মন দেওয়ার জন্য আমি কী করতে পারি?",bn,wants_solution,1
+"कामाचा ताण कमी करण्यासाठी मी काय उपाय करू?",mr,wants_solution,1
+"Can you guide me through a 4-7-8 breathing exercise?",en,exercise,1
+"I need a somatic grounding technique right now.",en,exercise,1
+"Teach me how to do box breathing to calm down.",en,exercise,1
+"Guide me through a 5-4-3-2-1 sensory grounding exercise.",en,exercise,1
+"Can we do a breathing exercise together?",en,exercise,1
+"Help me calm my nervous system with breath pacing.",en,exercise,1
+"enakku oru breathing exercise solli thanga.",ta,exercise,1
+"4-7-8 moochu payirchi epdi panrathu guid pannunga.",ta,exercise,1
+"மூச்சுப் பயிற்சி ஏதாவது சொல்லிக் கொடுங்கள்.",ta,exercise,1
+"உடம்பை அமைதிப்படுத்த ஒரு தியானப் பயிற்சி சொல்லித்தாருங்கள்.",ta,exercise,1
+"mujhe koi breathing exercise karwao please.",hi,exercise,1
+"4-7-8 saans lene ki exercise kaise karte hain guide karo.",hi,exercise,1
+"कृपया मुझे एक गहरी सांस लेने का अभ्यास कराइए।",hi,exercise,1
+"माइंडफुलनेस और ग्राउंडिंग एक्सरसाइज सिखाइए।",hi,exercise,1
+"నాకు శ్వాస వ్యాయామం నేర్పించండి దయచేసి.",te,exercise,1
+"5-4-3-2-1 గ్రౌండింగ్ టెక్నిక్ ఎలా చేయాలో చెప్పండి.",te,exercise,1
+"ಉಸಿರಾಟದ ವ್ಯಾಯಾಮ ಮಾಡಿಸಿಕೊಡಿ ದಯವಿಟ್ಟು.",kn,exercise,1
+"ಮನಸ್ಸನ್ನು ಶಾಂತಗೊಳಿಸಲು ಒಂದು ಧ್ಯಾನದ ವಿಧಾನ ಹೇಳಿಕೊಡಿ.",kn,exercise,1
+"ശ്വാസ വ്യായാമം ചെയ്യാൻ എന്നെ സഹായിക്കാമോ?",ml,exercise,1
+"ഒരു ഗ്രൗണ്ടിംഗ് വ്യായാമം പറഞ്ഞുതരുമോ?",ml,exercise,1
+"আমাকে একটা শ্বাসের ব্যায়াম শিখিয়ে দিন।",bn,exercise,1
+"मला एक श्वसनाचा व्यायाम शिकवा ज्यामुळे शांत वाटेल.",mr,exercise,1
+"What is a cognitive distortion?",en,info,1
+"Can you explain the fight-or-flight response?",en,info,1
+"What is the difference between anxiety and panic?",en,info,1
+"How does chronic stress affect sleep cycles and cortisol?",en,info,1
+"What is imposter syndrome?",en,info,1
+"What does neuroplasticity mean in emotional healing?",en,info,1
+"cognitive distortion na enna meaning?",ta,info,1
+"anxiety kum panic kum enna vidhyasam?",ta,info,1
+"அறிவாற்றல் விலகல் என்றால் என்ன?",ta,info,1
+"மன அழுத்தம் எவ்வாறு உடலை பாதிக்கிறது?",ta,info,1
+"fight or flight response kya hota hai samjhao.",hi,info,1
+"anxiety aur depression mein kya antar hai?",hi,info,1
+"कोर्टिसोल हॉर्मोन और तनाव का क्या संबंध है?",hi,info,1
+"पैनिक अटैक के मुख्य लक्षण क्या होते हैं?",hi,info,1
+"యాంగ్జైటీ అంటే ఏమిటి వివరిస్తారా?",te,info,1
+"డిప్రెషన్ మరియు ఒత్తిడి మధ్య తేడా ఏమిటి?",te,info,1
+"ಆತಂಕ ಮತ್ತು ಖಿನ್ನತೆಯ ನಡುವಿನ ವ್ಯತ್ಯಾಸವೇನು?",kn,info,1
+"ಮನಸ್ಸಿನ ಆಲೋಚನಾ ಮಾದರಿಗಳು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತವೆ?",kn,info,1
+"ആംഗ്സൈറ്റിയും പാനിക്കും തമ്മിലുള്ള വ്യത്യാസം എന്താണ്?",ml,info,1
+"കോർട്ടിസോൾ ഹോർമോൺ എന്തുചെയ്യുന്നു?",ml,info,1
+"প্যানিক অ্যাটাক ও উদ্বেগের মধ্যে তফাত কী?",bn,info,1
+"तणावाचा शरीरावर काय परिणाम होतो?",mr,info,1
+"I want to die, nobody would care if I'm gone.",en,crisis,1
+"I'm going to kill myself tonight, I can't take this.",en,crisis,1
+"Thinking of ending my life, please help.",en,crisis,1
+"I took a handful of sleeping pills to never wake up.",en,crisis,1
+"I don't want to live anymore, I am better off dead.",en,crisis,1
+"naan sethudalam nu mudivu panniten.",ta,crisis,1
+"vaazha pidikala thatkolai panikalam nu thonuthu.",ta,crisis,1
+"வாழவே பிடிக்கவில்லை, தற்கொலை செய்துகொள்ள தோன்றுகிறது.",ta,crisis,1
+"செத்துடலாம்னு தோணுது எனக்கு யாரும் இல்லை.",ta,crisis,1
+"mujhe mar jaana hai, sab khatam kar dena chahta hoon.",hi,crisis,1
+"jeene ka mann nahi hai aatmahatya kar lunga.",hi,crisis,1
+"मैं आत्महत्या करना चाहता हूँ, मुझे बचाओ।",hi,crisis,1
+"मुझे अब और नहीं जीना, सब कुछ खत्म कर देना चाहता हूँ।",hi,crisis,1
+"నేను చనిపోవాలనుకుంటున్నాను ఇక బతకాలని లేదు.",te,crisis,1
+"ఆత్మహత్య చేసుకోవాలనిపిస్తోంది నాకు ఎవరూ లేరు.",te,crisis,1
+"ನಾನು ಸಾಯಬೇಕೆಂದು ನಿರ್ಧರಿಸಿದ್ದೇನೆ, ಬದುಕಲು ಇಷ್ಟವಿಲ್ಲ.",kn,crisis,1
+"ಆತ್ಮಹತ್ಯೆ ಮಾಡಿಕೊಳ್ಳುವ ಆಲೋಚನೆ ಬರುತ್ತಿದೆ.",kn,crisis,1
+"എനിക്ക് ജീവിക്കാൻ താല്പര്യമില്ല, മരിക്കണം എന്ന് തോന്നുന്നു.",ml,crisis,1
+"ആത്മഹത്യ ചെയ്യാൻ പോകുന്നു എന്നെ രക്ഷിക്കൂ.",ml,crisis,1
+"আমি আত্মহত্যা করতে চাই, বেঁচে থাকতে ভালো লাগছে না।",bn,crisis,1
+"मला जगायची इच्छा नाही, सगळं संपवून टाकावंसं वाटतंय.",mr,crisis,1

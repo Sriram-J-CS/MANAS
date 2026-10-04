@@ -1,0 +1,2 @@
+feedback_id,message_id,pseudonym_user_id,rating,felt_understood,user_comment,scrubbed_user_message,scrubbed_bot_reply,timestamp,counselor_reviewer,clinical_diagnosis_of_failure,suggested_rewritten_reply,approved_for_golden_dataset
+2701b8ea-7010-4335-bb9e-c7d3f238cd69,m1,user_b5e2b65c9285,1,True,,Feeling stressed,I hear how heavy that feels.,2026-10-01 08:49:56,,,,NO

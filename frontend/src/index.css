@@ -1,0 +1,187 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #000000;
+  --color-paper: #ffffff;
+  --font-sans: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-tamil: 'Noto Sans Tamil', 'Inter Tight', sans-serif;
+}
+
+:root {
+  --ink: #000000;
+  --paper: #ffffff;
+  --ease-awwwards: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: -0.04em;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tamil font handling */
+[lang="ta"], .font-tamil {
+  font-family: 'Noto Sans Tamil', 'Inter Tight', sans-serif;
+  letter-spacing: -0.01em;
+}
+
+/* Tiny uppercase 11-12px UI labels */
+.ui-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Pill buttons - the ONLY rounded elements permitted */
+.pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 22px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1), background-color 0.2s, color 0.2s, border-color 0.2s;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pill-btn:hover {
+  transform: scale(1.04);
+}
+
+.pill-btn-black {
+  background-color: #000000;
+  color: #ffffff;
+  border: 1px solid #000000;
+}
+
+.pill-btn-black:hover {
+  background-color: #222222;
+}
+
+.pill-btn-white {
+  background-color: #ffffff;
+  color: #000000;
+  border: 1px solid #ffffff;
+}
+
+.pill-btn-white:hover {
+  background-color: #e5e5e5;
+}
+
+.pill-btn-outlined {
+  background-color: transparent;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.pill-btn-outlined:hover {
+  background-color: #ffffff;
+  color: #000000;
+  border-color: #ffffff;
+}
+
+/* Lenis smooth scrolling configuration */
+html.lenis, html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-smooth iframe {
+  pointer-events: none;
+}
+
+/* Custom interactive cursor */
+#awwwards-cursor {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  background: #ffffff;
+  color: #000000;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.25s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.2s;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+#awwwards-cursor.on {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* Overflow reveal container */
+.reveal-wrapper {
+  overflow: hidden;
+}
+
+.reveal-inner {
+  transform: translateY(100%);
+  transition: transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.reveal-wrapper.active .reveal-inner {
+  transform: translateY(0);
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #000000;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b2b2b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ffffff;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
