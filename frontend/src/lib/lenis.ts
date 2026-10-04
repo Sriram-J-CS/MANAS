@@ -12,13 +12,13 @@ export function initLenis() {
   }
 
   const lenis = new Lenis({
-    duration: 1.2,
-    easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+    lerp: 0.08,
+    wheelMultiplier: 0.9,
+    touchMultiplier: 1.2,
     orientation: 'vertical',
     gestureOrientation: 'vertical',
     smoothWheel: true,
-    wheelMultiplier: 0.9,
-    touchMultiplier: 1.5,
+    syncTouch: true,
   });
 
   lenis.on('scroll', () => {
@@ -40,3 +40,5 @@ export function initLenis() {
     },
   };
 }
+
+export { gsap, ScrollTrigger };

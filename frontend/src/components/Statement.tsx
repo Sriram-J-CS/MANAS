@@ -29,6 +29,38 @@ export const Statement: React.FC<StatementProps> = ({ statement }) => {
     if (!words || words.length === 0 || !sectionRef.current) return;
 
     const ctx = gsap.context(() => {
+      // Headings rise with masks (ease power3.out, ~0.9s, stagger 0.08s)
+      const maskedHeadings = sectionRef.current?.querySelectorAll('.masked-heading-line');
+      if (maskedHeadings && maskedHeadings.length > 0) {
+        gsap.from(maskedHeadings, {
+          yPercent: 110,
+          opacity: 0,
+          duration: 0.9,
+          stagger: 0.08,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: whiteTopRef.current,
+            start: 'top 85%',
+          },
+        });
+      }
+
+      // Body text fade up
+      const bodyText = whiteTopRef.current?.querySelector('.fade-up-body');
+      if (bodyText) {
+        gsap.from(bodyText, {
+          y: 24,
+          opacity: 0,
+          duration: 0.8,
+          delay: 0.2,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: whiteTopRef.current,
+            start: 'top 85%',
+          },
+        });
+      }
+
       // Word by word scroll reveal
       gsap.to(words, {
         opacity: 1,
@@ -90,10 +122,12 @@ export const Statement: React.FC<StatementProps> = ({ statement }) => {
           <span className="text-[11px] font-mono uppercase tracking-[0.1em] text-black/50 block mb-6">
             ( 02 / PHILOSOPHY )
           </span>
-          <h2 className="text-[clamp(44px,7.8vw,120px)] leading-[0.92] tracking-[-0.04em] font-extrabold uppercase text-[#000000]">
-            WE PREFER IDEAS.
-          </h2>
-          <p className="mt-6 text-[clamp(16px,1.6vw,26px)] leading-[1.25] font-medium text-black/70 max-w-[32ch]">
+          <div className="overflow-hidden">
+            <h2 className="masked-heading-line text-[clamp(44px,7.8vw,120px)] leading-[0.92] tracking-[-0.04em] font-extrabold uppercase text-[#000000]">
+              WE PREFER IDEAS.
+            </h2>
+          </div>
+          <p className="fade-up-body mt-6 text-[clamp(16px,1.6vw,26px)] leading-[1.25] font-medium text-black/70 max-w-[32ch]">
             Real emotional companion architecture over generic bots. True active empathy before burnout.
           </p>
         </div>

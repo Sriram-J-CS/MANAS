@@ -19,15 +19,18 @@ export const Hero: React.FC<HeroProps> = ({
   const [btnOffset, setBtnOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isInkExpanding, setIsInkExpanding] = useState(false);
 
-  // Magnetic hover physics
+  // Magnetic hover physics (max 8px pull)
   const handleMouseMove = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
-    const dx = (e.clientX - centerX) * 0.35;
-    const dy = (e.clientY - centerY) * 0.35;
-    setBtnOffset({ x: dx, y: dy });
+    const rawDx = (e.clientX - centerX) * 0.28;
+    const rawDy = (e.clientY - centerY) * 0.28;
+    const dist = Math.hypot(rawDx, rawDy);
+    const maxPull = 8;
+    const factor = dist > maxPull ? maxPull / dist : 1.0;
+    setBtnOffset({ x: rawDx * factor, y: rawDy * factor });
   };
 
   const handleMouseLeave = () => {
@@ -67,7 +70,7 @@ export const Hero: React.FC<HeroProps> = ({
             transform: `translate3d(${btnOffset.x}px, ${btnOffset.y}px, 0)`,
             transition: btnOffset.x === 0 ? 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none',
           }}
-          className="group relative inline-flex items-center justify-center px-10 py-5 rounded-full bg-[#000000] text-[#FFFFFF] shadow-2xl hover:shadow-[0_20px_50px_rgba(0,0,0,0.35)] transition-shadow overflow-hidden cursor-pointer"
+          className="group relative inline-flex items-center justify-center px-10 py-5 rounded-full bg-[#000000] text-[#FFFFFF] shadow-2xl hover:shadow-[0_20px_50px_rgba(0,0,0,0.35)] active:scale-[0.97] transition-all overflow-hidden cursor-pointer"
         >
           {/* Subtle violet sheen on hover */}
           <span className="absolute inset-0 bg-gradient-to-r from-transparent via-[#8B5CF6]/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" />

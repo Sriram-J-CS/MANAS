@@ -606,7 +606,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             className="h-full bg-gradient-to-r from-[#8B5CF6] to-[#EC4899]"
             initial={{ width: `${((step - 1) / 6) * 100}%` }}
             animate={{ width: `${(step / 6) * 100}%` }}
-            transition={{ ease: 'easeInOut', duration: 0.35 }}
+            transition={{ ease: [0.22, 1, 0.36, 1], duration: 0.55 }}
           />
         </div>
 

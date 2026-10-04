@@ -131,17 +131,17 @@ export const WorksTrack: React.FC<WorksTrackProps> = ({
                 {item.line}
               </h4>
 
-              {/* Image Tile: 4/5 Aspect Ratio, Image scales subtly on hover */}
-              <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#0d0d0d] border border-white/10 group-hover:border-white/40 transition-colors">
+              {/* Image Tile: 4/5 Aspect Ratio, Image scales subtly on hover (scale 1.03, soft shadow) */}
+              <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#0d0d0d] border border-white/10 group-hover:border-white/40 group-hover:shadow-[0_25px_60px_rgba(0,0,0,0.75)] group-hover:scale-[1.03] transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
                 {item.img ? (
                   <img
                     src={item.img}
                     alt={item.title}
-                    className="w-full h-full object-cover grayscale contrast-125 group-hover:scale-[1.04] transition-all duration-700 ease-[cubic-bezier(0.2,0.7,0.2,1)]"
+                    className="w-full h-full object-cover grayscale contrast-125 group-hover:scale-[1.03] transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
                   />
                 ) : (
                   <div
-                    className="w-full h-full flex flex-col items-center justify-center p-8 group-hover:scale-[1.04] transition-transform duration-700 ease-[cubic-bezier(0.2,0.7,0.2,1)]"
+                    className="w-full h-full flex flex-col items-center justify-center p-8 group-hover:scale-[1.03] transition-transform duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
                     style={{
                       background: `linear-gradient(135deg, ${g1}, ${g2} 40%, ${g3})`,
                     }}

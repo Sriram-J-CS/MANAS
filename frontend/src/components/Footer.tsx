@@ -35,6 +35,23 @@ export const Footer: React.FC<FooterProps> = ({ footer }) => {
           scrub: 1,
         },
       });
+
+      // Individual letters stretch and shift gently with scroll
+      const letters = el.querySelectorAll('.footer-letter');
+      if (letters.length > 0) {
+        gsap.from(letters, {
+          scaleY: 1.35,
+          yPercent: 18,
+          stagger: 0.03,
+          ease: 'power2.out',
+          scrollTrigger: {
+            trigger: footerEl,
+            start: 'top 85%',
+            end: 'bottom bottom',
+            scrub: 1.2,
+          },
+        });
+      }
     }, footerRef);
 
     return () => ctx.revert();
@@ -110,7 +127,7 @@ export const Footer: React.FC<FooterProps> = ({ footer }) => {
                   transition: 'transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1)',
                   marginRight: char === ' ' ? '0.25em' : '0',
                 }}
-                className="cursor-default hover:text-white"
+                className="footer-letter cursor-default hover:text-white"
               >
                 {char === ' ' ? '\u00A0' : char}
               </span>
