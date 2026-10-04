@@ -322,7 +322,7 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
             setLoading(false);
           },
           undefined,
-          (err) => {
+          (err: any) => {
             if (isDisposed) return;
             console.error('Failed to load avatar GLB:', err);
             setLoadError(`Failed to load avatar GLB from ${modelUrl}: ${err?.message || err}`);
@@ -330,10 +330,10 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
           }
         );
       })
-      .catch((err) => {
+      .catch((err: any) => {
         if (isDisposed) return;
         console.error('Failed to load avatar manifest:', err);
-        setLoadError(err.message || 'Manifest load failure');
+        setLoadError(err?.message || 'Manifest load failure');
         setLoading(false);
       });
 

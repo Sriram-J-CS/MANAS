@@ -30,7 +30,7 @@ export const MascotStage: React.FC<MascotStageProps> = ({
   audioEnergy = 0,
   onOutfitChange,
   className = '',
-  prefer3D = true,
+  prefer3D = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<AvatarRenderer | null>(null);
@@ -39,6 +39,10 @@ export const MascotStage: React.FC<MascotStageProps> = ({
   const [showWardrobe, setShowWardrobe] = useState<boolean>(false);
   const [activeGesture, setActiveGesture] = useState<MascotGesture>('idle');
   const [use3DMode, setUse3DMode] = useState<boolean>(prefer3D);
+
+  useEffect(() => {
+    setUse3DMode(prefer3D);
+  }, [prefer3D]);
 
   // Available wardrobe outfits
   const outfits: Array<{ id: OutfitType; label: string }> = [
@@ -141,16 +145,24 @@ export const MascotStage: React.FC<MascotStageProps> = ({
 
       {/* Renderer Mode Badge & Switch */}
       <div className="relative z-20 w-full pt-3 px-4 flex justify-between items-center text-xs">
-        <span className="font-mono text-[10px] tracking-wider text-[#0A0A0A]/50 uppercase">
-          Stage: {gender === 'girl' ? 'Ananya' : 'Aarav'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] tracking-wider text-[#0A0A0A]/60 uppercase font-semibold">
+            Digital Twin: {gender === 'girl' ? 'Ananya' : 'Aarav'}
+          </span>
+          {isSpeaking && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 text-[10px] font-mono font-medium animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-pink-500" />
+              Speaking
+            </span>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => setUse3DMode(!use3DMode)}
-          className="px-2.5 py-1 rounded-full border border-[#0A0A0A]/15 bg-[#FFFFFF]/80 hover:bg-[#0A0A0A] hover:text-white transition-all text-[10px] font-mono tracking-wider shadow-xs cursor-pointer"
-          title="Toggle between 3D ARKit Rig and 2D Expression Pack"
+          className="px-2.5 py-1 rounded-full border border-[#0A0A0A]/15 bg-[#FFFFFF]/90 hover:bg-[#0A0A0A] hover:text-white transition-all text-[10px] font-mono tracking-wider shadow-xs cursor-pointer flex items-center gap-1.5"
+          title="Toggle between 3D Pixar Avatar and Low-Poly GLB Rig"
         >
-          {use3DMode ? '● 3D GLB (ARKit)' : '○ 2D Rig'}
+          {use3DMode ? '● 3D GLB Rig' : '✨ 3D Pixar Avatar'}
         </button>
       </div>
 

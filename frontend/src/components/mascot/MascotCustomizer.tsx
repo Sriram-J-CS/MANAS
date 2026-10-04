@@ -71,6 +71,9 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
 
   const handleSave = () => {
     const updated = saveMascotConfig(config);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('manas:custom_mascot_uploaded'));
+    }
     onApply?.(updated);
     onClose?.();
   };

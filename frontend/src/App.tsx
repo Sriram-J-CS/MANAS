@@ -21,10 +21,20 @@ import { siteConfigByLang, type WorkItem } from './content/site.config';
 import type { Language } from './types';
 import { PersistentMiniPlayer } from './components/music/PersistentMiniPlayer';
 import { MusicDrawer } from './components/music/MusicDrawer';
+import { AuthModal } from './components/auth/AuthModal';
+import { VoiceRatingLabModal } from './components/voice/VoiceRatingLabModal';
+import { DigitalTwinModal } from './components/twin/DigitalTwinModal';
+import { PersonalityDiscoveryModal } from './components/personality/PersonalityDiscoveryModal';
+import { WhatWorksModal } from './components/interventions/WhatWorksModal';
+import { MemoryCenterModal } from './components/memory/MemoryCenterModal';
+import { JournalAndGoalsModal } from './components/journal/JournalAndGoalsModal';
+import { SafetyPlanModal } from './components/safety/SafetyPlanModal';
+import { PrivacyCenterModal } from './components/privacy/PrivacyCenterModal';
 
 export function App() {
   const [currentLang, setCurrentLang] = useState<Language>('en');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isCompanionOpen, setIsCompanionOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -32,6 +42,28 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMascotCustomizerOpen, setIsMascotCustomizerOpen] = useState(false);
   const [isMusicDrawerOpen, setIsMusicDrawerOpen] = useState(false);
+  const [isVoiceRatingLabOpen, setIsVoiceRatingLabOpen] = useState(false);
+
+  // EmotiCare Domain Modals State
+  const [isTwinOpen, setIsTwinOpen] = useState(false);
+  const [isPersonalityOpen, setIsPersonalityOpen] = useState(false);
+  const [isWhatWorksOpen, setIsWhatWorksOpen] = useState(false);
+  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
+  const [isJournalGoalsOpen, setIsJournalGoalsOpen] = useState(false);
+  const [isSafetyPlanOpen, setIsSafetyPlanOpen] = useState(false);
+  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
+
+  // Authenticated user state
+  const [authUser, setAuthUser] = useState<{ user_id: string; name: string; email?: string; phone?: string } | null>(() => {
+    try {
+      const uid = localStorage.getItem('manas_user_id');
+      const email = localStorage.getItem('manas_user_email');
+      const phone = localStorage.getItem('manas_user_phone');
+      const name = localStorage.getItem('manas_user_name');
+      if (uid && (email || phone)) return { user_id: uid, email: email || '', phone: phone || '', name: name || 'User' };
+    } catch (_) {}
+    return null;
+  });
 
   // User Profile state (persisted in localStorage)
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
@@ -78,10 +110,13 @@ export function App() {
     avatar.loadConfigOnStartup();
     const lenisInstance = initLenis();
 
-    // Direct chat opening via URL query param or hash for tests and quick links
+    // Direct chat opening or voice lab opening via URL query param or hash
     const params = new URLSearchParams(window.location.search);
     if (params.get('chat') === 'open' || window.location.hash === '#chat') {
       setIsCompanionOpen(true);
+    }
+    if (params.get('test-voice') === 'true' || window.location.hash === '#test-voice') {
+      setIsVoiceRatingLabOpen(true);
     }
 
     return () => {
@@ -94,10 +129,22 @@ export function App() {
     document.documentElement.lang = currentLang;
   }, [currentLang]);
 
+  const handleSelectLanguage = (lang: Language) => {
+    setCurrentLang(lang);
+    setUserProfile((prev) => {
+      const next = { ...prev, language: lang };
+      try {
+        localStorage.setItem('manas_twin_profile', JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
+  };
+
   const toggleLanguage = () => {
-    const nextLang = currentLang === 'en' ? 'ta' : 'en';
-    setCurrentLang(nextLang);
-    setUserProfile((prev) => ({ ...prev, language: nextLang }));
+    const langCodes: Language[] = ['en', 'ta', 'hi', 'te', 'kn', 'ml', 'bn', 'mr'];
+    const currIdx = langCodes.indexOf(currentLang);
+    const nextLang = langCodes[(currIdx + 1) % langCodes.length];
+    handleSelectLanguage(nextLang);
   };
 
   // Launch Chat / Onboarding trigger
@@ -117,7 +164,7 @@ export function App() {
       localStorage.setItem('manas_twin_onboarded', 'true');
     } catch (_) {}
 
-    if (profile.language === 'ta' || profile.language === 'en') {
+    if (profile.language) {
       setCurrentLang(profile.language as Language);
     }
 
@@ -206,6 +253,9 @@ export function App() {
         isMenuOpen={isMenuOpen}
         onToggleMenu={() => setIsMenuOpen(!isMenuOpen)}
         onOpenDemo={handleStartTalking}
+        user={authUser}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenVoiceRatingLab={() => setIsVoiceRatingLabOpen(true)}
       />
 
       {/* Fullscreen Overlay Menu */}
@@ -214,10 +264,19 @@ export function App() {
         onClose={() => setIsMenuOpen(false)}
         currentLang={currentLang}
         onToggleLang={toggleLanguage}
+        onSelectLang={handleSelectLanguage}
         onOpenDemo={handleStartTalking}
         onOpenHelp={() => setIsHelpOpen(true)}
         onOpenCalm={() => setIsCalmOpen(true)}
         onOpenMascotCustomizer={() => setIsMascotCustomizerOpen(true)}
+        onOpenVoiceRatingLab={() => setIsVoiceRatingLabOpen(true)}
+        onOpenTwin={() => setIsTwinOpen(true)}
+        onOpenPersonality={() => setIsPersonalityOpen(true)}
+        onOpenWhatWorks={() => setIsWhatWorksOpen(true)}
+        onOpenMemory={() => setIsMemoryOpen(true)}
+        onOpenJournalGoals={() => setIsJournalGoalsOpen(true)}
+        onOpenSafetyPlan={() => setIsSafetyPlanOpen(true)}
+        onOpenPrivacy={() => setIsPrivacyOpen(true)}
       />
 
 
@@ -285,6 +344,13 @@ export function App() {
           setIsOnboardingOpen(true);
         }}
         onDeleteData={handleDeleteAllUserData}
+        onOpenTwin={() => setIsTwinOpen(true)}
+        onOpenPersonality={() => setIsPersonalityOpen(true)}
+        onOpenWhatWorks={() => setIsWhatWorksOpen(true)}
+        onOpenMemory={() => setIsMemoryOpen(true)}
+        onOpenJournalGoals={() => setIsJournalGoalsOpen(true)}
+        onOpenSafetyPlan={() => setIsSafetyPlanOpen(true)}
+        onOpenPrivacy={() => setIsPrivacyOpen(true)}
       />
 
       {/* 3D Mascot Customizer Studio Modal */}
@@ -326,6 +392,66 @@ export function App() {
       <MusicDrawer
         isOpen={isMusicDrawerOpen}
         onClose={() => setIsMusicDrawerOpen(false)}
+      />
+
+      {/* User Authentication Modal (JWT & Zero PII) */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onAuthSuccess={(u) => {
+          setAuthUser(u);
+          setUserProfile((prev) => ({
+            ...prev,
+            id: u.user_id,
+            name: u.name,
+            contactEmail: u.email || prev.contactEmail,
+            contactPhone: u.phone || prev.contactPhone,
+          }));
+        }}
+      />
+
+      {/* Multilingual Voice Rating Lab Modal (8 Indian Languages) */}
+      <VoiceRatingLabModal
+        isOpen={isVoiceRatingLabOpen}
+        onClose={() => setIsVoiceRatingLabOpen(false)}
+        initialLanguage={currentLang}
+      />
+
+      {/* EmotiCare Production Domain Modals */}
+      <DigitalTwinModal
+        isOpen={isTwinOpen}
+        onClose={() => setIsTwinOpen(false)}
+      />
+
+      <PersonalityDiscoveryModal
+        isOpen={isPersonalityOpen}
+        onClose={() => setIsPersonalityOpen(false)}
+      />
+
+      <WhatWorksModal
+        isOpen={isWhatWorksOpen}
+        onClose={() => setIsWhatWorksOpen(false)}
+      />
+
+      <MemoryCenterModal
+        isOpen={isMemoryOpen}
+        onClose={() => setIsMemoryOpen(false)}
+      />
+
+      <JournalAndGoalsModal
+        isOpen={isJournalGoalsOpen}
+        onClose={() => setIsJournalGoalsOpen(false)}
+      />
+
+      <SafetyPlanModal
+        isOpen={isSafetyPlanOpen}
+        onClose={() => setIsSafetyPlanOpen(false)}
+      />
+
+      <PrivacyCenterModal
+        isOpen={isPrivacyOpen}
+        onClose={() => setIsPrivacyOpen(false)}
+        onAccountDeleted={handleDeleteAllUserData}
       />
     </div>
   );

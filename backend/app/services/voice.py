@@ -1,14 +1,15 @@
 """
 voice.py - Server-Side Voice Processing Service for MANAS
-
-Capabilities:
-1. Speech-to-Text (STT) fallback via Sarvam AI or Gemini when browser Web Speech is unavailable.
-2. Text-to-Speech (TTS) preprocessing:
-   - Strips markdown and emojis.
-   - Converts emergency numbers ('14416', '112', '1098') into clear digit-by-digit pronunciations across all 8 Indian languages.
-   - Sentence-level chunking for low-latency streaming audio.
-   - SHA-256 disk and memory caching for repeated psychoeducation prompts.
-3. Language QA registry: tracks per-language WER results and automatically disables voice for failing languages.
+─────────────────────────────────────────────────────────
+Capabilities
+1. Speech-to-Text (STT) – Sarvam AI Saarika v2.5 → Gemini 1.5 Flash fallback → mock.
+2. Text-to-Speech (TTS) – Sarvam AI Bulbul v2 with:
+   • Native-speaker voices per language + gender (real human-sounding personas).
+   • Emotion-aware pitch / pace adjustment (calm, concerned, happy, sad, etc.).
+   • SSML-style text pre-processing (digit-by-digit helplines, markdown strip).
+   • Multi-chunk support for long responses (>500 chars).
+   • SHA-256 two-layer disk + memory cache.
+3. Language QA registry – disables voice for WER-failing languages.
 """
 
 import base64
@@ -41,6 +42,37 @@ VOICE_LANGUAGE_STATUS: Dict[str, bool] = {
     "bn": True,
     "mr": True,
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Native speaker voice roster for Sarvam bulbul:v2
+# Real human-recorded personas – NOT generic TTS synthesis.
+# Docs: https://docs.sarvam.ai/api-reference-docs/text-to-speech
+# ─────────────────────────────────────────────────────────────────────────────
+NATIVE_VOICES: Dict[str, Dict[str, List[str]]] = {
+    "en": {"female": ["ananya", "pavithra", "maitreyi"], "male": ["achal", "arjun", "karan"]},
+    "hi": {"female": ["ananya", "pavithra", "maitreyi"], "male": ["achal", "arjun", "karan"]},
+    "ta": {"female": ["ananya", "pavithra"],             "male": ["achal", "karan"]},
+    "te": {"female": ["ananya", "maitreyi"],             "male": ["achal", "arjun"]},
+    "kn": {"female": ["ananya", "pavithra"],             "male": ["achal", "karan"]},
+    "ml": {"female": ["ananya", "maitreyi"],             "male": ["achal", "arjun"]},
+    "bn": {"female": ["ananya", "pavithra"],             "male": ["achal", "karan"]},
+    "mr": {"female": ["ananya", "pavithra"],             "male": ["achal", "arjun"]},
+}
+
+# Emotion → voice parameter mapping
+# pitch: float (-0.5 to 0.5)  pace: float (0.5–1.5)  loudness: float (0.5–2.0)
+EMOTION_PARAMS: Dict[str, Dict[str, float]] = {
+    "calm":       {"pitch": 0.0,   "pace": 0.92, "loudness": 1.3},
+    "concerned":  {"pitch": -0.08, "pace": 0.88, "loudness": 1.4},
+    "happy":      {"pitch": 0.12,  "pace": 1.05, "loudness": 1.5},
+    "sad":        {"pitch": -0.15, "pace": 0.82, "loudness": 1.2},
+    "thoughtful": {"pitch": -0.05, "pace": 0.90, "loudness": 1.3},
+    "empathetic": {"pitch": 0.02,  "pace": 0.88, "loudness": 1.35},
+}
+DEFAULT_VOICE_PARAMS = {"pitch": 0.0, "pace": 0.95, "loudness": 1.4}
+
+# Gender-based pitch bias applied on top of emotion params
+GENDER_PITCH_BIAS: Dict[str, float] = {"female": +0.05, "male": -0.05}
 
 # Digit-by-digit translations for emergency helplines
 EMERGENCY_DIGITS: Dict[str, Dict[str, str]] = {
@@ -84,6 +116,40 @@ RE_EMOJIS = re.compile(
 )
 
 
+def pick_native_voice(language: str, gender: str) -> str:
+    """Returns the primary native-speaker persona for a language/gender pair."""
+    lang = language if language in NATIVE_VOICES else "en"
+    g    = gender   if gender   in ("female", "male") else "female"
+    return NATIVE_VOICES[lang][g][0]
+
+
+def voice_params_for_emotion(emotion: Optional[str], gender: str) -> Dict[str, float]:
+    """Merges emotion preset + gender pitch bias, clamped to Sarvam API limits."""
+    base  = dict(EMOTION_PARAMS.get(emotion or "calm", DEFAULT_VOICE_PARAMS))
+    bias  = GENDER_PITCH_BIAS.get(gender, 0.0)
+    base["pitch"]    = round(max(-0.5, min(0.5, base["pitch"] + bias)), 3)
+    base["pace"]     = round(max(0.5,  min(1.5, base["pace"])),         3)
+    base["loudness"] = round(max(0.5,  min(2.0, base["loudness"])),     3)
+    return base
+
+
+def _chunk_text(text: str, max_chars: int = 500) -> List[str]:
+    """Sentence-boundary-aware chunking to keep prosody natural."""
+    sentences = split_sentences_for_streaming(text)
+    chunks: List[str] = []
+    current = ""
+    for s in sentences:
+        if len(current) + len(s) + 1 <= max_chars:
+            current = (current + " " + s).strip()
+        else:
+            if current:
+                chunks.append(current)
+            current = s
+    if current:
+        chunks.append(current)
+    return chunks or [text[:max_chars]]
+
+
 def sanitize_spoken_text(text: str, language: str = "en") -> str:
     """
     Cleans text for natural voice synthesis:
@@ -122,9 +188,9 @@ def split_sentences_for_streaming(text: str) -> List[str]:
     return [s.strip() for s in sentences if s.strip()]
 
 
-def compute_tts_cache_key(text: str, language: str, voice: str) -> str:
-    """Computes SHA-256 fingerprint for audio caching."""
-    raw = f"{language}:{voice}:{text}".encode("utf-8")
+def compute_tts_cache_key(text: str, language: str, voice: str, emotion: str = "calm") -> str:
+    """Computes SHA-256 fingerprint for audio caching (includes emotion for correct keying)."""
+    raw = f"{language}:{voice}:{emotion}:{text}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -163,6 +229,9 @@ async def transcribe_audio_fallback(
                 f"\r\n--{boundary}\r\n"
                 f'Content-Disposition: form-data; name="language_code"\r\n\r\n'
                 f"{lang_code}\r\n"
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="model"\r\n\r\n'
+                f"saarika:v2.5\r\n"
                 f"--{boundary}--\r\n"
             ).encode("utf-8")
 
@@ -174,7 +243,7 @@ async def transcribe_audio_fallback(
                 res_data = json.loads(response.read().decode("utf-8"))
                 transcript = res_data.get("transcript", "")
                 if transcript:
-                    return {"transcript": transcript, "provider": "sarvam_ai"}
+                    return {"transcript": transcript, "provider": "sarvam_saarika_v2_5"}
         except Exception as e:
             logger.warning("Sarvam STT failed: %s. Falling back to next provider.", e)
 
@@ -228,11 +297,20 @@ async def transcribe_audio_fallback(
 async def synthesize_speech_provider(
     text: str,
     language: str = "en",
-    voice: str = "ananya"
-) -> Dict[str, any]:
+    voice: Optional[str] = None,
+    gender: str = "female",
+    emotion: Optional[str] = "calm",
+) -> Dict:
     """
-    Synthesizes speech with audio caching and digit expansion.
-    Returns audio format or streaming metadata.
+    Synthesizes speech using Sarvam AI Bulbul v2 (native Indic speaker voices).
+
+    Parameters
+    ----------
+    text     : Text to speak (markdown stripped automatically).
+    language : Two-letter language code (en, hi, ta, te, kn, ml, bn, mr).
+    voice    : Optional explicit speaker name; resolved from gender+language if None.
+    gender   : 'female' | 'male' — picks the correct native speaker persona.
+    emotion  : Emotion tag for pitch/pace tuning (calm/happy/sad/concerned/…).
     """
     if not VOICE_LANGUAGE_STATUS.get(language, True):
         return {
@@ -241,7 +319,9 @@ async def synthesize_speech_provider(
         }
 
     clean_text = sanitize_spoken_text(text, language)
-    cache_key = compute_tts_cache_key(clean_text, language, voice)
+    speaker    = voice or pick_native_voice(language, gender)
+    params     = voice_params_for_emotion(emotion, gender)
+    cache_key  = compute_tts_cache_key(clean_text, language, speaker, emotion or "calm")
 
     # Check memory cache
     if cache_key in TTS_MEMORY_CACHE:
@@ -249,7 +329,9 @@ async def synthesize_speech_provider(
             "audio_base64": TTS_MEMORY_CACHE[cache_key],
             "cached": True,
             "clean_text": clean_text,
-            "provider": "cache"
+            "provider": "cache",
+            "voice_used": speaker,
+            "params": params,
         }
 
     # Check disk cache
@@ -262,7 +344,9 @@ async def synthesize_speech_provider(
                 "audio_base64": cached_data["audio_base64"],
                 "cached": True,
                 "clean_text": clean_text,
-                "provider": "disk_cache"
+                "provider": "disk_cache",
+                "voice_used": speaker,
+                "params": params,
             }
         except Exception:
             pass
@@ -270,49 +354,67 @@ async def synthesize_speech_provider(
     sarvam_key = os.environ.get("SARVAM_API_KEY")
     if sarvam_key:
         try:
-            url = "https://api.sarvam.ai/text-to-speech"
+            url      = "https://api.sarvam.ai/text-to-speech"
             lang_code = f"{language}-IN" if language != "en" else "en-IN"
-            speaker = "meera" if voice == "ananya" else "arvind"
+            chunks   = _chunk_text(clean_text, max_chars=500)
+            all_parts: List[str] = []
 
-            payload = {
-                "inputs": [clean_text[:500]],
-                "target_language_code": lang_code,
-                "speaker": speaker,
-                "pitch": 0,
-                "pace": 0.95,
-                "loudness": 1.5,
-                "speech_sample_rate": 22050,
-                "enable_preprocessing": True,
-                "model": "bulbul:v1"
-            }
+            for chunk in chunks:
+                payload = {
+                    "inputs": [chunk],
+                    "target_language_code": lang_code,
+                    "speaker":   speaker,
+                    "pitch":     params["pitch"],
+                    "pace":      params["pace"],
+                    "loudness":  params["loudness"],
+                    "speech_sample_rate": 22050,
+                    "enable_preprocessing": True,
+                    "model": "bulbul:v2"
+                }
+                req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"))
+                req.add_header("api-subscription-key", sarvam_key)
+                req.add_header("Content-Type", "application/json")
 
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"))
-            req.add_header("api-subscription-key", sarvam_key)
-            req.add_header("Content-Type", "application/json")
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    res    = json.loads(response.read().decode("utf-8"))
+                    audios = res.get("audios", [])
+                    if audios:
+                        all_parts.append(audios[0])
 
-            with urllib.request.urlopen(req, timeout=8) as response:
-                res = json.loads(response.read().decode("utf-8"))
-                audios = res.get("audios", [])
-                if audios:
-                    audio_b64 = audios[0]
-                    TTS_MEMORY_CACHE[cache_key] = audio_b64
-                    cache_file.write_text(json.dumps({"audio_base64": audio_b64}), encoding="utf-8")
-                    return {
-                        "audio_base64": audio_b64,
-                        "cached": False,
-                        "clean_text": clean_text,
-                        "provider": "sarvam_ai"
-                    }
+            if all_parts:
+                if len(all_parts) == 1:
+                    audio_b64 = all_parts[0]
+                else:
+                    raw = b"".join(base64.b64decode(p) for p in all_parts)
+                    audio_b64 = base64.b64encode(raw).decode("utf-8")
+
+                TTS_MEMORY_CACHE[cache_key] = audio_b64
+                cache_file.write_text(json.dumps({"audio_base64": audio_b64}), encoding="utf-8")
+                return {
+                    "audio_base64": audio_b64,
+                    "cached":    False,
+                    "clean_text": clean_text,
+                    "provider":  "sarvam_bulbul_v2",
+                    "voice_used": speaker,
+                    "params":    params,
+                }
         except Exception as e:
-            logger.warning("Sarvam TTS request failed: %s. Using client-side speech payload.", e)
+            logger.warning(
+                "Sarvam TTS (bulbul:v2) failed lang=%s speaker=%s: %s – falling back.",
+                language, speaker, e
+            )
 
     # Client-side Web Speech fallback payload
     return {
         "audio_base64": None,
         "use_client_tts": True,
-        "clean_text": clean_text,
-        "sentences": split_sentences_for_streaming(clean_text),
-        "provider": "client_web_speech"
+        "clean_text":  clean_text,
+        "sentences":   split_sentences_for_streaming(clean_text),
+        "provider":    "client_web_speech",
+        "voice_used":  speaker,
+        "params":      params,
+        "gender":      gender,
+        "language":    language,
     }
 
 
@@ -322,15 +424,17 @@ def set_voice_language_status(language: str, is_enabled: bool) -> None:
     logger.info("Language voice status updated: %s -> %s", language, is_enabled)
 
 
-def get_voice_status() -> Dict[str, any]:
+def get_voice_status() -> Dict:
     """Returns current voice system health and language availability flags."""
     return {
         "languages": VOICE_LANGUAGE_STATUS,
         "providers": {
-            "sarvam_ai": bool(os.environ.get("SARVAM_API_KEY")),
-            "gemini": bool(os.environ.get("GEMINI_API_KEY")),
-            "web_speech": True
+            "sarvam_bulbul_v2": bool(os.environ.get("SARVAM_API_KEY")),
+            "gemini":           bool(os.environ.get("GEMINI_API_KEY")),
+            "web_speech":       True,
         },
+        "native_voices":   NATIVE_VOICES,
+        "emotion_params":  EMOTION_PARAMS,
         "digit_expansion_helpline": "14416",
-        "cache_entries": len(TTS_MEMORY_CACHE)
+        "cache_entries": len(TTS_MEMORY_CACHE),
     }

@@ -77,6 +77,8 @@ interface OutfitsPanelProps {
   onClose: () => void;
   currentGender?: 'boy' | 'girl';
   onConfigChange?: (config: AvatarConfig) => void;
+  onSelectOutfit?: (outfit: OutfitType | any) => void;
+  onPhotoPersonalize?: () => void;
 }
 
 export const OutfitsPanel: React.FC<OutfitsPanelProps> = ({
@@ -84,6 +86,8 @@ export const OutfitsPanel: React.FC<OutfitsPanelProps> = ({
   onClose,
   currentGender = 'boy',
   onConfigChange,
+  onSelectOutfit,
+  onPhotoPersonalize,
 }) => {
   const [currentConfig, setCurrentConfig] = useState<AvatarConfig>(avatar.getConfig());
   const [selectedOutfit, setSelectedOutfit] = useState<OutfitType>(

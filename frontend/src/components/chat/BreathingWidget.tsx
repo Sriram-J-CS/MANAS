@@ -6,6 +6,7 @@ interface BreathingWidgetProps {
   isOpen: boolean;
   onClose: () => void;
   onComplete?: () => void;
+  durationSecs?: number;
 }
 
 type Phase = 'inhale' | 'hold' | 'exhale' | 'rest';

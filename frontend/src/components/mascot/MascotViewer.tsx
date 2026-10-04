@@ -170,7 +170,7 @@ export const MascotViewer: React.FC<MascotViewerProps> = ({
     gestureClass = 'animate-mascot-wave';
   } else if (activeGesture === 'breathing_guide') {
     gestureClass = 'animate-mascot-deep-breathe';
-  } else if (activeGesture === 'encourage') {
+  } else if ((activeGesture as string) === 'encourage') {
     gestureClass = 'animate-mascot-encourage';
   } else if (isThinking || activeGesture === 'thinking') {
     gestureClass = 'animate-mascot-thinking';

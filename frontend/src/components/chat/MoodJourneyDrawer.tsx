@@ -16,8 +16,6 @@ interface MoodJourneyDrawerProps {
   onSelectMood: (score: number) => void;
 }
 
-const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Today'];
-
 export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
   isOpen,
   onClose,
@@ -35,28 +33,73 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
 
   if (!isOpen) return null;
 
-  // Prepare 7-day values (normalized between 1 and 5)
-  // Fall back to representative data points if fewer than 7 entries
-  const defaultScores = [3.5, 3.8, 3.2, 4.0, 4.2, 3.9, currentMood || 4.2];
-  const chartPoints = defaultScores.map((score, i) => {
-    // Width is 300px, Height is 120px
-    const x = 20 + i * (260 / 6);
-    // Y inverted: 1 at bottom (105px), 5 at top (15px)
-    const y = 105 - ((score - 1) / 4) * 90;
-    return { x, y, score, day: DAYS_OF_WEEK[i] };
-  });
-
-  // Build smooth SVG path
-  let pathD = `M ${chartPoints[0].x} ${chartPoints[0].y}`;
-  for (let i = 1; i < chartPoints.length; i++) {
-    const prev = chartPoints[i - 1];
-    const curr = chartPoints[i];
-    const cpX = (prev.x + curr.x) / 2;
-    pathD += ` C ${cpX} ${prev.y}, ${cpX} ${curr.y}, ${curr.x} ${curr.y}`;
+  // Prepare real values from actual moodHistory
+  const realEntries = [...moodHistory];
+  if (currentMood !== null && (realEntries.length === 0 || realEntries[realEntries.length - 1].score !== currentMood)) {
+    realEntries.push({
+      score: currentMood,
+      tags: 'Current Check-in',
+      created_at: 'Just now',
+    });
   }
 
-  // Close area for gradient fill
-  const areaPathD = `${pathD} L ${chartPoints[chartPoints.length - 1].x} 115 L ${chartPoints[0].x} 115 Z`;
+  const hasData = realEntries.length > 0;
+  const recentEntries = realEntries.slice(-7);
+  const avgScore = hasData
+    ? realEntries.reduce((acc, curr) => acc + curr.score, 0) / realEntries.length
+    : null;
+
+  // Real Burnout Risk & Recommendations based on actual check-ins
+  let burnoutRisk = 'Awaiting data';
+  let burnoutDetail = 'Log check-ins to compute risk';
+  let burnoutBadge = 'text-white/50 bg-white/10 border-white/20';
+  let recommendationTitle = 'Mindful Presence';
+  let recommendationDetail = 'Take a moment to check in with how you feel';
+
+  if (avgScore !== null) {
+    if (avgScore <= 2.2) {
+      burnoutRisk = 'Elevated';
+      burnoutDetail = 'Recent logs show persistent emotional strain';
+      burnoutBadge = 'text-rose-400 bg-rose-500/20 border-rose-500/30';
+      recommendationTitle = 'Gentle Rest & Support';
+      recommendationDetail = 'Pause work, try 4-7-8 breathing, or speak with someone';
+    } else if (avgScore <= 3.3) {
+      burnoutRisk = 'Moderate';
+      burnoutDetail = 'Noticing mild fatigue across recent logs';
+      burnoutBadge = 'text-amber-400 bg-amber-500/20 border-amber-500/30';
+      recommendationTitle = 'Compassionate Pacing';
+      recommendationDetail = 'Insert short 5-minute pauses between study blocks';
+    } else {
+      burnoutRisk = 'Low';
+      burnoutDetail = 'Emotional rhythm is balanced and steady';
+      burnoutBadge = 'text-emerald-400 bg-emerald-500/20 border-emerald-500/30';
+      recommendationTitle = 'Sustain Your Rhythm';
+      recommendationDetail = 'Protect your sleep window and celebrate your daily progress';
+    }
+  }
+
+  // Build SVG points for chart from real entries
+  const chartPoints = recentEntries.map((entry, i) => {
+    const total = recentEntries.length;
+    const x = total === 1 ? 150 : 25 + i * (250 / (total - 1));
+    const y = 105 - ((entry.score - 1) / 4) * 85;
+    const dayLabel = entry.created_at || `Log ${i + 1}`;
+    return { x, y, score: entry.score, day: dayLabel.length > 8 ? dayLabel.slice(0, 8) : dayLabel };
+  });
+
+  // Build smooth SVG path if 2 or more points
+  let pathD = '';
+  let areaPathD = '';
+  if (chartPoints.length > 1) {
+    pathD = `M ${chartPoints[0].x} ${chartPoints[0].y}`;
+    for (let i = 1; i < chartPoints.length; i++) {
+      const prev = chartPoints[i - 1];
+      const curr = chartPoints[i];
+      const cpX = (prev.x + curr.x) / 2;
+      pathD += ` C ${cpX} ${prev.y}, ${cpX} ${curr.y}, ${curr.x} ${curr.y}`;
+    }
+    areaPathD = `${pathD} L ${chartPoints[chartPoints.length - 1].x} 115 L ${chartPoints[0].x} 115 Z`;
+  }
 
   const moodLevels = [
     { num: 1, label: 'Very Low', emoji: '😞' },
@@ -97,7 +140,7 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                   <span>Mood Journey</span>
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
                 </h3>
-                <p className="text-[10px] text-white/50 font-mono">7-Day Emotional Baseline & Rhythm</p>
+                <p className="text-[10px] text-white/50 font-mono">Real Emotional Baseline & Rhythm</p>
               </div>
             </div>
 
@@ -148,80 +191,94 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                   <Activity className="w-3.5 h-3.5 text-cyan-400" />
                   Emotional Trend Curve
                 </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Calm Stability
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${burnoutBadge}`}>
+                  {burnoutRisk} Risk
                 </span>
               </div>
 
-              {/* Chart SVG */}
-              <div className="w-full flex justify-center py-2">
-                <svg viewBox="0 0 300 130" className="w-full h-32 overflow-visible">
-                  <defs>
-                    <linearGradient id="moodGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.45" />
-                      <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
-                    </linearGradient>
-                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feGaussianBlur stdDeviation="3" result="blur" />
-                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                  </defs>
+              {/* Chart SVG or Honest Empty State */}
+              <div className="w-full flex justify-center py-2 min-h-[120px] items-center">
+                {!hasData ? (
+                  <div className="text-center p-4 text-white/40 text-xs font-mono">
+                    <p className="font-semibold text-white/60">No check-ins logged yet</p>
+                    <p className="text-[10px] text-white/40 mt-1">Select an emoji above to record your first mood score.</p>
+                  </div>
+                ) : chartPoints.length === 1 ? (
+                  <div className="text-center p-4 text-white/60 text-xs font-mono">
+                    <p className="text-cyan-300 font-bold text-sm">First Check-in Logged: {chartPoints[0].score} / 5</p>
+                    <p className="text-[10px] text-white/40 mt-1">Log another mood check-in to reveal your multi-point curve.</p>
+                  </div>
+                ) : (
+                  <svg viewBox="0 0 300 130" className="w-full h-32 overflow-visible">
+                    <defs>
+                      <linearGradient id="moodGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.45" />
+                        <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
+                      </linearGradient>
+                      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                      </filter>
+                    </defs>
 
-                  {/* Horizontal grid guide lines */}
-                  {[25, 60, 95].map((gy, idx) => (
-                    <line
-                      key={idx}
-                      x1="15"
-                      y1={gy}
-                      x2="285"
-                      y2={gy}
-                      stroke="rgba(255,255,255,0.06)"
-                      strokeDasharray="3 3"
-                    />
-                  ))}
-
-                  {/* Gradient Area Fill */}
-                  <path d={areaPathD} fill="url(#moodGradient)" />
-
-                  {/* Bezier Stroke Curve */}
-                  <path
-                    d={pathD}
-                    fill="none"
-                    stroke="#a78bfa"
-                    strokeWidth="2.5"
-                    filter="url(#glow)"
-                  />
-
-                  {/* Day Score Dots */}
-                  {chartPoints.map((pt, i) => (
-                    <g key={i} className="cursor-pointer group">
-                      <circle
-                        cx={pt.x}
-                        cy={pt.y}
-                        r="4"
-                        fill="#06b6d4"
-                        stroke="#ffffff"
-                        strokeWidth="1.5"
-                        className="transition-transform group-hover:scale-150"
+                    {/* Horizontal grid guide lines */}
+                    {[25, 60, 95].map((gy, idx) => (
+                      <line
+                        key={idx}
+                        x1="15"
+                        y1={gy}
+                        x2="285"
+                        y2={gy}
+                        stroke="rgba(255,255,255,0.06)"
+                        strokeDasharray="3 3"
                       />
-                      <text
-                        x={pt.x}
-                        y={125}
-                        textAnchor="middle"
-                        fill="rgba(255,255,255,0.5)"
-                        fontSize="9"
-                        fontFamily="monospace"
-                      >
-                        {pt.day}
-                      </text>
-                    </g>
-                  ))}
-                </svg>
+                    ))}
+
+                    {/* Gradient Area Fill */}
+                    {areaPathD && <path d={areaPathD} fill="url(#moodGradient)" />}
+
+                    {/* Bezier Stroke Curve */}
+                    {pathD && (
+                      <path
+                        d={pathD}
+                        fill="none"
+                        stroke="#a78bfa"
+                        strokeWidth="2.5"
+                        filter="url(#glow)"
+                      />
+                    )}
+
+                    {/* Day Score Dots */}
+                    {chartPoints.map((pt, i) => (
+                      <g key={i} className="cursor-pointer group">
+                        <circle
+                          cx={pt.x}
+                          cy={pt.y}
+                          r="4"
+                          fill="#06b6d4"
+                          stroke="#ffffff"
+                          strokeWidth="1.5"
+                          className="transition-transform group-hover:scale-150"
+                        />
+                        <text
+                          x={pt.x}
+                          y={125}
+                          textAnchor="middle"
+                          fill="rgba(255,255,255,0.5)"
+                          fontSize="9"
+                          fontFamily="monospace"
+                        >
+                          {pt.day}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                )}
               </div>
 
               <div className="flex items-center justify-between text-[10px] font-mono text-white/50 pt-2 border-t border-white/10">
-                <span>Baseline: 4.1 / 5</span>
-                <span>Peak: Calm Equilibrium</span>
+                <span>Baseline: {avgScore !== null ? `${avgScore.toFixed(1)} / 5` : 'Awaiting data'}</span>
+                <span>{hasData ? `${realEntries.length} total log(s)` : 'No entries'}</span>
               </div>
             </div>
 
@@ -232,8 +289,8 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                   <ShieldCheck className="w-3.5 h-3.5" />
                   <span className="text-[10px] font-mono font-bold uppercase">Burnout Risk</span>
                 </div>
-                <span className="text-base font-bold font-mono text-white">Low</span>
-                <p className="text-[10px] text-white/50 font-mono mt-0.5">Typing cadence within calm threshold</p>
+                <span className="text-base font-bold font-mono text-white">{burnoutRisk}</span>
+                <p className="text-[10px] text-white/50 font-mono mt-0.5">{burnoutDetail}</p>
               </div>
 
               <div className="p-3 rounded-xl bg-black/50 border border-white/10">
@@ -241,8 +298,8 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                   <Heart className="w-3.5 h-3.5" />
                   <span className="text-[10px] font-mono font-bold uppercase">Self Recommendation</span>
                 </div>
-                <span className="text-xs font-bold text-white">Compassionate Pacing</span>
-                <p className="text-[10px] text-white/50 font-mono mt-0.5">Pause between study blocks</p>
+                <span className="text-xs font-bold text-white">{recommendationTitle}</span>
+                <p className="text-[10px] text-white/50 font-mono mt-0.5">{recommendationDetail}</p>
               </div>
             </div>
 
@@ -253,21 +310,28 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                 Recent Check-in Logs
               </span>
               <div className="space-y-1.5">
-                {moodHistory.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2.5 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between text-xs font-mono"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                      <span className="text-white/80 font-bold">
-                        Score: {item.score} / 5
-                      </span>
-                      <span className="text-white/40">· {item.tags || 'General'}</span>
-                    </div>
-                    <span className="text-[10px] text-white/40">{item.created_at}</span>
+                {moodHistory.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-white/[0.02] border border-dashed border-white/10 text-center">
+                    <p className="text-xs text-white/50 font-mono">No check-ins logged yet.</p>
+                    <p className="text-[10px] text-white/30 font-mono mt-1">Select an emoji above to record your first mood entry.</p>
                   </div>
-                ))}
+                ) : (
+                  moodHistory.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between text-xs font-mono"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                        <span className="text-white/80 font-bold">
+                          Score: {item.score} / 5
+                        </span>
+                        <span className="text-white/40">· {item.tags || 'General'}</span>
+                      </div>
+                      <span className="text-[10px] text-white/40">{item.created_at}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -276,3 +340,4 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
     </AnimatePresence>
   );
 };
+

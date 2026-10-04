@@ -80,6 +80,15 @@ export async function saveMascotModel(file: File): Promise<{
   });
 
   const objectUrl = URL.createObjectURL(file);
+  
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('manas:custom_mascot_uploaded', {
+        detail: { name: stored.name, fileType, objectUrl },
+      })
+    );
+  }
+
   return {
     id: stored.id,
     name: stored.name,
@@ -133,6 +142,9 @@ export async function clearStoredMascotModel(): Promise<void> {
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('manas:mascot_model_deleted'));
+    }
   } catch (err) {
     console.warn('Error clearing stored mascot:', err);
   }

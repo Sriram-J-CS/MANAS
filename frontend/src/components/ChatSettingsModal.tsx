@@ -1,8 +1,9 @@
-import React from 'react';
-import { X, Sparkles, Monitor, MoveHorizontal, Shirt, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Sparkles, Monitor, MoveHorizontal, Shirt, Check, Volume2, Play } from 'lucide-react';
 import type { UserProfile } from './OnboardingModal';
 import { RealMascot } from './RealMascot';
 import type { OutfitType } from './ThreeMascot/ThreeCartoonMascot';
+import { speechEngine } from '../lib/voice/speechEngine';
 
 interface ChatSettingsModalProps {
   isOpen: boolean;
@@ -12,6 +13,17 @@ interface ChatSettingsModalProps {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
 }
+
+const SAMPLE_PHRASES: Record<string, string> = {
+  ta: 'வணக்கம், நான் எப்போதும் உங்களுடன் துணை நிற்பேன்.',
+  hi: 'नमस्ते, मैं हमेशा आपकी बात सुनने और साथ देने के लिए यहाँ हूँ।',
+  te: 'నమస్కారం, నేను ఎల్లప్పుడూ మీకు తోడుగా ఉంటాను.',
+  kn: 'ನಮಸ್ಕಾರ, ನಾನು ಯಾವಾಗಲೂ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.',
+  ml: 'നമസ്കാരം, ഞാൻ എപ്പോഴും നിങ്ങളുടെ കൂടെയുണ്ടാകും.',
+  bn: 'নমস্কার, আমি সর্বদা আপনার পাশে আছি।',
+  mr: 'नमस्कार, मी नेहमी तुमच्या पाठीशी आहे.',
+  en: 'Hello, I am right here beside you whenever you need to talk.',
+};
 
 const OUTFITS_LIST: Array<{ id: OutfitType; label: string; color: string; desc: string }> = [
   { id: 'hoodie', label: 'Cozy Hoodie', color: '#3b82f6', desc: 'Fleece comfort' },
@@ -30,6 +42,20 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
   isFullscreen,
   onToggleFullscreen,
 }) => {
+  const [isPlayingVoiceTest, setIsPlayingVoiceTest] = useState(false);
+
+  const speakSample = (gender: 'boy' | 'girl', pitch: number) => {
+    setIsPlayingVoiceTest(true);
+    const lang = userProfile.language || 'en';
+    const sample = SAMPLE_PHRASES[lang] || SAMPLE_PHRASES.en;
+    speechEngine.speak(sample, lang, {
+      gender,
+      pitch,
+      onEnd: () => setIsPlayingVoiceTest(false),
+      onError: () => setIsPlayingVoiceTest(false),
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -96,12 +122,83 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Section: Voice & Gender Tone Persona */}
+          <div className="pt-2 border-t border-white/10 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-mono uppercase tracking-wider text-white/80 flex items-center gap-1.5">
+                <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>2. Voice & Gender Tone</span>
+              </label>
+              <span className="text-[10px] font-mono text-cyan-300">
+                {(userProfile.voiceGender || (userProfile.avatarType === 'girl' ? 'girl' : 'boy')) === 'girl'
+                  ? '👧 Girl Voice'
+                  : '👦 Boy Voice'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateProfile({ voiceGender: 'boy', voicePitch: 0.88 });
+                  speakSample('boy', 0.88);
+                }}
+                className={`p-3 rounded-2xl border text-center transition-all cursor-pointer ${
+                  (userProfile.voiceGender || (userProfile.avatarType === 'girl' ? 'girl' : 'boy')) === 'boy'
+                    ? 'border-cyan-400 bg-cyan-950/40 ring-1 ring-cyan-400'
+                    : 'border-white/15 bg-white/5 hover:border-white/40'
+                }`}
+              >
+                <div className="text-xl mb-1">👦</div>
+                <span className="font-bold text-xs uppercase text-white block">Boy Voice</span>
+                <span className="text-[10px] text-cyan-300 font-mono">Deeper, Grounded</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateProfile({ voiceGender: 'girl', voicePitch: 1.18 });
+                  speakSample('girl', 1.18);
+                }}
+                className={`p-3 rounded-2xl border text-center transition-all cursor-pointer ${
+                  (userProfile.voiceGender || (userProfile.avatarType === 'girl' ? 'girl' : 'boy')) === 'girl'
+                    ? 'border-pink-400 bg-pink-950/40 ring-1 ring-pink-400'
+                    : 'border-white/15 bg-white/5 hover:border-white/40'
+                }`}
+              >
+                <div className="text-xl mb-1">👧</div>
+                <span className="font-bold text-xs uppercase text-white block">Girl Voice</span>
+                <span className="text-[10px] text-pink-300 font-mono">Gentle, Soft Tone</span>
+              </button>
+            </div>
+
+            {/* Test Voice in Active Language Button */}
+            <button
+              type="button"
+              disabled={isPlayingVoiceTest}
+              onClick={() => {
+                const currentGender =
+                  userProfile.voiceGender || (userProfile.avatarType === 'girl' ? 'girl' : 'boy');
+                const currentPitch = userProfile.voicePitch || (currentGender === 'girl' ? 1.18 : 0.88);
+                speakSample(currentGender, currentPitch);
+              }}
+              className="w-full py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono text-cyan-300 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>
+                {isPlayingVoiceTest
+                  ? 'Speaking sample...'
+                  : `Test Voice in ${userProfile.language ? userProfile.language.toUpperCase() : 'Active Language'}`}
+              </span>
+            </button>
+          </div>
+
           {/* Section 0.5: Wardrobe Outfits */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-mono uppercase tracking-wider text-white/80 flex items-center gap-1.5">
                 <Shirt className="w-3.5 h-3.5 text-cyan-400" />
-                <span>2. Wardrobe Outfit (6 Styles)</span>
+                <span>3. Wardrobe Outfit (6 Styles)</span>
               </label>
               <span className="text-[10px] font-mono text-cyan-300">
                 Active: {userProfile.outfit || 'hoodie'}

@@ -14,6 +14,7 @@ export interface StructuredAIResponse {
   suggested_exercise?: string;
   isHighRisk?: boolean;
   crisis?: boolean;
+  segments?: any[];
 }
 
 export interface SendMessageOptions {
@@ -24,6 +25,7 @@ export interface SendMessageOptions {
   role?: string;
   stylePref?: string;
   age?: number;
+  typing_cps?: number;
 }
 
 /**
@@ -39,6 +41,7 @@ export async function sendChatMessage(options: SendMessageOptions): Promise<Stru
     role = 'student',
     stylePref = 'reflective',
     age = 20,
+    typing_cps,
   } = options;
 
   // Map personality into prompt tone
@@ -51,18 +54,26 @@ export async function sendChatMessage(options: SendMessageOptions): Promise<Stru
   };
 
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = typeof window !== 'undefined' ? localStorage.getItem('manas_access_token') : null;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         message,
         user_name: userName,
+        user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || undefined : undefined,
         language,
         tone: toneMap[personality] || 'gentle',
         persona: `mascot_${personality}`,
         role,
         style_pref: stylePref,
         age,
+        typing_cps,
       }),
     });
 
@@ -86,7 +97,7 @@ export async function sendChatMessage(options: SendMessageOptions): Promise<Stru
       voice: true,
       spoken_text: data.spoken_text || rawReply,
       state_label: data.state_label || 'Mindful & Present',
-      stress_level: data.stress_level ?? 4,
+      stress_level: typeof data.stress_level === 'number' ? data.stress_level : undefined,
       helplines: data.helplines || [],
       suggested_exercise: data.suggested_exercise || 'none',
       isHighRisk: Boolean(data.is_high_risk || data.crisis),
@@ -102,7 +113,7 @@ export async function sendChatMessage(options: SendMessageOptions): Promise<Stru
       voice: true,
       spoken_text: "I hear you, and I'm right here beside you. Even when things feel tangled or heavy, take a gentle breath with me. Let's take it one moment at a time.",
       state_label: 'Gentle Support',
-      stress_level: 4,
+      stress_level: undefined,
       helplines: [],
       suggested_exercise: 'breathing_4_7_8',
       isHighRisk: false,
@@ -137,12 +148,18 @@ export async function sendChatFeedback(options: {
     }
 
     const consent = Boolean(options.userConsent);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = typeof window !== 'undefined' ? localStorage.getItem('manas_access_token') : null;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch('/api/feedback', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         message_id: options.messageId,
-        user_id: localStorage.getItem('manas_user_id') || 'default_user',
+        user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || 'default_user' : 'default_user',
         rating: normalizedRating,
         felt_understood: options.feltUnderstood ?? (normalizedRating === 'not_understood' ? 0 : 1),
         user_message: consent ? (options.userMessage || '') : '',
@@ -190,19 +207,26 @@ export async function streamChatMessage(
   };
 
   try {
+    const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    const streamToken = typeof window !== 'undefined' ? localStorage.getItem('manas_access_token') : null;
+    if (streamToken) {
+      streamHeaders['Authorization'] = `Bearer ${streamToken}`;
+    }
+
     const res = await fetch('/api/chat/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: streamHeaders,
       body: JSON.stringify({
         message,
         user_name: userName,
-        user_id: localStorage.getItem('manas_user_id') || 'default_user',
+        user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || 'default_user' : 'default_user',
         language,
         tone: toneMap[personality] || 'gentle',
         persona: `mascot_${personality}`,
         role,
         style_pref: stylePref,
         age,
+        typing_cps: options.typing_cps,
       }),
     });
 

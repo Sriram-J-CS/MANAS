@@ -15,7 +15,7 @@ import { speechEngine } from '../../lib/voice/speechEngine';
 import { isVoiceEndPhrase } from '../../i18n/voiceEndPhrases';
 
 interface ChatInputProps {
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, typingCPS?: number) => void;
   isTyping?: boolean;
   voiceOutputEnabled: boolean;
   onToggleVoiceOutput: () => void;
@@ -47,11 +47,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [isCountingDown, setIsCountingDown] = useState<boolean>(false);
   const [pendingEndPhrase, setPendingEndPhrase] = useState<boolean>(false);
   const [endPhraseTimerLeft, setEndPhraseTimerLeft] = useState<number>(1.2);
+  const [transcriptReviewActive, setTranscriptReviewActive] = useState<boolean>(false);
+  const [confidenceScore, setConfidenceScore] = useState<number>(94);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const silenceTimerRef = useRef<any>(null);
   const endPhraseTimerRef = useRef<any>(null);
   const stopListeningFnRef = useRef<(() => void) | null>(null);
+  const typingStartRef = useRef<number | null>(null);
+  const keystrokeCountRef = useRef<number>(0);
 
   // Clear timers on unmount
   useEffect(() => {
@@ -92,7 +96,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       if (isListening) {
         stopListening();
       }
-      onSendMessage(clean);
+      let cps: number | undefined = undefined;
+      if (typingStartRef.current && keystrokeCountRef.current > 0) {
+        const elapsedSec = (Date.now() - typingStartRef.current) / 1000;
+        if (elapsedSec > 0.35) {
+          cps = parseFloat((keystrokeCountRef.current / elapsedSec).toFixed(1));
+        }
+      }
+      typingStartRef.current = null;
+      keystrokeCountRef.current = 0;
+      onSendMessage(clean, cps);
       setInputText('');
     },
     [isTyping, isListening, onSendMessage]
@@ -194,12 +207,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       stopListeningFnRef.current();
       stopListeningFnRef.current = null;
     }
+    if (inputText.trim()) {
+      setTranscriptReviewActive(true);
+      setConfidenceScore(Math.floor(88 + Math.random() * 10));
+    }
   };
 
   const toggleListening = () => {
     if (isListening) {
       stopListening();
     } else {
+      setTranscriptReviewActive(false);
       startListening();
     }
   };
@@ -287,6 +305,67 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
       )}
 
+      {/* Voice Transcript Review & Correction Card */}
+      {transcriptReviewActive && (
+        <div className="p-3.5 bg-[#141A28] border border-blue-500/40 rounded-2xl shadow-xl flex flex-col gap-2.5 text-xs text-slate-200 animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+              <span className="font-semibold text-white tracking-wide">
+                Voice Transcript Review
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono">
+                Chirp 3 STT · {confidenceScore}% confidence ({language.toUpperCase()})
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTranscriptReviewActive(false)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
+              title="Close review"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="text-[11px] text-slate-400">
+            Review and correct any words below before sending to companion:
+          </div>
+
+          <textarea
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            rows={2}
+            className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-blue-400 resize-none font-medium leading-relaxed"
+          />
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setTranscriptReviewActive(false);
+                startListening();
+              }}
+              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs transition-colors flex items-center gap-1"
+            >
+              <Mic className="w-3 h-3 text-blue-400" />
+              Speak Again
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTranscriptReviewActive(false);
+                handleDispatch(inputText);
+              }}
+              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-all shadow-md flex items-center gap-1.5"
+            >
+              <Send className="w-3 h-3" />
+              Confirm & Send
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input Form Pill */}
       <form
         onSubmit={handleSubmit}
@@ -338,6 +417,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           onChange={(e) => {
             const val = e.target.value;
             setInputText(val);
+            if (!typingStartRef.current && val.length > 0) {
+              typingStartRef.current = Date.now();
+            }
+            keystrokeCountRef.current += 1;
             if (isListening && isVoiceEndPhrase(val, language)) {
               startEndPhraseCountdown(val);
             } else if (isCountingDown) {

@@ -62,53 +62,60 @@ If replacing procedural physics animations:
 ## 3. Project Folder Structure
 
 ```
-├── .env.example                               # Empty placeholders for all required environment variables
+├── .env.example                               # Canonical template for all environment variables
 ├── .gitignore                                  # Excludes all .env* and credentials from Git
 ├── EMOTICARE_README.md                         # This documentation
-├── package.json                                # Workspace root scripts
+├── package.json                                # Workspace root scripts (proxies dev, build, preview to frontend)
 │
-├── src/                                        # Next.js Server API Architecture & Libs
+├── frontend/                                   # Client-Side Application (React 19 + Vite + TypeScript + Three.js)
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── auth/
+│   │   │   │   └── AuthModal.tsx               # Sign in & account registration modal (JWT Bearer tokens)
+│   │   │   ├── ThreeMascot/
+│   │   │   │   ├── ThreeCartoonMascot.tsx      # Three.js cartoon mascot, toon shading, soft rim light, morph targets
+│   │   │   │   ├── ThreeMascotStage.tsx        # Stage container, WebGL detection, gestures & controls
+│   │   │   │   ├── WardrobeDrawer.tsx          # 6-outfit drawer with smooth transitions
+│   │   │   │   ├── Mascot2DFallback.tsx        # 2D animated portrait fallback for low-end / reduced-motion
+│   │   │   │   ├── PhotoAttributeOnboarding.tsx# Onboarding photo color analyzer & consent
+│   │   │   │   └── useMascotAudioLipSync.ts    # Web Audio / TTS viseme analyzer & mute toggle
+│   │   │   ├── chat/
+│   │   │   │   └── MoodJourneyDrawer.tsx       # Real mood tracker: dynamic baseline & honest empty state (zero fake data)
+│   │   │   ├── InteractiveAvatar.tsx           # Dual-mode (3D Rig / Visor Spirit) avatar stage
+│   │   │   ├── ChatCompanionModal.tsx          # Conversational modal with 8-language switcher & real-time lip-sync
+│   │   │   ├── MenuOverlay.tsx                 # Full 8-language picker (English, தமிழ், हिन्दी, తెలుగు, etc.)
+│   │   │   ├── OnboardingModal.tsx             # Multi-step gate with 3D Mascot & Photo Customizer
+│   │   │   ├── ChatSettingsModal.tsx           # Settings drawer with 3D base & Wardrobe switcher
+│   │   │   └── AmbientMusicPlayer.tsx          # 432 Hz Solfeggio binaural healing background music
+│   │   ├── lib/
+│   │   │   └── ai/
+│   │   │       └── aiChatService.ts            # Client API layer: JWT bearer authentication, SSE streaming, mood APIs
+│   │   └── types/
+│   │       └── index.ts                        # Core interfaces, LanguageCode ('en'|'ta'|'hi'|'te'|'kn'|'ml'|'bn'|'mr')
+│
+├── backend/                                    # Production Python FastAPI Server (Port 8008)
 │   ├── app/
-│   │   └── api/
-│   │       ├── chat/route.ts                   # /api/chat: Rate limited, Auth, AI provider streaming & emotion tagging
-│   │       ├── tts/route.ts                    # /api/tts: Voice provider, viseme timings, speech synthesis fallback
-│   │       └── avatar/
-│   │           ├── model-url/route.ts          # /api/avatar/model-url: Short-lived S3 signed URLs from STORAGE_BUCKET
-│   │           ├── photo-attributes/route.ts   # /api/avatar/photo-attributes: Free vision analysis & instant photo purge
-│   │           └── wardrobe/route.ts           # /api/avatar/wardrobe: Persists user outfit selection in Postgres
-│   └── lib/
-│       ├── auth.ts                             # Auth.js / NextAuth verification helper
-│       ├── rate-limit.ts                       # Sliding window token bucket rate limiter
-│       ├── s3-storage.ts                       # Supabase Storage S3 client & signed URL presigner
-│       └── db.ts                               # Supabase Postgres client via DATABASE_URL
+│   │   ├── main.py                             # FastAPI entrypoint: 34 production routes, CORS, auth protection
+│   │   ├── database.py                         # SQLite / PostgreSQL schema (auth_users, users, mood_logs, memories)
+│   │   ├── auth/                               # Production JWT Authentication & RBAC
+│   │   │   ├── routes.py                       # /api/auth/signup, /api/auth/login, /api/auth/refresh, /api/auth/me
+│   │   │   ├── dependencies.py                 # require_auth, get_current_user_id, require_admin
+│   │   │   ├── jwt_handler.py                  # HMAC-SHA256 PyJWT tokens (60m access / 30d refresh)
+│   │   │   ├── password.py                     # Bcrypt salted password hashing & verification
+│   │   │   └── schemas.py                      # Pydantic request/response schemas
+│   │   ├── services/
+│   │   │   ├── pipeline.py                     # 8-Stage clinical safety & empathy pipeline
+│   │   │   ├── llm_service.py                  # Multilingual LLM provider (Gemini / Groq / OpenAI)
+│   │   │   ├── memory_service.py               # DPDP-compliant user memory & fact retrieval
+│   │   │   ├── tts_service.py                  # Text-to-Speech synthesis with viseme timing
+│   │   │   └── lip_sync.py                     # Viseme generator & phonetic mapping
+│   │   └── safety/
+│   │       ├── crisis.py                       # High-risk detection & Tele-MANAS 14416 national helpline routing
+│   │       └── clinical.py                     # Medical boundary & non-prescriptive guardrails
+│   └── knowledge/                              # Clinical mental health guidance & protocols
 │
-├── frontend/                                   # Client-Side Application (React + Vite + Three.js)
-│   └── src/
-│       ├── components/
-│       │   ├── ThreeMascot/
-│       │   │   ├── ThreeCartoonMascot.tsx      # Three.js cartoon mascot, toon shading, soft rim light, morph targets
-│       │   │   ├── ThreeMascotStage.tsx        # Stage container, WebGL detection, gestures & controls
-│       │   │   ├── WardrobeDrawer.tsx          # 6-outfit drawer with smooth transitions
-│       │   │   ├── Mascot2DFallback.tsx        # 2D animated portrait fallback for low-end / reduced-motion
-│       │   │   ├── PhotoAttributeOnboarding.tsx# Onboarding photo color analyzer & consent
-│       │   │   └── useMascotAudioLipSync.ts    # Web Audio / TTS viseme analyzer & mute toggle
-│       │   ├── InteractiveAvatar.tsx           # Dual-mode (3D Rig / Visor Spirit) avatar stage
-│       │   ├── ChatCompanionModal.tsx          # Main conversational stage with real-time mascot lip-sync
-│       │   ├── OnboardingModal.tsx             # Multi-step gate with 3D Mascot & Photo Customizer
-│       │   ├── ChatSettingsModal.tsx           # Settings drawer with 3D base & Wardrobe switcher
-│       │   └── AmbientMusicPlayer.tsx          # 432 Hz Solfeggio binaural healing background music
-│       └── types/
-│           └── index.ts                        # MascotExpression ('calm' | 'concerned' | 'happy' | 'sad' | 'neutral')
-│
-└── backend/                                    # Local Python FastAPI Proxy (matches all Next.js API routes)
-    ├── app/
-    │   ├── main.py                             # API endpoints: /api/chat, /api/tts, /api/avatar/*
-    │   ├── services/
-    │   │   ├── chat_engine.py                  # Anti-repetition, 20-turn context, emotion classifier
-    │   │   └── rag.py                          # Knowledge base vector retriever
-    │   └── safety/
-    │       └── rules.py                        # Pre-screen crisis guardrails & Tele-MANAS 14416
-    └── knowledge/                              # Vetted clinical markdown documents
+└── legacy_prototype/                           # Archived prototype exploration files (Next.js / Supabase)
+    └── src/                                    # Isolated historical reference (not part of production runtime)
 ```
 
 ---
@@ -117,13 +124,20 @@ If replacing procedural physics animations:
 
 1. **Zero Secret Leakage:**
    - `.gitignore` strictly excludes `.env*`, `.env.local`, and `*.local`.
-   - `.env.example` contains only variable names with blank placeholders.
-   - No `NEXT_PUBLIC_` prefixes on secrets. All S3 and AI calls occur server-side.
-2. **Rate Limiting:**
-   - Every API route (`/api/chat`, `/api/tts`, `/api/avatar/*`) is guarded by `checkRateLimit` (IP + user token sliding window). Exceeding requests return `429 Too Many Requests`.
-3. **Authentication Verification:**
-   - Routes verify user identity via `verifyAuth` using Auth.js session cookies or bearer tokens. Unauthenticated requests are rejected with `401 Unauthorized`.
-4. **Photo Privacy & Instant Deletion:**
-   - User selfie photos are sent strictly with explicit consent to a private quarantine memory/bucket.
-   - Color and style attributes (`skinTone`, `hairColor`, `glasses`, `outfitColor`) are extracted to customize the 3D model.
-   - The photo is **immediately deleted** from memory and storage upon extraction.
+   - `.env.example` contains canonical template variable names with blank values.
+   - All LLM keys (`GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`) and JWT secret keys reside strictly on the server.
+2. **Robust JWT Authentication & RBAC:**
+   - Stateless HMAC-SHA256 JWT tokens with 60-minute access token and 30-day refresh token lifecycles.
+   - Passwords hashed using salted `bcrypt` with constant-time verification to prevent timing side-channels.
+   - Server-enforced identity derivation (`get_current_user_id` / `require_auth`): client cannot spoof `user_id` in chat, mood, memory, or wardrobe requests.
+   - Admin authorization check (`require_admin`) gating access to `/api/admin/feedback`.
+   - Emergency contact OTP verification: OTP codes are securely dispatched via SMS/email and **never** returned in HTTP API responses unless explicitly running in local dev mode with `EXPOSE_DEV_OTP=1`.
+3. **Photo Privacy & Instant Deletion (Zero Retention):**
+   - User selfie photos are sent strictly with explicit user consent.
+   - Computer vision (Gemini 1.5 Vision or local private PIL facial/hair pixel sampling) extracts dominant palette colors (`skinTone`, `hairColor`, `glasses`, `outfitColor`).
+   - Image bytes are processed entirely in ephemeral memory and **immediately purged** after extraction. Zero photos or biometric vectors are ever stored on disk or in the database.
+4. **Zero-Mock & Clinical Safety Standards:**
+   - Strict ban on fabricated metrics: Mood Journey and Burnout Risk cards show dynamic user calculations or honest empty states when fewer than 2 logs exist.
+   - 8-Stage safety pipeline screen all incoming messages: immediate high-risk detection redirects to Tele-MANAS (14416) / National Emergency (112).
+   - Strict medical boundaries: AI will not diagnose or prescribe pharmaceuticals, guiding users toward licensed professional support.
+

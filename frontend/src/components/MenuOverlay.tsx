@@ -1,15 +1,25 @@
 import React from 'react';
 import type { Language } from '../types';
+import { SUPPORTED_LANGUAGES } from '../i18n/languages';
 
 interface MenuOverlayProps {
   isOpen: boolean;
   onClose: () => void;
   currentLang: Language;
   onToggleLang: () => void;
+  onSelectLang?: (lang: Language) => void;
   onOpenDemo: () => void;
   onOpenHelp: () => void;
   onOpenCalm: () => void;
   onOpenMascotCustomizer?: () => void;
+  onOpenVoiceRatingLab?: () => void;
+  onOpenTwin?: () => void;
+  onOpenPersonality?: () => void;
+  onOpenWhatWorks?: () => void;
+  onOpenMemory?: () => void;
+  onOpenJournalGoals?: () => void;
+  onOpenSafetyPlan?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
@@ -17,31 +27,40 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onClose,
   currentLang,
   onToggleLang,
+  onSelectLang,
   onOpenDemo,
   onOpenHelp,
   onOpenCalm,
   onOpenMascotCustomizer,
+  onOpenVoiceRatingLab,
+  onOpenTwin,
+  onOpenPersonality,
+  onOpenWhatWorks,
+  onOpenMemory,
+  onOpenJournalGoals,
+  onOpenSafetyPlan,
+  onOpenPrivacy,
 }) => {
   if (!isOpen) return null;
 
   const navItems = [
-    { num: '01', label: 'HERO / INK REVEAL', href: '#hero' },
-    { num: '02', label: 'STATEMENT / PREMISE', href: '#statement' },
-    { num: '03', label: 'WORKS / 07 MODULES', href: '#works' },
-    { num: '04', label: 'THE STUDIO / RESEARCH', href: '#studio' },
-    { num: '05', label: 'WORDS OVER MEDIA', href: '#words-over-media' },
-    { num: '06', label: 'CUSTOMIZE 3D MASCOT', action: onOpenMascotCustomizer },
-    { num: '07', label: 'CALM SPACE & AUDIO', action: onOpenCalm },
-    { num: '08', label: 'CONTACT / FOOTER', href: '#contact' },
+    { num: '01', label: 'COMPANION WORKSPACE', action: onOpenDemo },
+    { num: '02', label: 'DIGITAL MENTAL TWIN', action: onOpenTwin },
+    { num: '03', label: 'OCEAN PERSONALITY DISCOVERY', action: onOpenPersonality },
+    { num: '04', label: 'WHAT WORKS FOR ME', action: onOpenWhatWorks },
+    { num: '05', label: 'MEMORY CENTER', action: onOpenMemory },
+    { num: '06', label: 'JOURNAL & GOALS', action: onOpenJournalGoals },
+    { num: '07', label: 'SAFETY PLAN & HELPLINES', action: onOpenSafetyPlan },
+    { num: '08', label: 'PRIVACY CENTER & CONSENT', action: onOpenPrivacy },
+    { num: '09', label: 'VOICE RATING LAB (8 LANGUAGES)', action: onOpenVoiceRatingLab },
+    { num: '10', label: 'CUSTOMIZE 3D MASCOT', action: onOpenMascotCustomizer },
+    { num: '11', label: 'CALM SPACE & AUDIO', action: onOpenCalm },
   ];
 
-  const handleItemClick = (item: typeof navItems[0]) => {
+  const handleItemClick = (item: (typeof navItems)[0]) => {
     onClose();
     if (item.action) {
       item.action();
-    } else if (item.href) {
-      const el = document.querySelector(item.href);
-      el?.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
@@ -94,14 +113,31 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center gap-4 text-xs font-mono">
-          <button
-            onClick={onToggleLang}
-            className="px-3 py-1 rounded-full border border-white/40 hover:border-white uppercase tracking-wider text-white"
-          >
-            Language: {currentLang === 'en' ? 'தமிழ்' : 'English'}
-          </button>
-          <span className="text-white/40">© 2026 MANAS</span>
+        <div className="flex flex-col items-start sm:items-end gap-2 text-xs font-mono">
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <span className="text-white/40 uppercase tracking-wider text-[10px] mr-1">Language:</span>
+            {SUPPORTED_LANGUAGES.map((l) => (
+              <button
+                key={l.code}
+                onClick={() => {
+                  if (onSelectLang) {
+                    onSelectLang(l.code as Language);
+                  } else {
+                    onToggleLang();
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-full border text-[11px] font-mono transition-colors ${
+                  currentLang === l.code
+                    ? 'border-[#8B5CF6] bg-[#8B5CF6]/30 text-white font-bold'
+                    : 'border-white/20 hover:border-white/60 text-white/70'
+                }`}
+                title={l.englishName}
+              >
+                {l.nativeName}
+              </button>
+            ))}
+          </div>
+          <span className="text-white/40 text-[10px]">© 2026 MANAS — AI Emotional Wellness Twin</span>
         </div>
       </div>
     </div>

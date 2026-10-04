@@ -24,6 +24,7 @@ import {
 import { RealMascot } from './RealMascot';
 import { useI18n, SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import type { Language, MascotExpression } from '../types';
+import { speechEngine } from '../lib/voice/speechEngine';
 
 export interface UserProfile {
   id?: string;
@@ -43,6 +44,8 @@ export interface UserProfile {
   mascotEnabled?: boolean;
   mascotPosition?: 'left' | 'right';
   voicePref?: string;
+  voiceGender?: 'boy' | 'girl';
+  voicePitch?: number;
   micGranted?: boolean;
   stylePref?: 'reflective' | 'brief' | 'warm';
   consentDisclaimer: boolean;
@@ -339,23 +342,32 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
   // Step 6: Voice Preview
   const playVoiceSample = () => {
-    if (!('speechSynthesis' in window)) return;
     setIsAudioPreviewPlaying(true);
-    window.speechSynthesis.cancel();
 
     const sampleText =
       selectedLanguage === 'ta'
         ? 'வணக்கம், நான் எப்போதும் உங்களுடன் துணை நிற்பேன்.'
         : selectedLanguage === 'hi'
-        ? 'नमस्ते, मैं हमेशा आपकी बात सुनने के लिए उपस्थित हूँ।'
+        ? 'नमस्ते, मैं हमेशा आपकी बात सुनने کے लिए उपस्थित हूँ।'
+        : selectedLanguage === 'te'
+        ? 'నమస్కారం, నేను ఎల్లప్పుడూ మీకు తోడుగా ఉంటాను.'
+        : selectedLanguage === 'kn'
+        ? 'ನಮಸ್ಕಾರ, ನಾನು ಯಾವಾಗಲೂ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.'
+        : selectedLanguage === 'ml'
+        ? 'നമസ്കാരം, ഞാൻ എപ്പോഴും നിങ്ങളുടെ കൂടെയുണ്ടാകും.'
+        : selectedLanguage === 'bn'
+        ? 'নমস্কার, আমি সর্বদা আপনার পাশে আছি।'
+        : selectedLanguage === 'mr'
+        ? 'नमस्कार, मी नेहमी तुमच्या पाठीशी आहे.'
         : 'Hello, I am right here beside you whenever you need to talk.';
 
-    const utterance = new SpeechSynthesisUtterance(sampleText);
-    utterance.pitch = selectedVoice === 'aarav' ? 0.9 : selectedVoice === 'diya' ? 1.2 : 1.05;
-    utterance.rate = 0.95;
-    utterance.onend = () => setIsAudioPreviewPlaying(false);
-    utterance.onerror = () => setIsAudioPreviewPlaying(false);
-    window.speechSynthesis.speak(utterance);
+    const isBoyVoice = selectedVoice === 'aarav';
+    speechEngine.speak(sampleText, selectedLanguage, {
+      gender: isBoyVoice ? 'boy' : 'girl',
+      pitch: isBoyVoice ? 0.88 : 1.18,
+      onEnd: () => setIsAudioPreviewPlaying(false),
+      onError: () => setIsAudioPreviewPlaying(false),
+    });
   };
 
   // Navigation handlers
@@ -385,15 +397,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setStep(4);
   };
 
-  // Step 4: Send OTP
+  // Step 4: Send OTP to Mobile Number
   const handleSendOtp = async () => {
-    const valResult = contactSchema.safeParse({ email, phone, consent: contactConsent });
-    if (!valResult.success) {
-      const errMap: Record<string, string> = {};
-      valResult.error.issues.forEach((issue) => {
-        errMap[String(issue.path[0])] = issue.message;
-      });
-      setContactErrors(errMap);
+    const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
+    if (!cleanPhone || cleanPhone.length < 8) {
+      setContactErrors({ phone: 'Please enter a valid mobile number (e.g. +91 9876543210)' });
       return;
     }
     setContactErrors({});
@@ -401,18 +409,17 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setOtpError('');
 
     try {
-      const res = await fetch('/api/contact', {
+      const res = await fetch('/api/auth/send-mobile-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim(),
-          phone: phone.trim(),
-          consent: contactConsent
+          phone: cleanPhone,
+          name: name.trim() || undefined
         })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || 'Failed to send OTP');
+        throw new Error(data.detail || 'Failed to send OTP to mobile number');
       }
       setOtpSent(true);
       if (data.dev_otp_code) {
@@ -421,13 +428,13 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       }
       setResendCooldown(60);
     } catch (err: any) {
-      setOtpError(err.message || 'Error sending OTP. Please try again.');
+      setOtpError(err.message || 'Error sending mobile OTP. Please try again.');
     } finally {
       setIsSendingOtp(false);
     }
   };
 
-  // Step 4: Verify OTP
+  // Step 4: Verify OTP from Mobile Number
   const handleVerifyOtp = async () => {
     if (!otpCode.trim() || otpCode.trim().length !== 6) {
       setOtpError('Please enter the 6-digit verification code.');
@@ -437,17 +444,25 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setOtpError('');
 
     try {
-      const res = await fetch('/api/contact/verify', {
+      const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
+      const res = await fetch('/api/auth/verify-mobile-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim(),
-          code: otpCode.trim()
+          phone: cleanPhone,
+          code: otpCode.trim(),
+          name: name.trim() || 'Friend'
         })
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.detail || 'Invalid verification code');
+      }
+      if (data.access_token) {
+        localStorage.setItem('manas_access_token', data.access_token);
+        localStorage.setItem('manas_refresh_token', data.refresh_token);
+        localStorage.setItem('manas_user_id', data.user_id);
+        localStorage.setItem('manas_user_phone', data.phone || cleanPhone);
       }
       setEmailVerified(true);
       setStep(5);
@@ -481,7 +496,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       consentTimestamp: new Date().toISOString(),
       tone: existingProfile?.tone || 'gentle',
       role: existingProfile?.role || 'student',
-      gender: existingProfile?.gender || 'boy',
+      gender: selectedVoice === 'aarav' ? 'boy' : selectedVoice === 'diya' ? 'girl' : existingProfile?.gender || 'boy',
+      voiceGender: selectedVoice === 'aarav' ? 'boy' : selectedVoice === 'diya' ? 'girl' : 'boy',
+      voicePitch: selectedVoice === 'aarav' ? 0.88 : selectedVoice === 'diya' ? 1.18 : 1.02,
       reasons: existingProfile?.reasons || ['Stress & Pressure']
     };
 
@@ -670,22 +687,6 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   {t.steps.name.helpText}
                 </p>
 
-                {/* Friendly suggestions */}
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {['Friend', 'Anand', 'Priya', 'Rahul', 'Deepa', 'Sriram'].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => {
-                        setName(n);
-                        setNameError('');
-                      }}
-                      className="px-3 py-1 rounded-full text-xs font-mono bg-[#F0EDE4] dark:bg-[#1E2638] hover:bg-[#8B5CF6]/15 hover:text-[#8B5CF6] transition-colors"
-                    >
-                      +{n}
-                    </button>
-                  ))}
-                </div>
               </motion.div>
             )}
 
@@ -839,32 +840,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   </p>
                 </div>
 
-                {/* Email Field */}
+                {/* Phone Field (Primary for OTP) */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                    {t.steps.contact.emailLabel}
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    disabled={emailVerified}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    className="w-full px-4 py-3 rounded-2xl bg-[#F8F6F0] dark:bg-[#1E2638] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all disabled:opacity-60 text-[#0A0A0A] dark:text-[#FFFFFF]"
-                  />
-                  {contactErrors.email && (
-                    <span className="text-xs text-rose-500 font-medium">
-                      {contactErrors.email}
+                  <label className="text-xs font-semibold text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-[#8B5CF6]" />
+                      Mobile Number (OTP Verification)
                     </span>
-                  )}
-                </div>
-
-                {/* Phone Field */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                    {t.steps.contact.phoneLabel}
+                    <span className="text-[10px] font-mono text-[#8B5CF6]">Required</span>
                   </label>
                   <input
                     type="tel"
@@ -877,6 +860,30 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   {contactErrors.phone && (
                     <span className="text-xs text-rose-500 font-medium">
                       {contactErrors.phone}
+                    </span>
+                  )}
+                </div>
+
+                {/* Email Field (Optional) */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-[#8B5CF6]" />
+                      {t.steps.contact.emailLabel}
+                    </span>
+                    <span className="text-[10px] font-mono text-white/40">Optional</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    disabled={emailVerified}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com (optional)"
+                    className="w-full px-4 py-3 rounded-2xl bg-[#F8F6F0] dark:bg-[#1E2638] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all disabled:opacity-60 text-[#0A0A0A] dark:text-[#FFFFFF]"
+                  />
+                  {contactErrors.email && (
+                    <span className="text-xs text-rose-500 font-medium">
+                      {contactErrors.email}
                     </span>
                   )}
                 </div>

@@ -109,8 +109,14 @@ _TOPICS = [
       "never", "stupid", "useless", "should"],
      ["cognitive", "distortion", "thought", "catastrophizing", "evidence", "reframing"]),
     (["burnout", "burnt out", "exhausted", "drained", "overwhelmed", "too much", "pressure",
-      "deadline"],
-     ["burnout", "pomodoro", "break", "brain", "dump", "academic"]),
+      "deadline", "exhaustion", "tired", "சோர்வு", "அழுத்தம்", "थकावट", "तनाव"],
+     ["burnout", "pomodoro", "break", "brain", "dump", "academic", "activation"]),
+    (["lonely", "alone", "isolated", "isolation", "nobody", "no one", "breakup", "relationship",
+      "thani", "thanimai", "akela", "akele", "தனிமை", "பிரிவு", "அकेलापन", "दोस्त"],
+     ["loneliness", "connection", "de-shaming", "validation", "isolation", "comforting"]),
+    (["procrastination", "stuck", "can't start", "cant start", "freeze", "unmotivated", "lazy",
+      "delaying", "தள்ளிப்போடுதல்", "ஆரம்பிக்க முடியவில்லை", "शुरू नहीं कर पा रहा"],
+     ["activation", "micro-step", "5-minute", "action", "esconv"]),
 ]
 
 # weaker, emotion-based hints

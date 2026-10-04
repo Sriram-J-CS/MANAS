@@ -322,7 +322,7 @@ export const DevLipSyncPage: React.FC = () => {
             framing={framing}
             isSpeaking={isPlaying || isMicActive}
             audioEnergy={audioEnergy}
-            visemeWeights={visemeWeights as Record<string, number>}
+            visemeWeights={visemeWeights as unknown as Record<string, number>}
           />
 
           {/* HUD Overlay with Live Dominant Phoneme */}

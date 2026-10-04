@@ -19,6 +19,7 @@ export interface SpeechEngineOptions {
   voiceSpeed?: number;
   pitch?: number;
   voiceName?: string;
+  gender?: 'boy' | 'girl' | 'male' | 'female';
   onEnergy?: (energy: number) => void;
   onStart?: () => void;
   onEnd?: () => void;
@@ -279,13 +280,76 @@ class SpeechEngine {
       const sentence = sentences[index++];
       const utterance = new SpeechSynthesisUtterance(sentence);
       utterance.rate = opts.voiceSpeed ?? 0.95;
-      utterance.pitch = opts.pitch ?? 1.02;
-      utterance.lang = BROWSER_LANG_CODES[lang] || 'en-US';
 
-      if (opts.voiceName && opts.voiceName !== 'default') {
-        const voices = this.getAvailableVoices();
-        const match = voices.find((v) => v.name === opts.voiceName);
-        if (match) utterance.voice = match;
+      const isBoy = opts.gender === 'boy' || opts.gender === 'male';
+      const isGirl = opts.gender === 'girl' || opts.gender === 'female';
+
+      // Tune pitch according to user's gender preference:
+      // Boy user -> deeper, grounded masculine resonance (0.86 - 0.90)
+      // Girl user -> bright, gentle feminine warmth (1.15 - 1.22)
+      if (opts.pitch !== undefined) {
+        utterance.pitch = opts.pitch;
+      } else if (isBoy) {
+        utterance.pitch = 0.88;
+      } else if (isGirl) {
+        utterance.pitch = 1.18;
+      } else {
+        utterance.pitch = 1.02;
+      }
+
+      const targetLang = BROWSER_LANG_CODES[lang] || 'en-US';
+      utterance.lang = targetLang;
+      const langPrefix = targetLang.split('-')[0].toLowerCase();
+
+      // Find available voices installed on the operating system
+      const voices = this.getAvailableVoices();
+      if (voices.length > 0) {
+        if (opts.voiceName && opts.voiceName !== 'default') {
+          const match = voices.find((v) => v.name.toLowerCase().includes(opts.voiceName!.toLowerCase()));
+          if (match) utterance.voice = match;
+        }
+
+        if (!utterance.voice) {
+          // 1. Filter voices for the native language code
+          const matchingLangVoices = voices.filter((v) => {
+            const vLang = (v.lang || '').replace('_', '-').toLowerCase();
+            return vLang.startsWith(langPrefix) || vLang.includes(langPrefix);
+          });
+
+          if (matchingLangVoices.length > 0) {
+            let matchedVoice = null;
+            if (isBoy) {
+              matchedVoice = matchingLangVoices.find((v) => {
+                const n = v.name.toLowerCase();
+                return (
+                  n.includes('male') ||
+                  n.includes('boy') ||
+                  n.includes('ravi') ||
+                  n.includes('valluvar') ||
+                  n.includes('madhur') ||
+                  n.includes('mohan') ||
+                  n.includes('arvind') ||
+                  n.includes('hemant')
+                );
+              });
+            } else if (isGirl) {
+              matchedVoice = matchingLangVoices.find((v) => {
+                const n = v.name.toLowerCase();
+                return (
+                  n.includes('female') ||
+                  n.includes('girl') ||
+                  n.includes('priya') ||
+                  n.includes('ananya') ||
+                  n.includes('swara') ||
+                  n.includes('kalpana') ||
+                  n.includes('shruthi') ||
+                  n.includes('heera')
+                );
+              });
+            }
+            utterance.voice = matchedVoice || matchingLangVoices[0];
+          }
+        }
       }
 
       utterance.onstart = () => {

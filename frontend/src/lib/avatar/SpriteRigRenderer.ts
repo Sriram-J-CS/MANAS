@@ -22,6 +22,7 @@ import type {
   OutfitType,
   MascotGender,
 } from './AvatarRenderer';
+import { getStoredMascotModel } from '../mascot/mascotModelStorage';
 
 export class SpriteRigRenderer implements AvatarRenderer {
   private container: HTMLElement | null = null;
@@ -63,8 +64,9 @@ export class SpriteRigRenderer implements AvatarRenderer {
   private breathPhase = 0;
   private swayPhase = 0;
 
-  // Preloaded Image Cache
+  // Preloaded Image Cache & User Custom Model
   private imageCache: Map<string, HTMLImageElement> = new Map();
+  private customImg: HTMLImageElement | null = null;
 
   async init(container: HTMLElement, options: AvatarRendererOptions = {}): Promise<void> {
     this.container = container;
@@ -85,6 +87,13 @@ export class SpriteRigRenderer implements AvatarRenderer {
     this.resize();
     window.addEventListener('resize', this.handleResize);
 
+    // Load user custom digital twin model if present
+    this.loadCustomMascot();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('manas:custom_mascot_uploaded', this.handleCustomMascotUpdated);
+      window.addEventListener('manas:mascot_model_deleted', this.handleCustomMascotUpdated);
+    }
+
     // Preload base assets
     await this.preloadAssets();
 
@@ -93,6 +102,27 @@ export class SpriteRigRenderer implements AvatarRenderer {
 
     if (options.onReady) {
       options.onReady();
+    }
+  }
+
+  private handleCustomMascotUpdated = () => {
+    this.loadCustomMascot();
+  };
+
+  private async loadCustomMascot() {
+    try {
+      const stored = await getStoredMascotModel();
+      if (stored && stored.fileType === 'image') {
+        const img = new Image();
+        img.src = stored.objectUrl;
+        img.onload = () => {
+          this.customImg = img;
+        };
+      } else {
+        this.customImg = null;
+      }
+    } catch {
+      this.customImg = null;
     }
   }
 
@@ -286,10 +316,13 @@ export class SpriteRigRenderer implements AvatarRenderer {
       nodOffset = Math.sin(elapsed * 0.012) * 14;
     }
 
-    // Select primary base image
-    let baseImg = this.imageCache.get(`/avatars/${this.gender}.png`);
-    if (!baseImg) {
-      baseImg = this.imageCache.get(`/avatars/default/${this.gender}_base.png`);
+    // Select primary base image: User's custom digital twin if present, otherwise default Pixar avatar
+    let baseImg: HTMLImageElement | null = this.customImg;
+    if (!baseImg || !baseImg.complete) {
+      baseImg = this.imageCache.get(`/avatars/${this.gender}.png`) || null;
+      if (!baseImg) {
+        baseImg = this.imageCache.get(`/avatars/default/${this.gender}_base.png`) || null;
+      }
     }
 
     // Check for gesture or outfit override
@@ -410,6 +443,10 @@ export class SpriteRigRenderer implements AvatarRenderer {
       this.animationFrameId = null;
     }
     window.removeEventListener('resize', this.handleResize);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('manas:custom_mascot_uploaded', this.handleCustomMascotUpdated);
+      window.removeEventListener('manas:mascot_model_deleted', this.handleCustomMascotUpdated);
+    }
     if (this.container && this.canvas) {
       this.container.removeChild(this.canvas);
     }
@@ -417,5 +454,6 @@ export class SpriteRigRenderer implements AvatarRenderer {
     this.ctx = null;
     this.container = null;
     this.imageCache.clear();
+    this.customImg = null;
   }
 }

@@ -83,10 +83,14 @@ MEDICATION_PATTERNS = [
     r"how many.*pills",
     r"anxiety pills",
     r"sleeping pills",
-    r"diagnose me",
+    r"\bdiagnos(e|is)\b",
     r"what medication",
     r"what dose",
-    r"prescribe"
+    r"prescribe",
+    r"\bantidepressant\b",
+    r"\bxanax\b",
+    r"\bprozac\b",
+    r"\badderall\b"
 ]
 
 def check_safety(text: str) -> dict:

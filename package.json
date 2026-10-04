@@ -1,10 +1,15 @@
 {
-  "name": "mental-health-chatbot-workspace",
-  "version": "1.0.0",
+  "name": "emoticare-ai-workspace",
+  "version": "2.0.0",
+  "description": "EmotiCare AI - AI Digital Mental Twin & Emotional Wellness Companion (MANAS)",
   "private": true,
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
-    "preview": "npm --prefix frontend run preview"
+    "preview": "npm --prefix frontend run preview",
+    "lint": "npm --prefix frontend run lint",
+    "test": "python -m pytest tests/ backend/tests/",
+    "test:crisis": "python tests/test_crisis.py",
+    "test:prod": "python tests/test_emoticare_production.py"
   }
 }

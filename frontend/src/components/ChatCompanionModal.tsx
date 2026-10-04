@@ -11,12 +11,20 @@ import {
   ArrowDown,
   X,
   Disc3,
+  Globe,
+  ChevronDown,
+  Activity,
+  ShieldCheck,
+  Brain,
+  Compass,
+  BookOpen,
 } from 'lucide-react';
 import type { UserProfile } from './OnboardingModal';
 import type { ChatMessage, MascotExpression } from '../types';
 import type { MascotEmotion } from '../lib/emotion/emotionEngine';
 import { MascotViewer } from './mascot/MascotViewer';
 import { MascotStage } from './MascotStage';
+import { AvatarStudioModal } from './avatar/AvatarStudioModal';
 import { MascotControls } from './mascot/MascotControls';
 import { OutfitsPanel } from './mascot/OutfitsPanel';
 import { MascotCustomizer } from './mascot/MascotCustomizer';
@@ -32,6 +40,7 @@ import { FeedbackDashboardModal } from './admin/FeedbackDashboardModal';
 import { musicPlayer } from '../lib/music/musicPlayerService';
 import { PersistentMiniPlayer } from './music/PersistentMiniPlayer';
 import { MusicDrawer } from './music/MusicDrawer';
+import { SUPPORTED_LANGUAGES, LANGUAGE_MAP } from '../i18n/languages';
 import {
   streamChatMessage,
   sendChatFeedback,
@@ -47,6 +56,13 @@ interface ChatCompanionModalProps {
   onOpenHelp: () => void;
   onEditProfile?: () => void;
   onDeleteData?: () => void;
+  onOpenTwin?: () => void;
+  onOpenPersonality?: () => void;
+  onOpenWhatWorks?: () => void;
+  onOpenMemory?: () => void;
+  onOpenJournalGoals?: () => void;
+  onOpenSafetyPlan?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
 export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
@@ -57,6 +73,13 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   onOpenHelp,
   onEditProfile,
   onDeleteData,
+  onOpenTwin,
+  onOpenPersonality,
+  onOpenWhatWorks,
+  onOpenMemory,
+  onOpenJournalGoals,
+  onOpenSafetyPlan,
+  onOpenPrivacy,
 }) => {
   if (!isOpen) return null;
 
@@ -69,6 +92,8 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   const [isCustomizerOpen, setIsCustomizerOpen] = useState<boolean>(false);
   const [isOutfitsOpen, setIsOutfitsOpen] = useState<boolean>(false);
   const [isMusicDrawerOpen, setIsMusicDrawerOpen] = useState<boolean>(false);
+  const [isLangMenuOpen, setIsLangMenuOpen] = useState<boolean>(false);
+  const [isAvatarStudioOpen, setIsAvatarStudioOpen] = useState<boolean>(false);
 
   // Load avatar configuration on startup
   useEffect(() => {
@@ -94,11 +119,29 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
 
   // Mood Tracker state
   const [currentMood, setCurrentMood] = useState<number | null>(null);
-  const [moodHistory, setMoodHistory] = useState<Array<{ score: number; tags?: string; created_at: string }>>([
-    { score: 3, tags: 'Exams,Sleep', created_at: '2 days ago' },
-    { score: 4, tags: 'Study,Calm', created_at: 'Yesterday' },
-    { score: 4, tags: 'Good,Peace', created_at: 'Today' },
-  ]);
+  const [moodHistory, setMoodHistory] = useState<Array<{ score: number; tags?: string; created_at: string }>>([]);
+
+  // Fetch real mood history from server
+  useEffect(() => {
+    const fetchMoodHistory = async () => {
+      try {
+        const token = localStorage.getItem('manas_access_token');
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const uid = userProfile.id || localStorage.getItem('manas_user_id') || 'anonymous';
+        const res = await fetch(`/api/mood/history?user_id=${encodeURIComponent(uid)}`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.history)) {
+            setMoodHistory(data.history);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load mood history:', err);
+      }
+    };
+    fetchMoodHistory();
+  }, [userProfile.id]);
 
   // Scroll & Transcript refs
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -211,8 +254,15 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           setActiveGesture(seg.gesture as any);
         }
 
+        const voiceGender =
+          userProfile.voiceGender ||
+          (userProfile.avatarType === 'girl' ? 'girl' : userProfile.gender === 'girl' ? 'girl' : 'boy');
+        const userPitch = userProfile.voicePitch;
+
         speechEngine.speak(segText, lang, {
           voiceSpeed: mascotConfig.voiceSpeed,
+          pitch: userPitch,
+          gender: voiceGender,
           onEnergy: (energy) => setAudioEnergy(energy),
           onEnd: () => {
             playNextSegment();
@@ -230,8 +280,15 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     }
 
     // Single-pass speech synthesis fallback
+    const voiceGender =
+      userProfile.voiceGender ||
+      (userProfile.avatarType === 'girl' ? 'girl' : userProfile.gender === 'girl' ? 'girl' : 'boy');
+    const userPitch = userProfile.voicePitch;
+
     speechEngine.speak(text, lang, {
       voiceSpeed: mascotConfig.voiceSpeed,
+      pitch: userPitch,
+      gender: voiceGender,
       onEnergy: (energy) => setAudioEnergy(energy),
       onEnd: () => {
         setIsAvatarSpeaking(false);
@@ -356,7 +413,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
    * 4. Double-send prevented by isTyping flag.
    * 5. Retry button available on error.
    */
-  const handleSendMessage = async (textToSend: string) => {
+  const handleSendMessage = async (textToSend: string, typingCPS?: number) => {
     if (!textToSend.trim() || isTyping) return;
 
     handleBargeIn();
@@ -402,6 +459,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         role: userProfile.role || 'student',
         stylePref: userProfile.stylePref || 'reflective',
         age: userProfile.age || 20,
+        typing_cps: typingCPS,
         onMeta: (meta) => {
           setIsThinking(false);
           if (meta.emotion) setMascotExpr(meta.emotion as MascotEmotion);
@@ -597,6 +655,43 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             <span>14416</span>
           </button>
 
+          {/* Digital Mental Twin Trigger */}
+          {onOpenTwin && (
+            <button
+              type="button"
+              onClick={onOpenTwin}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 hover:bg-teal-500/20 text-xs font-mono text-teal-700 font-bold transition-colors cursor-pointer shadow-xs"
+              title="Digital Mental Twin Baselines & Workload Strain"
+            >
+              <Activity className="w-3.5 h-3.5 text-teal-600" />
+              <span className="hidden sm:inline">Mental Twin</span>
+            </button>
+          )}
+
+          {/* Privacy Center Trigger */}
+          {onOpenPrivacy && (
+            <button
+              type="button"
+              onClick={onOpenPrivacy}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-xs font-mono text-emerald-700 font-bold transition-colors cursor-pointer shadow-xs"
+              title="Privacy Center & DPDP Consent Management"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden sm:inline">Privacy</span>
+            </button>
+          )}
+
+          {/* 3-Step Avatar Studio Trigger */}
+          <button
+            type="button"
+            onClick={() => setIsAvatarStudioOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-violet-400/40 bg-violet-500/10 hover:bg-violet-500/20 text-xs font-mono text-violet-700 dark:text-violet-300 font-bold transition-colors cursor-pointer shadow-xs"
+            title="3-Step Speaking Avatar Pipeline (ChatGPT + ElevenLabs + Hedra.ai)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+            <span className="hidden sm:inline">Avatar Studio</span>
+          </button>
+
           {/* Quick Customize Mascot Trigger */}
           <button
             type="button"
@@ -629,6 +724,49 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             <Shirt className="w-3.5 h-3.5" />
             <span>Outfits</span>
           </button>
+
+          {/* 8 Indian Languages Selector */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsLangMenuOpen(!isLangMenuOpen)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#0A0A0A]/15 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-xs font-mono text-[#0A0A0A] transition-colors cursor-pointer"
+              title="Change Companion Language"
+            >
+              <Globe className="w-3.5 h-3.5 text-[#8B5CF6]" />
+              <span className="font-bold">
+                {LANGUAGE_MAP[(userProfile.language || 'en') as keyof typeof LANGUAGE_MAP]?.nativeName || 'English'}
+              </span>
+              <ChevronDown className="w-3 h-3 text-[#0A0A0A]/40" />
+            </button>
+
+            {isLangMenuOpen && (
+              <div
+                className="absolute right-0 top-11 w-52 bg-[#FFFFFF] border border-[#0A0A0A]/15 shadow-2xl rounded-2xl p-1.5 z-50 text-xs font-mono space-y-1"
+              >
+                <div className="px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#0A0A0A]/40 font-bold border-b border-[#0A0A0A]/8">
+                  Indian Languages (8)
+                </div>
+                {SUPPORTED_LANGUAGES.map((lang) => (
+                  <button
+                    key={lang.code}
+                    onClick={() => {
+                      _onUpdateProfile?.({ language: lang.code });
+                      setIsLangMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${
+                      (userProfile.language || 'en') === lang.code
+                        ? 'bg-[#8B5CF6]/15 text-[#8B5CF6] font-bold'
+                        : 'hover:bg-[#F2EFE8] text-[#0A0A0A]'
+                    }`}
+                  >
+                    <span>{lang.nativeName}</span>
+                    <span className="text-[10px] text-[#0A0A0A]/40">{lang.englishName}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Profile & Settings Menu Popover */}
           <div className="relative">
@@ -696,6 +834,83 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 >
                   <Sparkles className="w-3.5 h-3.5" /> Empathy Review Dashboard
                 </button>
+                {onOpenTwin && (
+                  <button
+                    onClick={() => {
+                      onOpenTwin();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-teal-700 cursor-pointer"
+                  >
+                    <Activity className="w-3.5 h-3.5 text-teal-600" /> Digital Mental Twin
+                  </button>
+                )}
+                {onOpenPersonality && (
+                  <button
+                    onClick={() => {
+                      onOpenPersonality();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 cursor-pointer"
+                  >
+                    <Compass className="w-3.5 h-3.5 text-[#8B5CF6]" /> OCEAN Personality
+                  </button>
+                )}
+                {onOpenWhatWorks && (
+                  <button
+                    onClick={() => {
+                      onOpenWhatWorks();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" /> What Works For Me
+                  </button>
+                )}
+                {onOpenMemory && (
+                  <button
+                    onClick={() => {
+                      onOpenMemory();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 cursor-pointer"
+                  >
+                    <Brain className="w-3.5 h-3.5 text-[#8B5CF6]" /> Memory Center
+                  </button>
+                )}
+                {onOpenJournalGoals && (
+                  <button
+                    onClick={() => {
+                      onOpenJournalGoals();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 cursor-pointer"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-[#8B5CF6]" /> Journal &amp; Goals
+                  </button>
+                )}
+                {onOpenSafetyPlan && (
+                  <button
+                    onClick={() => {
+                      onOpenSafetyPlan();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-50 flex items-center gap-2 text-rose-700 font-bold cursor-pointer"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5 text-rose-600" /> Safety Plan &amp; Helplines
+                  </button>
+                )}
+                {onOpenPrivacy && (
+                  <button
+                    onClick={() => {
+                      onOpenPrivacy();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-emerald-50 flex items-center gap-2 text-emerald-700 font-bold cursor-pointer"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Privacy Center
+                  </button>
+                )}
                 {onEditProfile && (
                   <button
                     onClick={() => {
@@ -769,7 +984,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               isSpeaking={isAvatarSpeaking}
               isUserTyping={isListening || isTyping}
               audioEnergy={audioEnergy}
-              prefer3D={true}
+              prefer3D={false}
             />
           </div>
         </section>
@@ -905,26 +1120,32 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         <MoodJourneyDrawer
           isOpen={showMoodDrawer}
           onClose={() => setShowMoodDrawer(false)}
-          userId={userProfile.id || 'default_user'}
           moodHistory={moodHistory}
-          onLogMood={async (score) => {
+          currentMood={currentMood}
+          onSelectMood={async (score) => {
             setCurrentMood(score);
             try {
+              const token = localStorage.getItem('manas_access_token');
+              const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+              if (token) headers['Authorization'] = `Bearer ${token}`;
+              const uid = userProfile.id || localStorage.getItem('manas_user_id') || 'anonymous';
               await fetch('/api/mood', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
-                  user_id: userProfile.id,
+                  user_id: uid,
                   score,
                   tags: ['MoodJourney'],
                   note: 'Logged from Chat Workspace',
                 }),
               });
               setMoodHistory((prev) => [
-                { score, tags: 'Logged', created_at: 'Just now' },
                 ...prev,
+                { score, tags: 'MoodJourney', created_at: 'Just now' },
               ]);
-            } catch (_) {}
+            } catch (err) {
+              console.warn('Failed to record mood:', err);
+            }
           }}
         />
       )}
@@ -943,6 +1164,18 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       <MusicDrawer
         isOpen={isMusicDrawerOpen}
         onClose={() => setIsMusicDrawerOpen(false)}
+      />
+
+      {/* 3-Step Speaking Avatar Studio Modal */}
+      <AvatarStudioModal
+        isOpen={isAvatarStudioOpen}
+        onClose={() => setIsAvatarStudioOpen(false)}
+        userProfile={userProfile}
+        onApplyAvatar={(updated) => {
+          if (_onUpdateProfile) {
+            _onUpdateProfile(updated);
+          }
+        }}
       />
     </div>
   );
