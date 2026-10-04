@@ -49,7 +49,7 @@ export const FloatingBackgroundShapes: React.FC = () => {
 
   return (
     <div
-      className="fixed inset-0 pointer-events-none overflow-hidden z-[5] select-none"
+      className="fixed inset-0 pointer-events-none overflow-hidden z-0 select-none opacity-20"
       aria-hidden="true"
     >
       {/* Calm 3D Shape 1: Lavender Pearl */}

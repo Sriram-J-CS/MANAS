@@ -2,10 +2,10 @@ import React, { useEffect, useRef } from 'react';
 
 interface InkCanvasProps {
   brand: string;
-  textures: Array<[string, string, string]>;
+  textures?: Array<[string, string, string]>;
 }
 
-export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
+export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -14,8 +14,11 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
 
+    // Off-screen canvas for smooth black liquid trail
     const trail = document.createElement('canvas');
     const tctx = trail.getContext('2d');
+
+    // Off-screen canvas for 3D metallic foil balloon texture
     const tex = document.createElement('canvas');
     const xctx = tex.getContext('2d');
     if (!tctx || !xctx) return;
@@ -40,18 +43,19 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
     let texIdx = 0;
     let lastSwap = 0;
 
-    // Preload mascot portrait images for dynamic texture blending
-    const mascotImages: HTMLImageElement[] = [];
-    const mascotUrls = [
-      '/assets/mascot/mascot_happy.jpg',
-      '/assets/mascot/mascot_neutral.jpg',
-      '/assets/mascot/mascot_concerned.jpg',
+    // Load authentic 3D metallic foil balloon textures (matching reference image)
+    const foilTextures: HTMLImageElement[] = [];
+    const textureUrls = [
+      '/assets/textures/foil_pink.jpg',
+      '/assets/textures/foil_violet.jpg',
     ];
 
-    mascotUrls.forEach((url) => {
+    textureUrls.forEach((url) => {
       const img = new Image();
       img.src = url;
-      img.onload = () => mascotImages.push(img);
+      img.onload = () => {
+        foilTextures.push(img);
+      };
     });
 
     const size = () => {
@@ -74,8 +78,17 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
       tctx.scale(dpr, dpr);
       xctx.scale(dpr, dpr);
 
-      // Giant wordmark: about 25vw, cropped by viewport edges
+      // Giant wordmark: about 23vw, centered in viewport
       fs = Math.min(W * 0.23, H * 0.38);
+
+      // If initial mouse is unset, place at starting orbit point
+      if (mouse.px < -900) {
+        const radiusX = Math.min(W * 0.28, 420);
+        mouse.px = W / 2 + radiusX;
+        mouse.py = H / 2;
+        mouse.easedX = mouse.px;
+        mouse.easedY = mouse.py;
+      }
     };
 
     size();
@@ -90,31 +103,22 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
       }
     };
 
-    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
 
     const drawWord = (c: CanvasRenderingContext2D, fill: string | CanvasGradient | CanvasPattern) => {
       c.save();
-      c.font = `800 ${fs}px 'Inter Tight', 'Helvetica Neue', Arial, sans-serif`;
+      c.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       c.fillStyle = fill;
-      // letter spacing emulation for canvas
       c.fillText(brand, W / 2, H * 0.5);
       c.restore();
     };
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // Paint initial trail blob in center to hint interactivity
-    setTimeout(() => {
-      tctx.fillStyle = '#000';
-      tctx.beginPath();
-      tctx.arc(W / 2, H / 2, 70, 0, Math.PI * 2);
-      tctx.fill();
-    }, 200);
-
     const frame = (now: number) => {
-      // Pause rendering when tab is hidden to save battery & GPU
+      // Pause rendering when tab is hidden to save GPU & battery
       if (document.hidden) {
         animId = requestAnimationFrame(frame);
         return;
@@ -128,22 +132,25 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
         return;
       }
 
-      // 1. Fade old ink slowly so blobs melt away organically
+      // 1. Gently fade previous trail so it melts away like real smooth ink
       tctx.globalCompositeOperation = 'destination-out';
-      tctx.fillStyle = 'rgba(0, 0, 0, 0.015)';
+      tctx.fillStyle = 'rgba(0, 0, 0, 0.034)';
       tctx.fillRect(0, 0, W, H);
       tctx.globalCompositeOperation = 'source-over';
 
-      // 2. Lissajous auto-animation if idle > 1.2s or on touch devices
-      const isIdle = now - mouse.lastMove > 1200 || mouse.x < 0;
+      // 2. Determine position: Smooth circular/oval orbit when idle ("simply round that effects")
+      const isIdle = now - mouse.lastMove > 900 || mouse.x < 0;
 
       let curX: number;
       let curY: number;
 
       if (isIdle) {
-        const t = now * 0.0014;
-        curX = W / 2 + Math.sin(t * 1.5) * (W * 0.32);
-        curY = H / 2 + Math.sin(t * 2.2 + 0.5) * (H * 0.22);
+        // Orbit smoothly in a clean round loop through the letters (as in reference image 2)
+        const t = now * 0.0011; // calm, graceful speed
+        const orbitRadiusX = Math.min(W * 0.28, 400);
+        const orbitRadiusY = Math.min(H * 0.24, 250);
+        curX = W / 2 + Math.cos(t) * orbitRadiusX;
+        curY = H / 2 + Math.sin(t) * orbitRadiusY;
         mouse.easedX = curX;
         mouse.easedY = curY;
       } else {
@@ -151,94 +158,107 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
           mouse.easedX = mouse.x;
           mouse.easedY = mouse.y;
         } else {
-          // Soothing, calm cursor lag with cubic-bezier-like easing
-          mouse.easedX += (mouse.x - mouse.easedX) * 0.22;
-          mouse.easedY += (mouse.y - mouse.easedY) * 0.22;
+          // Subtle, calm cursor lag with smooth easing
+          mouse.easedX += (mouse.x - mouse.easedX) * 0.18;
+          mouse.easedY += (mouse.y - mouse.easedY) * 0.18;
         }
         curX = mouse.easedX;
         curY = mouse.easedY;
       }
 
-      const dx = curX - mouse.px;
-      const dy = curY - mouse.py;
-      const v = Math.min(Math.hypot(dx, dy), 80);
+      // 3. Draw smooth, continuous rounded liquid stroke (NO bumpy discrete circle clouds)
+      if (mouse.px > -900) {
+        const dist = Math.hypot(curX - mouse.px, curY - mouse.py);
+        if (dist > 0.5) {
+          const brushRadius = Math.max(46, Math.min(W * 0.052, 78));
 
-      if (mouse.px > -900 && (v > 1 || isIdle)) {
-        const steps = Math.max(1, Math.ceil(v / 6));
-        for (let i = 0; i < steps; i++) {
-          const t = i / steps;
-          const x = mouse.px + dx * t;
-          const y = mouse.py + dy * t;
-          const r = 38 + v * 1.5 + Math.random() * 26;
+          tctx.save();
+          tctx.strokeStyle = '#000000';
+          tctx.fillStyle = '#000000';
+          tctx.lineCap = 'round';
+          tctx.lineJoin = 'round';
+          tctx.lineWidth = brushRadius * 2;
 
-          tctx.fillStyle = '#000';
           tctx.beginPath();
-          tctx.arc(x, y, r, 0, Math.PI * 2);
+          tctx.moveTo(mouse.px, mouse.py);
+          tctx.lineTo(curX, curY);
+          tctx.stroke();
+
+          // Ensure the cap is smoothly filled
+          tctx.beginPath();
+          tctx.arc(curX, curY, brushRadius, 0, Math.PI * 2);
           tctx.fill();
 
-          for (let k = 0; k < 2; k++) {
-            tctx.beginPath();
-            tctx.arc(
-              x + (Math.random() - 0.5) * r * 2.2,
-              y + (Math.random() - 0.5) * r * 2.2,
-              r * (0.2 + Math.random() * 0.4),
-              0,
-              Math.PI * 2
-            );
-            tctx.fill();
-          }
-        }
-
-        // Texture switches every ~1.5s
-        if (now - lastSwap > 1500) {
-          texIdx = (texIdx + 1) % textures.length;
-          lastSwap = now;
+          tctx.restore();
         }
       }
 
       mouse.px = curX;
       mouse.py = curY;
 
-      // 3. Render textured word, clipped to ink trail with destination-in
+      // Cycle between pink and violet 3D metallic foil balloon textures every ~4 seconds
+      if (foilTextures.length > 1 && now - lastSwap > 4000) {
+        texIdx = (texIdx + 1) % foilTextures.length;
+        lastSwap = now;
+      }
+
+      // 4. Render 3D Foil Balloon Texture clipped to Wordmark & Trail
       xctx.globalCompositeOperation = 'source-over';
       xctx.clearRect(0, 0, W, H);
 
-      const [c1, c2, c3] = textures[texIdx] || ['#5b2bff', '#b6a1ff', '#1a0a7a'];
-      const g = xctx.createLinearGradient(0, H * 0.25, W, H * 0.75);
-      g.addColorStop(0, c1);
-      g.addColorStop(0.35, c2);
-      g.addColorStop(0.7, c3);
-      g.addColorStop(1, c1);
+      const activeFoil = foilTextures[texIdx] || foilTextures[0];
+      if (activeFoil && activeFoil.complete && activeFoil.naturalWidth > 0) {
+        // Draw 3D foil image covering the canvas preserving aspect ratio
+        const imgRatio = activeFoil.naturalWidth / activeFoil.naturalHeight;
+        const canvasRatio = W / H;
+        let drawW = W;
+        let drawH = H;
+        let offsetX = 0;
+        let offsetY = 0;
 
-      drawWord(xctx, g);
+        if (canvasRatio > imgRatio) {
+          drawW = W;
+          drawH = W / imgRatio;
+          offsetY = (H - drawH) / 2;
+        } else {
+          drawH = H;
+          drawW = H * imgRatio;
+          offsetX = (W - drawW) / 2;
+        }
 
-      // Specular highlight line across the word
-      xctx.save();
-      const sweepX = (now * 0.15) % (W * 1.5) - W * 0.25;
-      const specGrad = xctx.createLinearGradient(sweepX, 0, sweepX + 180, 0);
-      specGrad.addColorStop(0, 'rgba(255,255,255,0)');
-      specGrad.addColorStop(0.5, 'rgba(255,255,255,0.7)');
-      specGrad.addColorStop(1, 'rgba(255,255,255,0)');
-      xctx.globalCompositeOperation = 'source-atop';
-      xctx.fillStyle = specGrad;
-      xctx.fillRect(0, 0, W, H);
-      xctx.restore();
+        xctx.drawImage(activeFoil, offsetX, offsetY, drawW, drawH);
+      } else {
+        // High-gloss metallic gradient fallback if image is still loading
+        const g = xctx.createLinearGradient(0, H * 0.2, W, H * 0.8);
+        g.addColorStop(0, '#c0156d');
+        g.addColorStop(0.28, '#ff5ea8');
+        g.addColorStop(0.48, '#ffffff');
+        g.addColorStop(0.68, '#c0156d');
+        g.addColorStop(1, '#660534');
+        xctx.fillStyle = g;
+        xctx.fillRect(0, 0, W, H);
+      }
 
-      // Clip texture to the ink trail
+      // Mask 1: Clip foil texture strictly to the wordmark letters
+      xctx.globalCompositeOperation = 'destination-in';
+      drawWord(xctx, '#000000');
+
+      // Mask 2: Clip foil texture strictly to where the liquid trail is
       xctx.globalCompositeOperation = 'destination-in';
       xctx.drawImage(trail, 0, 0, W, H);
 
-      // 4. Compose final canvas: white bg → black ink → black word → textured word on top
+      // 5. Compose Final Screen:
+      // A. Crisp pure white background
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, W, H);
 
-      // draw black ink blobs
+      // B. Smooth continuous black liquid trail on white background
       ctx.drawImage(trail, 0, 0, W, H);
 
-      // draw base giant black wordmark
+      // C. Base solid black wordmark for all unrevealed letter areas
       drawWord(ctx, '#000000');
 
-      // overlay the clipped glossy texture
+      // D. Revealed 3D metallic foil balloon material inside the letters!
       ctx.drawImage(tex, 0, 0, W, H);
 
       animId = requestAnimationFrame(frame);
@@ -251,14 +271,14 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
       window.removeEventListener('resize', size);
       window.removeEventListener('pointermove', onPointerMove);
     };
-  }, [brand, textures]);
+  }, [brand]);
 
   return (
     <canvas
       ref={canvasRef}
       id="stage"
-      className="absolute inset-0 w-full h-full block cursor-crosshair"
-      aria-label={`${brand} interactive ink canvas`}
+      className="absolute inset-0 w-full h-full block cursor-crosshair select-none"
+      aria-label={`${brand} interactive liquid ink and 3D metallic foil balloon canvas`}
     />
   );
 };
