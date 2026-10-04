@@ -50,14 +50,17 @@ export const Hero: React.FC<HeroProps> = ({
       {/* 2D / WebGL Canvas with Organic Ink Trail & 3D Tactile Material Inside Letters */}
       <InkCanvas brand={config.brand} />
 
-      {/* Top-Left: Two-line tagline + "ENTER CHAT →" Pill Button (matching noth.in) */}
-      <div className="absolute top-[80px] md:top-[92px] left-[20px] md:left-[36px] z-30 max-w-[480px] flex flex-col items-start gap-4 md:gap-5">
+      {/* Top-Left: Two-line tagline */}
+      <div className="absolute top-[80px] md:top-[92px] left-[20px] md:left-[36px] z-20 max-w-[480px] pointer-events-none">
         <h1 className="text-[clamp(15px,1.35vw,18px)] leading-[1.28] font-medium text-[#000000] tracking-[-0.02em] select-none">
           Not a style, a perspective.
           <br />
           Because MANAS is listening.
         </h1>
+      </div>
 
+      {/* Hero Action: "ENTER CHAT →" Centered Directly Below MANAS Wordmark */}
+      <div className="absolute top-[68%] md:top-[66%] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
         <button
           ref={buttonRef}
           onClick={handleEnterChat}
@@ -67,13 +70,16 @@ export const Hero: React.FC<HeroProps> = ({
             transform: `translate3d(${btnOffset.x}px, ${btnOffset.y}px, 0)`,
             transition: btnOffset.x === 0 ? 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none',
           }}
-          className="group relative inline-flex items-center gap-3 px-6 py-2.5 md:px-7 md:py-3 rounded-full bg-[#000000] text-[#FFFFFF] hover:bg-[#1A1A1A] active:scale-[0.97] transition-all cursor-pointer select-none shadow-[0_4px_14px_rgba(0,0,0,0.18)] overflow-hidden"
+          className="group relative inline-flex items-center gap-3.5 px-8 py-3.5 md:px-9 md:py-4 rounded-full bg-[#000000] text-[#FFFFFF] hover:bg-[#1A1A1A] active:scale-[0.97] transition-all cursor-pointer select-none shadow-[0_10px_25px_rgba(0,0,0,0.18)] hover:shadow-[0_16px_35px_rgba(0,0,0,0.26)] overflow-hidden"
           aria-label="Enter chat"
         >
-          <span className="font-mono text-[12px] md:text-[13px] font-bold tracking-[0.10em] uppercase">
+          {/* Subtle sheen highlight on hover */}
+          <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out pointer-events-none" />
+
+          <span className="relative z-10 font-mono text-[13px] md:text-[14px] font-bold tracking-[0.14em] uppercase">
             ENTER CHAT
           </span>
-          <span className="inline-block text-sm transition-transform duration-300 group-hover:translate-x-1">
+          <span className="relative z-10 inline-block font-sans text-sm transition-transform duration-300 group-hover:translate-x-1.5">
             →
           </span>
         </button>

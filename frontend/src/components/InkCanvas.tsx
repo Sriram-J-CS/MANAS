@@ -201,7 +201,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             sum += texture2D(tInput, vUv + vec2(0.0, float(i) * 6.0 * texel.y)).r * weights[i + 5];
           }
           // Square-root pillow profile: h = sqrt(clamp(d / R, 0, 1))
-          // Inflates the interior into a soft, rounded puffy balloon dome
           float pillow = sqrt(clamp(sum * 1.20, 0.0, 1.0));
           gl_FragColor = vec4(vec3(pillow), 1.0);
         }
@@ -213,7 +212,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     blurScene.add(blurQuad);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. Controlled Liquid Ink Trail (Radius Capped within 70px - 140px)
+    // 2. Controlled Liquid Paint Simulation (Organic Brush Bristles & Flow)
     // ─────────────────────────────────────────────────────────────────────────
     let fW = Math.floor(W / 2);
     let fH = Math.floor(H / 2);
@@ -253,7 +252,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         uMouse: { value: new THREE.Vector2(-999, -999) },
         uPrevMouse: { value: new THREE.Vector2(-999, -999) },
         uRadius: { value: 0.05 },
-        uDecay: { value: 0.968 },
+        uDecay: { value: 0.972 },
         uIsMoving: { value: 0.0 },
         uResolution: { value: new THREE.Vector2(fW, fH) },
       },
@@ -287,7 +286,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             vec2 aspect = vec2(uResolution.x / uResolution.y, 1.0);
             vec2 texel = 1.0 / uResolution;
 
-            // 4-tap slight diffusion blur
+            // 4-tap diffusion blur for wet paint surface tension
             float prev = texture2D(tPrev, vUv).r;
             float blurred = (
                 texture2D(tPrev, vUv + vec2(-texel.x, 0.0)).r +
@@ -296,13 +295,20 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
                 texture2D(tPrev, vUv + vec2(0.0, texel.y)).r
             ) * 0.25;
 
-            // Liquid decay
-            float density = mix(prev, blurred, 0.18) * uDecay;
+            // Viscous paint decay
+            float density = mix(prev, blurred, 0.15) * uDecay;
 
-            // Stamp smooth circles along path only when moving
+            // Stamp organic paint brush stroke along motion vector
             if (uIsMoving > 0.5) {
+                vec2 dir = (uMouse - uPrevMouse) * aspect;
+                float strokeSpeed = length(dir);
+                vec2 perp = strokeSpeed > 0.0001 ? normalize(vec2(-dir.y, dir.x)) : vec2(0.0, 1.0);
+                
+                // Subtle organic brush bristle variation along stroke edges
+                float bristle = sin(dot(vUv * aspect, perp) * 75.0) * 0.035 * min(1.0, strokeSpeed * 30.0);
+                
                 float d = distToSegment(vUv, uPrevMouse, uMouse, aspect);
-                float stamp = smoothstep(uRadius, uRadius * 0.40, d);
+                float stamp = smoothstep(uRadius * (1.0 + bristle), uRadius * 0.22, d);
                 density = max(density, stamp);
             }
 
@@ -316,7 +322,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     pingPongScene.add(pingPongQuad);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. Composite Shader: Crystal-Clear Razor-Sharp Letters & Soft 3D Balloon
+    // 3. Composite Shader: Crystal-Clear Letters & Wet Glossy Paint with 3D Balloon
     // ─────────────────────────────────────────────────────────────────────────
     const compositeMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -354,13 +360,29 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             float rawText = texture2D(tTextRaw, vUv).r;
             float crispLetter = smoothstep(0.35, 0.65, rawText);
 
-            // 2. Crisp liquid ink edge (tight smoothstep = clean liquid enamel boundary, no grey halo)
+            // 2. Liquid Paint Surface Normal & Wet Gloss (Specular Paint Sheen)
             float density = texture2D(tInk, vUv).r;
-            float inkMask = smoothstep(0.47, 0.52, density);
+            float inkMask = smoothstep(0.44, 0.52, density);
 
-            // 3. Soft pillow height field (used ONLY for normal lighting and balloon distortion)
-            vec2 texel = 1.0 / uResolution;
-            vec2 eps = texel * 5.5;
+            // Calculate wet paint gradient normal for 3D liquid relief & gloss
+            vec2 pTexel = 1.0 / uResolution;
+            float pL = texture2D(tInk, vUv - vec2(pTexel.x * 3.0, 0.0)).r;
+            float pR = texture2D(tInk, vUv + vec2(pTexel.x * 3.0, 0.0)).r;
+            float pD = texture2D(tInk, vUv - vec2(0.0, pTexel.y * 3.0)).r;
+            float pU = texture2D(tInk, vUv + vec2(0.0, pTexel.y * 3.0)).r;
+
+            vec3 paintNormal = normalize(vec3(-(pR - pL) * 3.8, -(pU - pD) * 3.8, 1.0));
+
+            // Overhead studio light reflecting on wet paint surface
+            vec3 paintLightDir = normalize(vec3(0.35, 0.65, 0.85));
+            float paintSpec = pow(max(0.0, dot(reflect(-paintLightDir, paintNormal), vec3(0.0, 0.0, 1.0))), 16.0) * 0.36;
+            float paintFresnel = pow(1.0 - max(0.0, paintNormal.z), 2.5) * 0.22;
+
+            // Wet black liquid enamel paint with glossy studio sheen
+            vec3 wetBlackPaint = vec3(0.015, 0.015, 0.02) + (paintSpec + paintFresnel) * vec3(0.92, 0.95, 1.0);
+
+            // 3. 3D Pillow Dome Normal from heightmap (used inside letters for 3D balloon lighting)
+            vec2 eps = pTexel * 5.5;
 
             float hC = texture2D(tHeight, vUv).r;
             float hL = texture2D(tHeight, vUv - vec2(eps.x, 0.0)).r;
@@ -414,10 +436,10 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             // Base cover page: Pure stark white (#FFFFFF) background, crisp solid black (#000000) letters
             vec3 baseColor = mix(vec3(1.0), vec3(0.0), crispLetter);
 
-            // Inked: Solid jet black ink on background (#000000), 3D shiny inflated balloon on letters
-            vec3 inkedColor = mix(vec3(0.0), shadedBalloon, crispLetter);
+            // Inked: Luscious glossy wet black paint on background, 3D shiny inflated balloon on letters
+            vec3 inkedColor = mix(wetBlackPaint, shadedBalloon, crispLetter);
 
-            // Dynamically revealed smoothly by crisp liquid ink
+            // Dynamically revealed smoothly by fluid paint
             vec3 finalColor = mix(baseColor, inkedColor, inkMask);
 
             gl_FragColor = vec4(finalColor, 1.0);
@@ -598,7 +620,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     window.addEventListener('pointerup', onPointerUp, { passive: true });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Shared RAF Loop (GSAP Ticker) with Delta-Time Physics
+    // 5. Shared RAF Loop (GSAP Ticker) with Delta-Time Physics & Paint Brush Flow
     // ─────────────────────────────────────────────────────────────────────────
     const onResize = () => {
       W = window.innerWidth;
@@ -623,7 +645,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
       const timeSinceMove = now - pointer.lastMoveTime;
       const isActivelyMoving = timeSinceMove < 260 && pointer.targetX > -900;
-      const isInkVisible = timeSinceMove < 2400;
+      const isInkVisible = timeSinceMove < 2800;
 
       // Automatic material change every 3.5s while ink is active
       if (AUTO_MATERIAL && isInkVisible) {
@@ -637,12 +659,12 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         return;
       }
 
-      // Critically Damped Spring Physics:
+      // Viscous Paint Brush Physics:
       if (isActivelyMoving) {
         pointer.prevX = pointer.x;
         pointer.prevY = pointer.y;
 
-        const omega = 20.0;
+        const omega = 24.0;
         const expTerm = Math.exp(-omega * dt);
 
         const diffX = pointer.x - pointer.targetX;
@@ -657,36 +679,39 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         pointer.vy = newVy;
 
         const currentSpeed = Math.hypot(pointer.vx * W, pointer.vy * H);
-        pointer.smoothedSpeed += (currentSpeed - pointer.smoothedSpeed) * Math.min(1.0, dt * 10.0);
+        pointer.smoothedSpeed += (currentSpeed - pointer.smoothedSpeed) * Math.min(1.0, dt * 12.0);
 
-        // Clamped ink width: strictly between 70px (resting) and 140px (max speed)
-        const minDiameter = 70.0;
-        const maxDiameter = 140.0;
-        const pixelDiameter = minDiameter + Math.min(pointer.smoothedSpeed * 0.07, maxDiameter - minDiameter);
+        // Dynamic Paint Brush Radius:
+        // Slow move: 72px (viscous, rounded wet paint drop)
+        // Fast sweep: 142px (expressive, broad calligraphy paint ribbon)
+        const minDiameter = 72.0;
+        const maxDiameter = 142.0;
+        const speedFactor = Math.min(1.0, pointer.smoothedSpeed / 950.0);
+        const pixelDiameter = minDiameter + speedFactor * (maxDiameter - minDiameter);
         const radiusUV = (pixelDiameter * 0.5) / H;
 
         // Track accumulated stroke length to prevent screen ink flooding
         const moveDist = Math.hypot((pointer.x - pointer.prevX) * W, (pointer.y - pointer.prevY) * H);
-        if (moveDist > 1.0) {
+        if (moveDist > 0.8) {
           recentStrokeLength += moveDist;
         }
 
         pingPongMat.uniforms.uMouse.value.set(pointer.x, pointer.y);
         pingPongMat.uniforms.uPrevMouse.value.set(pointer.prevX, pointer.prevY);
         pingPongMat.uniforms.uRadius.value = radiusUV;
-        pingPongMat.uniforms.uIsMoving.value = moveDist > 0.8 ? 1.0 : 0.0;
+        pingPongMat.uniforms.uIsMoving.value = moveDist > 0.6 ? 1.0 : 0.0;
       } else {
         pingPongMat.uniforms.uIsMoving.value = 0.0;
         isNewStroke = false;
       }
 
       // Decay stroke length accumulation
-      recentStrokeLength *= Math.pow(0.88, dt * 60.0);
+      recentStrokeLength *= Math.pow(0.90, dt * 60.0);
 
       // Capped coverage: if ink accumulation exceeds ~35% of screen perimeter, accelerate decay
       const coveragePressure = Math.max(0.0, (recentStrokeLength - 1400.0) / 1800.0);
-      const baseDecay = 0.965; // ~1.5s standard decay
-      const dynamicDecay = Math.max(0.920, baseDecay - coveragePressure * 0.045);
+      const baseDecay = 0.972; // ~2.8s wet paint lifespan
+      const dynamicDecay = Math.max(0.925, baseDecay - coveragePressure * 0.045);
       const frameDecay = Math.pow(dynamicDecay, dt * 60.0);
 
       pingPongMat.uniforms.uDecay.value = frameDecay;
