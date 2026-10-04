@@ -53,12 +53,20 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, W, H);
 
-        const fs = Math.min(W * 0.22, H * 0.38);
+        let fs = Math.min(W * 0.20, H * 0.32);
         ctx.fillStyle = '#000000';
-        ctx.font = `900 ${fs}px 'Inter Tight', 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+        ctx.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(brand, W / 2, H * 0.5);
+
+        const brandText = brand.toUpperCase();
+        const measured = ctx.measureText(brandText).width;
+        if (measured > W * 0.85) {
+          fs *= (W * 0.85) / measured;
+          ctx.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        }
+
+        ctx.fillText(brandText, W / 2, H * 0.50);
       };
 
       render2DFallback();
@@ -204,65 +212,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const blurScene = new THREE.Scene();
     blurScene.add(blurQuad);
 
-    const updateTextAndHeightmap = () => {
-      if (!textCtx) return;
-      const targetW = Math.floor(W * dpr);
-      const targetH = Math.floor(H * dpr);
-      textCanvas.width = targetW;
-      textCanvas.height = targetH;
-
-      textCtx.fillStyle = '#000000';
-      textCtx.fillRect(0, 0, targetW, targetH);
-
-      // Measure letters and distribute with architectural wide tracking across ~88% of screen
-      const desiredSpan = targetW * 0.88;
-      const fs = Math.min(targetW * 0.22, targetH * 0.40);
-      textCtx.font = `900 ${fs}px 'Inter Tight', 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
-      textCtx.textAlign = 'left';
-      textCtx.textBaseline = 'middle';
-
-      const letters = brand.toUpperCase().split('');
-      let totalLetterW = 0;
-      const charWidths = letters.map((c) => {
-        const w = textCtx.measureText(c).width;
-        totalLetterW += w;
-        return w;
-      });
-
-      const totalGap = desiredSpan - totalLetterW;
-      const gap = letters.length > 1 ? Math.max(12 * dpr, totalGap / (letters.length - 1)) : 0;
-      const actualTotalWidth = totalLetterW + gap * (letters.length - 1);
-      let startX = (targetW - actualTotalWidth) / 2;
-      const centerY = targetH * 0.50;
-
-      textCtx.fillStyle = '#ffffff';
-      for (let i = 0; i < letters.length; i++) {
-        textCtx.fillText(letters[i], startX, centerY);
-        startX += charWidths[i] + gap;
-      }
-
-      if (textTexture) textTexture.dispose();
-      textTexture = new THREE.CanvasTexture(textCanvas);
-      textTexture.minFilter = THREE.LinearFilter;
-      textTexture.magFilter = THREE.LinearFilter;
-
-      // Pass 1: Horizontal Gaussian blur
-      blurHMat.uniforms.tInput.value = textTexture;
-      blurHMat.uniforms.uResolution.value.set(targetW, targetH);
-      blurQuad.material = blurHMat;
-      renderer.setRenderTarget(rtTextBlurH);
-      renderer.render(blurScene, quadCamera);
-
-      // Pass 2: Vertical Gaussian blur with sqrt pillow transformation
-      blurVMat.uniforms.tInput.value = rtTextBlurH.texture;
-      blurVMat.uniforms.uResolution.value.set(targetW, targetH);
-      blurQuad.material = blurVMat;
-      renderer.setRenderTarget(rtTextHeightmap);
-      renderer.render(blurScene, quadCamera);
-
-      renderer.setRenderTarget(null);
-    };
-
     // ─────────────────────────────────────────────────────────────────────────
     // 2. Controlled Liquid Ink Trail (Radius Capped within 70px - 140px)
     // ─────────────────────────────────────────────────────────────────────────
@@ -367,11 +316,12 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     pingPongScene.add(pingPongQuad);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. Composite Shader: Soft Inflated Balloon, Wrinkles & Broad Highlights
+    // 3. Composite Shader: Crystal-Clear Razor-Sharp Letters & Soft 3D Balloon
     // ─────────────────────────────────────────────────────────────────────────
     const compositeMat = new THREE.ShaderMaterial({
       uniforms: {
         tInk: { value: null },
+        tTextRaw: { value: null },
         tHeight: { value: null },
         tMatcapPrev: { value: matcapTextures[0] },
         tMatcapCurr: { value: matcapTextures[0] },
@@ -389,6 +339,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       `,
       fragmentShader: `
         uniform sampler2D tInk;
+        uniform sampler2D tTextRaw;
         uniform sampler2D tHeight;
         uniform sampler2D tMatcapPrev;
         uniform sampler2D tMatcapCurr;
@@ -399,13 +350,17 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         varying vec2 vUv;
 
         void main() {
-            // 1. Crisp liquid ink edge (tight smoothstep = clean liquid enamel boundary, no grey halo)
+            // 1. Crystal-clear, razor-sharp letter mask directly from raw unblurred text canvas
+            float rawText = texture2D(tTextRaw, vUv).r;
+            float crispLetter = smoothstep(0.35, 0.65, rawText);
+
+            // 2. Crisp liquid ink edge (tight smoothstep = clean liquid enamel boundary, no grey halo)
             float density = texture2D(tInk, vUv).r;
             float inkMask = smoothstep(0.47, 0.52, density);
 
-            // 2. Soft pillow height field (smooth dome, no hard bevel)
+            // 3. Soft pillow height field (used ONLY for normal lighting and balloon distortion)
             vec2 texel = 1.0 / uResolution;
-            vec2 eps = texel * 5.5; // Broad baseline for rounded balloon dome
+            vec2 eps = texel * 5.5;
 
             float hC = texture2D(tHeight, vUv).r;
             float hL = texture2D(tHeight, vUv - vec2(eps.x, 0.0)).r;
@@ -418,18 +373,18 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             float nz = sqrt(max(0.04, 1.0 - min(0.96, dx * dx + dy * dy)));
             vec3 N = normalize(vec3(-dx, -dy, nz));
 
-            // 3. Subtle pinched wrinkles/creases at joints and corners
+            // 4. Subtle pinched wrinkles/creases at joints and corners
             float wrinkle1 = sin(vUv.x * 85.0 + vUv.y * 65.0) * cos(vUv.x * 45.0 - vUv.y * 95.0);
             float wrinkle2 = sin(vUv.x * 140.0 - vUv.y * 110.0) * 0.5;
             float wrinkleMask = smoothstep(0.18, 0.55, hC) * (1.0 - smoothstep(0.65, 0.95, hC));
             vec3 perturbedN = normalize(N + vec3(wrinkle1 * 0.06, wrinkle2 * 0.05, 0.0) * wrinkleMask);
 
-            // 4. Soft matcap lookup (no sharp pin lines)
+            // 5. Soft matcap lookup
             vec2 matcapUv = clamp(perturbedN.xy * 0.49 + 0.5, 0.005, 0.995);
             vec3 prevMat = texture2D(tMatcapPrev, matcapUv).rgb;
             vec3 currMat = texture2D(tMatcapCurr, matcapUv).rgb;
 
-            // 5. Photographic Foil Texture mapping (distorted by balloon curvature)
+            // 6. Photographic Foil Texture mapping (distorted by balloon curvature)
             vec2 photoUv = vUv * vec2(uResolution.x / uResolution.y, 1.0) * 0.75 + perturbedN.xy * 0.05;
             vec3 photoPrev = texture2D(tPhotoPrev, fract(photoUv)).rgb;
             vec3 photoCurr = texture2D(tPhotoCurr, fract(photoUv)).rgb;
@@ -442,7 +397,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             // Fuse photographic micro-crinkles with metallic matcap reflections
             vec3 baseBalloon = mix(blendedMat, blendedMat * (blendedPhoto * 1.45 + 0.15), 0.72);
 
-            // 6. Broad soft highlights, gentle Fresnel rim, and subsurface-like glow
+            // 7. Broad soft highlights, gentle Fresnel rim, and subsurface-like glow
             vec3 lightDir = normalize(vec3(0.35, 0.65, 0.85));
             float broadHighlight = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 14.0) * 0.38;
             float softSpec = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 28.0) * 0.32;
@@ -455,15 +410,14 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
             vec3 shadedBalloon = baseBalloon + (broadHighlight + softSpec) * vec3(1.0) + fresnelColor * F * 0.32 + sss;
 
-            // 7. Anti-aliased letter mask derived from smooth height dome (NO dark outline!)
-            float letterMask = smoothstep(0.04, 0.18, hC);
+            // 8. FINAL COMPOSITE:
+            // Base cover page: Pure stark white (#FFFFFF) background, crisp solid black (#000000) letters
+            vec3 baseColor = mix(vec3(1.0), vec3(0.0), crispLetter);
 
-            // 8. Final composite:
-            // Base: pure white background (1,1,1), solid black letters (0,0,0)
-            vec3 baseColor = mix(vec3(1.0), vec3(0.0), letterMask);
-            // Inked: solid jet black ink on bg, soft 3D balloon on letters
-            vec3 inkedColor = mix(vec3(0.0), shadedBalloon, letterMask);
-            // Revealed smoothly by ink mask
+            // Inked: Solid jet black ink on background (#000000), 3D shiny inflated balloon on letters
+            vec3 inkedColor = mix(vec3(0.0), shadedBalloon, crispLetter);
+
+            // Dynamically revealed smoothly by crisp liquid ink
             vec3 finalColor = mix(baseColor, inkedColor, inkMask);
 
             gl_FragColor = vec4(finalColor, 1.0);
@@ -475,7 +429,76 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const compositeScene = new THREE.Scene();
     compositeScene.add(compositeQuad);
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Update Text & Heightmap with Crystal-Clear Centered Typography
+    // ─────────────────────────────────────────────────────────────────────────
+    const updateTextAndHeightmap = () => {
+      if (!textCtx) return;
+      const targetW = Math.floor(W * dpr);
+      const targetH = Math.floor(H * dpr);
+      textCanvas.width = targetW;
+      textCanvas.height = targetH;
+
+      textCtx.fillStyle = '#000000';
+      textCtx.fillRect(0, 0, targetW, targetH);
+
+      // Clean, centered, ultra-bold architectural grotesque typography
+      let fs = Math.min(targetW * 0.22, targetH * 0.36);
+      textCtx.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+      textCtx.textAlign = 'center';
+      textCtx.textBaseline = 'middle';
+
+      const brandText = brand.toUpperCase();
+      let measured = textCtx.measureText(brandText).width;
+      const maxAllowedW = targetW * 0.88;
+      if (measured > maxAllowedW) {
+        fs *= (maxAllowedW / measured);
+        textCtx.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+      }
+
+      // Draw crisp, bright white letters onto the offscreen canvas
+      textCtx.fillStyle = '#ffffff';
+      textCtx.fillText(brandText, targetW / 2, targetH * 0.50);
+
+      if (textTexture) textTexture.dispose();
+      textTexture = new THREE.CanvasTexture(textCanvas);
+      textTexture.minFilter = THREE.LinearFilter;
+      textTexture.magFilter = THREE.LinearFilter;
+
+      // Update crisp raw text texture in composite shader
+      compositeMat.uniforms.tTextRaw.value = textTexture;
+
+      // Pass 1: Horizontal Gaussian blur for 3D pillow dome heightmap
+      blurHMat.uniforms.tInput.value = textTexture;
+      blurHMat.uniforms.uResolution.value.set(targetW, targetH);
+      blurQuad.material = blurHMat;
+      renderer.setRenderTarget(rtTextBlurH);
+      renderer.render(blurScene, quadCamera);
+
+      // Pass 2: Vertical Gaussian blur with sqrt pillow transformation
+      blurVMat.uniforms.tInput.value = rtTextBlurH.texture;
+      blurVMat.uniforms.uResolution.value.set(targetW, targetH);
+      blurQuad.material = blurVMat;
+      renderer.setRenderTarget(rtTextHeightmap);
+      renderer.render(blurScene, quadCamera);
+
+      renderer.setRenderTarget(null);
+
+      // Immediately render base scene so cover page is instantly visible and crisp
+      compositeMat.uniforms.tInk.value = rtPing.texture;
+      compositeMat.uniforms.tHeight.value = rtTextHeightmap.texture;
+      compositeMat.uniforms.uResolution.value.set(targetW, targetH);
+      renderer.render(compositeScene, quadCamera);
+    };
+
     updateTextAndHeightmap();
+
+    // Re-render when fonts finish loading to ensure full 900 weight precision
+    if (document.fonts) {
+      document.fonts.ready.then(() => {
+        updateTextAndHeightmap();
+      });
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // 4. Spring Physics & Invisible Background Material Shuffling
@@ -489,12 +512,9 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       vy: 0,
       prevX: -999,
       prevY: -999,
-      lastMoveTime: performance.now(),
+      lastMoveTime: 0,
       smoothedSpeed: 0,
-      hasUserInteracted: false,
     };
-
-    const mountTime = performance.now();
 
     let playlist: number[] = [];
     const refillPlaylist = (exclude: number) => {
@@ -530,7 +550,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
     // Coalesced pointer tracking
     const onPointerMove = (e: PointerEvent) => {
-      pointer.hasUserInteracted = true;
       const now = performance.now();
       const timeSinceLast = now - pointer.lastMoveTime;
 
@@ -579,7 +598,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     window.addEventListener('pointerup', onPointerUp, { passive: true });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Shared RAF Loop (GSAP Ticker) with Delta-Time Physics & Intro Wave
+    // 5. Shared RAF Loop (GSAP Ticker) with Delta-Time Physics
     // ─────────────────────────────────────────────────────────────────────────
     const onResize = () => {
       W = window.innerWidth;
@@ -601,39 +620,10 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
       const dt = Math.min(deltaTime / 1000, 0.05);
       const now = performance.now();
-      const elapsedSinceMount = (now - mountTime) / 1000;
-
-      // Initial Intro Fluid Wave: sweeps gracefully across letters on first load (< 2.4s)
-      const isIntroActive = elapsedSinceMount < 2.4 && !pointer.hasUserInteracted;
-
-      if (isIntroActive) {
-        const p = elapsedSinceMount / 2.4;
-        // Smooth S-curve gliding through the center of the wordmark
-        const introX = 0.12 + p * 0.76;
-        const introY = 0.50 + Math.sin(p * Math.PI * 2.2) * 0.09;
-
-        if (pointer.x < -900) {
-          pointer.x = introX;
-          pointer.y = introY;
-        }
-        pointer.prevX = pointer.x;
-        pointer.prevY = pointer.y;
-        pointer.x = introX;
-        pointer.y = introY;
-
-        const pixelDiameter = 90.0 + Math.sin(p * Math.PI) * 45.0;
-        const radiusUV = (pixelDiameter * 0.5) / H;
-
-        pingPongMat.uniforms.uMouse.value.set(pointer.x, pointer.y);
-        pingPongMat.uniforms.uPrevMouse.value.set(pointer.prevX, pointer.prevY);
-        pingPongMat.uniforms.uRadius.value = radiusUV;
-        pingPongMat.uniforms.uIsMoving.value = 1.0;
-        pointer.lastMoveTime = now;
-      }
 
       const timeSinceMove = now - pointer.lastMoveTime;
-      const isActivelyMoving = !isIntroActive && timeSinceMove < 260 && pointer.targetX > -900;
-      const isInkVisible = isIntroActive || timeSinceMove < 2400;
+      const isActivelyMoving = timeSinceMove < 260 && pointer.targetX > -900;
+      const isInkVisible = timeSinceMove < 2400;
 
       // Automatic material change every 3.5s while ink is active
       if (AUTO_MATERIAL && isInkVisible) {
@@ -647,7 +637,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         return;
       }
 
-      // Critically Damped Spring Physics (Interactive Mode):
+      // Critically Damped Spring Physics:
       if (isActivelyMoving) {
         pointer.prevX = pointer.x;
         pointer.prevY = pointer.y;
@@ -685,7 +675,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         pingPongMat.uniforms.uPrevMouse.value.set(pointer.prevX, pointer.prevY);
         pingPongMat.uniforms.uRadius.value = radiusUV;
         pingPongMat.uniforms.uIsMoving.value = moveDist > 0.8 ? 1.0 : 0.0;
-      } else if (!isIntroActive) {
+      } else {
         pingPongMat.uniforms.uIsMoving.value = 0.0;
         isNewStroke = false;
       }
