@@ -7,15 +7,21 @@ interface InkCanvasProps {
   brand: string;
 }
 
-const MATERIAL_DEFS = [
-  { id: 'glass', file: '/fx/glass.webp' },
-  { id: 'purple_foil', file: '/fx/purple_foil.webp' },
-  { id: 'magenta_rubber', file: '/fx/magenta_rubber.webp' },
-  { id: 'black_latex', file: '/fx/black_latex.webp' },
-  { id: 'white_fabric', file: '/fx/white_fabric.webp' },
-  { id: 'pearl_foam', file: '/fx/pearl_foam.webp' },
-  { id: 'chrome', file: '/fx/chrome.webp' },
-  { id: 'pastel_pink', file: '/fx/pastel_pink.webp' },
+interface MaterialDef {
+  id: string;
+  matcap: string;
+  photo: string;
+}
+
+const MATERIAL_DEFS: MaterialDef[] = [
+  { id: 'purple_foil', matcap: '/fx/purple_foil.webp', photo: '/assets/textures/foil_violet.jpg' },
+  { id: 'magenta_foil', matcap: '/fx/magenta_rubber.webp', photo: '/assets/textures/foil_pink.jpg' },
+  { id: 'white_cushion', matcap: '/fx/white_fabric.webp', photo: '/assets/textures/puffed_cushion.jpg' },
+  { id: 'soap_foam', matcap: '/fx/pearl_foam.webp', photo: '/assets/textures/soap_foam.jpg' },
+  { id: 'chrome', matcap: '/fx/chrome.webp', photo: '/assets/textures/foil_violet.jpg' },
+  { id: 'pastel_pink', matcap: '/fx/pastel_pink.webp', photo: '/assets/textures/foil_pink.jpg' },
+  { id: 'black_latex', matcap: '/fx/black_latex.webp', photo: '/assets/textures/puffed_cushion.jpg' },
+  { id: 'glass', matcap: '/fx/glass.webp', photo: '/assets/textures/soap_foam.jpg' },
 ];
 
 export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
@@ -47,9 +53,9 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, W, H);
 
-        const fs = Math.min(W * 0.23, H * 0.38);
+        const fs = Math.min(W * 0.22, H * 0.38);
         ctx.fillStyle = '#000000';
-        ctx.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+        ctx.font = `900 ${fs}px 'Inter Tight', 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(brand, W / 2, H * 0.5);
@@ -61,7 +67,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // WebGL Pipeline (Three.js with Half-Float Ping-Pong & Matcaps)
+    // WebGL Pipeline (Three.js with Half-Float Ping-Pong & Matcaps + Photo Textures)
     // ─────────────────────────────────────────────────────────────────────────
     let W = window.innerWidth;
     let H = window.innerHeight;
@@ -85,12 +91,22 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const quadGeom = new THREE.PlaneGeometry(2, 2);
 
-    // Load 8 Matcap Textures from /public/fx/
+    // Preload textures
     const textureLoader = new THREE.TextureLoader();
     const matcapTextures: THREE.Texture[] = MATERIAL_DEFS.map((def) => {
-      const tex = textureLoader.load(def.file);
+      const tex = textureLoader.load(def.matcap);
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      return tex;
+    });
+
+    const photoTextures: THREE.Texture[] = MATERIAL_DEFS.map((def) => {
+      const tex = textureLoader.load(def.photo);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
       tex.generateMipmaps = false;
       return tex;
     });
@@ -178,7 +194,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
           }
           // Square-root pillow profile: h = sqrt(clamp(d / R, 0, 1))
           // Inflates the interior into a soft, rounded puffy balloon dome
-          float pillow = sqrt(clamp(sum * 1.15, 0.0, 1.0));
+          float pillow = sqrt(clamp(sum * 1.20, 0.0, 1.0));
           gl_FragColor = vec4(vec3(pillow), 1.0);
         }
       `,
@@ -190,18 +206,40 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
     const updateTextAndHeightmap = () => {
       if (!textCtx) return;
-      textCanvas.width = Math.floor(W * dpr);
-      textCanvas.height = Math.floor(H * dpr);
+      const targetW = Math.floor(W * dpr);
+      const targetH = Math.floor(H * dpr);
+      textCanvas.width = targetW;
+      textCanvas.height = targetH;
 
       textCtx.fillStyle = '#000000';
-      textCtx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+      textCtx.fillRect(0, 0, targetW, targetH);
 
-      const fs = Math.min(W * 0.23, H * 0.38) * dpr;
-      textCtx.fillStyle = '#ffffff';
-      textCtx.font = `900 ${fs}px 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
-      textCtx.textAlign = 'center';
+      // Measure letters and distribute with architectural wide tracking across ~88% of screen
+      const desiredSpan = targetW * 0.88;
+      const fs = Math.min(targetW * 0.22, targetH * 0.40);
+      textCtx.font = `900 ${fs}px 'Inter Tight', 'Cabinet Grotesk', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif`;
+      textCtx.textAlign = 'left';
       textCtx.textBaseline = 'middle';
-      textCtx.fillText(brand, textCanvas.width / 2, textCanvas.height * 0.5);
+
+      const letters = brand.toUpperCase().split('');
+      let totalLetterW = 0;
+      const charWidths = letters.map((c) => {
+        const w = textCtx.measureText(c).width;
+        totalLetterW += w;
+        return w;
+      });
+
+      const totalGap = desiredSpan - totalLetterW;
+      const gap = letters.length > 1 ? Math.max(12 * dpr, totalGap / (letters.length - 1)) : 0;
+      const actualTotalWidth = totalLetterW + gap * (letters.length - 1);
+      let startX = (targetW - actualTotalWidth) / 2;
+      const centerY = targetH * 0.50;
+
+      textCtx.fillStyle = '#ffffff';
+      for (let i = 0; i < letters.length; i++) {
+        textCtx.fillText(letters[i], startX, centerY);
+        startX += charWidths[i] + gap;
+      }
 
       if (textTexture) textTexture.dispose();
       textTexture = new THREE.CanvasTexture(textCanvas);
@@ -210,14 +248,14 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
       // Pass 1: Horizontal Gaussian blur
       blurHMat.uniforms.tInput.value = textTexture;
-      blurHMat.uniforms.uResolution.value.set(W * dpr, H * dpr);
+      blurHMat.uniforms.uResolution.value.set(targetW, targetH);
       blurQuad.material = blurHMat;
       renderer.setRenderTarget(rtTextBlurH);
       renderer.render(blurScene, quadCamera);
 
       // Pass 2: Vertical Gaussian blur with sqrt pillow transformation
       blurVMat.uniforms.tInput.value = rtTextBlurH.texture;
-      blurVMat.uniforms.uResolution.value.set(W * dpr, H * dpr);
+      blurVMat.uniforms.uResolution.value.set(targetW, targetH);
       blurQuad.material = blurVMat;
       renderer.setRenderTarget(rtTextHeightmap);
       renderer.render(blurScene, quadCamera);
@@ -266,7 +304,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         uMouse: { value: new THREE.Vector2(-999, -999) },
         uPrevMouse: { value: new THREE.Vector2(-999, -999) },
         uRadius: { value: 0.05 },
-        uDecay: { value: 0.965 }, // Dissolves smoothly in 1.2 - 1.8s
+        uDecay: { value: 0.968 },
         uIsMoving: { value: 0.0 },
         uResolution: { value: new THREE.Vector2(fW, fH) },
       },
@@ -310,12 +348,12 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             ) * 0.25;
 
             // Liquid decay
-            float density = mix(prev, blurred, 0.22) * uDecay;
+            float density = mix(prev, blurred, 0.18) * uDecay;
 
             // Stamp smooth circles along path only when moving
             if (uIsMoving > 0.5) {
                 float d = distToSegment(vUv, uPrevMouse, uMouse, aspect);
-                float stamp = smoothstep(uRadius, uRadius * 0.28, d);
+                float stamp = smoothstep(uRadius, uRadius * 0.40, d);
                 density = max(density, stamp);
             }
 
@@ -335,8 +373,10 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       uniforms: {
         tInk: { value: null },
         tHeight: { value: null },
-        tMatcapPrev: { value: matcapTextures[1] },
-        tMatcapCurr: { value: matcapTextures[1] },
+        tMatcapPrev: { value: matcapTextures[0] },
+        tMatcapCurr: { value: matcapTextures[0] },
+        tPhotoPrev: { value: photoTextures[0] },
+        tPhotoCurr: { value: photoTextures[0] },
         uCrossfade: { value: 1.0 },
         uResolution: { value: new THREE.Vector2(W * dpr, H * dpr) },
       },
@@ -352,14 +392,16 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         uniform sampler2D tHeight;
         uniform sampler2D tMatcapPrev;
         uniform sampler2D tMatcapCurr;
+        uniform sampler2D tPhotoPrev;
+        uniform sampler2D tPhotoCurr;
         uniform float uCrossfade;
         uniform vec2 uResolution;
         varying vec2 vUv;
 
         void main() {
-            // 1. Organic metaball fluid edge
+            // 1. Crisp liquid ink edge (tight smoothstep = clean liquid enamel boundary, no grey halo)
             float density = texture2D(tInk, vUv).r;
-            float inkMask = smoothstep(0.25, 0.55, density);
+            float inkMask = smoothstep(0.47, 0.52, density);
 
             // 2. Soft pillow height field (smooth dome, no hard bevel)
             vec2 texel = 1.0 / uResolution;
@@ -376,7 +418,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             float nz = sqrt(max(0.04, 1.0 - min(0.96, dx * dx + dy * dy)));
             vec3 N = normalize(vec3(-dx, -dy, nz));
 
-            // 3. Subtle pinched wrinkles/creases at joints and corners (low-frequency noise)
+            // 3. Subtle pinched wrinkles/creases at joints and corners
             float wrinkle1 = sin(vUv.x * 85.0 + vUv.y * 65.0) * cos(vUv.x * 45.0 - vUv.y * 95.0);
             float wrinkle2 = sin(vUv.x * 140.0 - vUv.y * 110.0) * 0.5;
             float wrinkleMask = smoothstep(0.18, 0.55, hC) * (1.0 - smoothstep(0.65, 0.95, hC));
@@ -387,30 +429,39 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             vec3 prevMat = texture2D(tMatcapPrev, matcapUv).rgb;
             vec3 currMat = texture2D(tMatcapCurr, matcapUv).rgb;
 
+            // 5. Photographic Foil Texture mapping (distorted by balloon curvature)
+            vec2 photoUv = vUv * vec2(uResolution.x / uResolution.y, 1.0) * 0.75 + perturbedN.xy * 0.05;
+            vec3 photoPrev = texture2D(tPhotoPrev, fract(photoUv)).rgb;
+            vec3 photoCurr = texture2D(tPhotoCurr, fract(photoUv)).rgb;
+
             // 800ms ease-in-out crossfade
             float t = smoothstep(0.0, 1.0, uCrossfade);
-            vec3 baseMat = mix(prevMat, currMat, t);
+            vec3 blendedMat = mix(prevMat, currMat, t);
+            vec3 blendedPhoto = mix(photoPrev, photoCurr, t);
 
-            // 5. Broad soft highlights, gentle Fresnel rim, and subsurface-like glow
+            // Fuse photographic micro-crinkles with metallic matcap reflections
+            vec3 baseBalloon = mix(blendedMat, blendedMat * (blendedPhoto * 1.45 + 0.15), 0.72);
+
+            // 6. Broad soft highlights, gentle Fresnel rim, and subsurface-like glow
             vec3 lightDir = normalize(vec3(0.35, 0.65, 0.85));
-            float broadHighlight = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 12.0) * 0.32;
-            float softSpec = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 24.0) * 0.28;
+            float broadHighlight = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 14.0) * 0.38;
+            float softSpec = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 28.0) * 0.32;
 
             float F = pow(1.0 - max(0.0, perturbedN.z), 2.2);
-            vec3 fresnelColor = mix(baseMat, vec3(1.0), 0.40);
+            vec3 fresnelColor = mix(baseBalloon, vec3(1.0), 0.42);
 
             // Subsurface-like soft interior glow
-            vec3 sss = baseMat * pow(clamp(1.0 - length(perturbedN.xy), 0.0, 1.0), 1.6) * 0.22;
+            vec3 sss = baseBalloon * pow(clamp(1.0 - length(perturbedN.xy), 0.0, 1.0), 1.6) * 0.22;
 
-            vec3 shadedBalloon = baseMat + (broadHighlight + softSpec) * vec3(1.0) + fresnelColor * F * 0.32 + sss;
+            vec3 shadedBalloon = baseBalloon + (broadHighlight + softSpec) * vec3(1.0) + fresnelColor * F * 0.32 + sss;
 
-            // 6. Anti-aliased letter mask derived from smooth height dome (NO dark outline!)
+            // 7. Anti-aliased letter mask derived from smooth height dome (NO dark outline!)
             float letterMask = smoothstep(0.04, 0.18, hC);
 
-            // 7. Final composite:
+            // 8. Final composite:
             // Base: pure white background (1,1,1), solid black letters (0,0,0)
             vec3 baseColor = mix(vec3(1.0), vec3(0.0), letterMask);
-            // Inked: solid black ink on bg, soft 3D balloon on letters
+            // Inked: solid jet black ink on bg, soft 3D balloon on letters
             vec3 inkedColor = mix(vec3(0.0), shadedBalloon, letterMask);
             // Revealed smoothly by ink mask
             vec3 finalColor = mix(baseColor, inkedColor, inkMask);
@@ -438,9 +489,12 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       vy: 0,
       prevX: -999,
       prevY: -999,
-      lastMoveTime: 0,
+      lastMoveTime: performance.now(),
       smoothedSpeed: 0,
+      hasUserInteracted: false,
     };
+
+    const mountTime = performance.now();
 
     let playlist: number[] = [];
     const refillPlaylist = (exclude: number) => {
@@ -452,8 +506,8 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       return items;
     };
 
-    let matCurr = 1; // Start with Purple Foil Balloon
-    let matPrev = 1;
+    let matCurr = 0; // Start with Purple Chrome Foil Balloon
+    let matPrev = 0;
     let crossfadeStart = performance.now();
     let lastAutoChangeTime = performance.now();
     let isNewStroke = true;
@@ -470,10 +524,13 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
       compositeMat.uniforms.tMatcapPrev.value = matcapTextures[matPrev];
       compositeMat.uniforms.tMatcapCurr.value = matcapTextures[matCurr];
+      compositeMat.uniforms.tPhotoPrev.value = photoTextures[matPrev];
+      compositeMat.uniforms.tPhotoCurr.value = photoTextures[matCurr];
     };
 
     // Coalesced pointer tracking
     const onPointerMove = (e: PointerEvent) => {
+      pointer.hasUserInteracted = true;
       const now = performance.now();
       const timeSinceLast = now - pointer.lastMoveTime;
 
@@ -522,7 +579,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     window.addEventListener('pointerup', onPointerUp, { passive: true });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Shared RAF Loop (GSAP Ticker) with Delta-Time Physics
+    // 5. Shared RAF Loop (GSAP Ticker) with Delta-Time Physics & Intro Wave
     // ─────────────────────────────────────────────────────────────────────────
     const onResize = () => {
       W = window.innerWidth;
@@ -544,10 +601,39 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
       const dt = Math.min(deltaTime / 1000, 0.05);
       const now = performance.now();
+      const elapsedSinceMount = (now - mountTime) / 1000;
+
+      // Initial Intro Fluid Wave: sweeps gracefully across letters on first load (< 2.4s)
+      const isIntroActive = elapsedSinceMount < 2.4 && !pointer.hasUserInteracted;
+
+      if (isIntroActive) {
+        const p = elapsedSinceMount / 2.4;
+        // Smooth S-curve gliding through the center of the wordmark
+        const introX = 0.12 + p * 0.76;
+        const introY = 0.50 + Math.sin(p * Math.PI * 2.2) * 0.09;
+
+        if (pointer.x < -900) {
+          pointer.x = introX;
+          pointer.y = introY;
+        }
+        pointer.prevX = pointer.x;
+        pointer.prevY = pointer.y;
+        pointer.x = introX;
+        pointer.y = introY;
+
+        const pixelDiameter = 90.0 + Math.sin(p * Math.PI) * 45.0;
+        const radiusUV = (pixelDiameter * 0.5) / H;
+
+        pingPongMat.uniforms.uMouse.value.set(pointer.x, pointer.y);
+        pingPongMat.uniforms.uPrevMouse.value.set(pointer.prevX, pointer.prevY);
+        pingPongMat.uniforms.uRadius.value = radiusUV;
+        pingPongMat.uniforms.uIsMoving.value = 1.0;
+        pointer.lastMoveTime = now;
+      }
 
       const timeSinceMove = now - pointer.lastMoveTime;
-      const isActivelyMoving = timeSinceMove < 260 && pointer.targetX > -900;
-      const isInkVisible = timeSinceMove < 2200;
+      const isActivelyMoving = !isIntroActive && timeSinceMove < 260 && pointer.targetX > -900;
+      const isInkVisible = isIntroActive || timeSinceMove < 2400;
 
       // Automatic material change every 3.5s while ink is active
       if (AUTO_MATERIAL && isInkVisible) {
@@ -561,7 +647,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         return;
       }
 
-      // Critically Damped Spring Physics:
+      // Critically Damped Spring Physics (Interactive Mode):
       if (isActivelyMoving) {
         pointer.prevX = pointer.x;
         pointer.prevY = pointer.y;
@@ -584,7 +670,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         pointer.smoothedSpeed += (currentSpeed - pointer.smoothedSpeed) * Math.min(1.0, dt * 10.0);
 
         // Clamped ink width: strictly between 70px (resting) and 140px (max speed)
-        // Holding cursor in place never balloons the blob
         const minDiameter = 70.0;
         const maxDiameter = 140.0;
         const pixelDiameter = minDiameter + Math.min(pointer.smoothedSpeed * 0.07, maxDiameter - minDiameter);
@@ -600,7 +685,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         pingPongMat.uniforms.uPrevMouse.value.set(pointer.prevX, pointer.prevY);
         pingPongMat.uniforms.uRadius.value = radiusUV;
         pingPongMat.uniforms.uIsMoving.value = moveDist > 0.8 ? 1.0 : 0.0;
-      } else {
+      } else if (!isIntroActive) {
         pingPongMat.uniforms.uIsMoving.value = 0.0;
         isNewStroke = false;
       }

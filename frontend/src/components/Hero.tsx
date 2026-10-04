@@ -47,20 +47,17 @@ export const Hero: React.FC<HeroProps> = ({
 
   return (
     <section className="relative h-screen w-full bg-[#ffffff] text-[#000000] overflow-hidden select-none z-10" id="hero">
-      {/* 2D Canvas with Organic Ink Trail & 3D Tactile Material Inside Letters */}
+      {/* 2D / WebGL Canvas with Organic Ink Trail & 3D Tactile Material Inside Letters */}
       <InkCanvas brand={config.brand} />
 
-      {/* Top-Left: Two-line tagline */}
-      <div className="absolute top-[80px] left-[22px] z-20 max-w-[460px] pointer-events-none">
-        <h1 className="text-[clamp(15px,1.4vw,18px)] leading-[1.25] font-medium text-[#000000] tracking-[-0.02em]">
+      {/* Top-Left: Two-line tagline + "ENTER CHAT →" Pill Button (matching noth.in) */}
+      <div className="absolute top-[80px] md:top-[92px] left-[20px] md:left-[36px] z-30 max-w-[480px] flex flex-col items-start gap-4 md:gap-5">
+        <h1 className="text-[clamp(15px,1.35vw,18px)] leading-[1.28] font-medium text-[#000000] tracking-[-0.02em] select-none">
           Not a style, a perspective.
           <br />
           Because MANAS is listening.
         </h1>
-      </div>
 
-      {/* Hero Action: Huge "ENTER CHAT →" Large Black Pill with Magnetic Hover & Ink-Fill Transition */}
-      <div className="absolute bottom-[80px] md:bottom-[70px] left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
         <button
           ref={buttonRef}
           onClick={handleEnterChat}
@@ -70,14 +67,14 @@ export const Hero: React.FC<HeroProps> = ({
             transform: `translate3d(${btnOffset.x}px, ${btnOffset.y}px, 0)`,
             transition: btnOffset.x === 0 ? 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none',
           }}
-          className="group relative inline-flex items-center justify-center px-10 py-5 rounded-full bg-[#000000] text-[#FFFFFF] shadow-2xl hover:shadow-[0_20px_50px_rgba(0,0,0,0.35)] active:scale-[0.97] transition-all overflow-hidden cursor-pointer"
+          className="group relative inline-flex items-center gap-3 px-6 py-2.5 md:px-7 md:py-3 rounded-full bg-[#000000] text-[#FFFFFF] hover:bg-[#1A1A1A] active:scale-[0.97] transition-all cursor-pointer select-none shadow-[0_4px_14px_rgba(0,0,0,0.18)] overflow-hidden"
+          aria-label="Enter chat"
         >
-          {/* Subtle violet sheen on hover */}
-          <span className="absolute inset-0 bg-gradient-to-r from-transparent via-[#8B5CF6]/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out" />
-          
-          <span className="relative z-10 font-mono uppercase text-sm md:text-base font-bold tracking-[0.16em] flex items-center gap-3">
+          <span className="font-mono text-[12px] md:text-[13px] font-bold tracking-[0.10em] uppercase">
             ENTER CHAT
-            <span className="inline-block transition-transform duration-300 group-hover:translate-x-1.5">→</span>
+          </span>
+          <span className="inline-block text-sm transition-transform duration-300 group-hover:translate-x-1">
+            →
           </span>
         </button>
       </div>
@@ -85,25 +82,30 @@ export const Hero: React.FC<HeroProps> = ({
       {/* Ink-Fill Transition Circle */}
       {isInkExpanding && (
         <div
-          className="fixed inset-0 z-50 pointer-events-none bg-[#0A0A0A] animate-ink-expand rounded-full"
+          className="fixed inset-0 z-50 pointer-events-none bg-[#0A0A0A] rounded-full"
           style={{
             animation: 'inkExpand 0.5s cubic-bezier(0.85, 0, 0.15, 1) forwards',
           }}
         />
       )}
 
-      {/* Bottom-Left: Creative studio info */}
-      <div className="absolute bottom-[22px] left-[22px] z-20 pointer-events-none">
-        <p className="text-[11px] font-mono uppercase tracking-[0.08em] text-[#000000] opacity-80">
+      {/* Bottom-Left: Creative studio info (offset to not collide with music player) */}
+      <div className="absolute bottom-[22px] left-[20px] md:left-[36px] z-20 pointer-events-none hidden sm:block">
+        <p className="text-[11px] font-mono uppercase tracking-[0.08em] text-[#000000] opacity-80 pl-[290px] lg:pl-[330px]">
           Creative studio in Chennai · AI Mental Health Computing Lab
         </p>
       </div>
 
-      {/* Bottom-Right: Language Switch */}
-      <div className="absolute bottom-[22px] right-[22px] z-20 flex items-center gap-3 text-[11px] font-mono uppercase tracking-[0.08em] text-[#000000] pointer-events-auto">
+      {/* Bottom-Right: Language Switch & Links */}
+      <div className="absolute bottom-[22px] right-[20px] md:right-[36px] z-20 flex items-center gap-4 text-[11px] font-mono uppercase tracking-[0.08em] text-[#000000] pointer-events-auto select-none">
+        <span className="hidden md:inline-flex items-center gap-2 text-[#000000]/60 text-[10px] tracking-widest font-mono">
+          <a href="#studio" className="hover:text-black transition-colors">STUDIO</a>
+          <span>/</span>
+          <a href="#works" className="hover:text-black transition-colors">WORKS</a>
+        </span>
         <button
           onClick={onToggleLang}
-          className="px-3 py-1.5 rounded-full bg-black text-white hover:bg-neutral-800 transition-colors text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-md"
+          className="px-3 py-1.5 rounded-full bg-black text-white hover:bg-neutral-800 transition-colors text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-md cursor-pointer"
           title="Switch Language"
           aria-label="Toggle language"
         >
