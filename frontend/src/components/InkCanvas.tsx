@@ -8,19 +8,18 @@ interface InkCanvasProps {
 }
 
 const MATERIAL_DEFS = [
-  { id: 'glass', name: 'CLEAR GLASS', file: '/fx/glass.webp' },
-  { id: 'purple_foil', name: 'PURPLE FOIL BALLOON', file: '/fx/purple_foil.webp' },
-  { id: 'magenta_rubber', name: 'MAGENTA RUBBER', file: '/fx/magenta_rubber.webp' },
-  { id: 'black_latex', name: 'BLACK LATEX', file: '/fx/black_latex.webp' },
-  { id: 'white_fabric', name: 'SOFT WHITE FABRIC', file: '/fx/white_fabric.webp' },
-  { id: 'pearl_foam', name: 'PEARL FOAM BUBBLES', file: '/fx/pearl_foam.webp' },
-  { id: 'chrome', name: 'CHROME SILVER', file: '/fx/chrome.webp' },
-  { id: 'pastel_pink', name: 'PINK SPRINKLES', file: '/fx/pastel_pink.webp' },
+  { id: 'glass', file: '/fx/glass.webp' },
+  { id: 'purple_foil', file: '/fx/purple_foil.webp' },
+  { id: 'magenta_rubber', file: '/fx/magenta_rubber.webp' },
+  { id: 'black_latex', file: '/fx/black_latex.webp' },
+  { id: 'white_fabric', file: '/fx/white_fabric.webp' },
+  { id: 'pearl_foam', file: '/fx/pearl_foam.webp' },
+  { id: 'chrome', file: '/fx/chrome.webp' },
+  { id: 'pastel_pink', file: '/fx/pastel_pink.webp' },
 ];
 
 export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const materialBadgeRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -30,7 +29,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const isFxEnabled = FX_ENABLED && HERO_FX_ENABLED && !prefersReducedMotion;
 
-    // Fallback if reduced motion or FX disabled
+    // 2D Fallback if reduced motion or FX disabled
     if (!isFxEnabled) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -97,7 +96,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 1. Offscreen Text & Heightmap Generation (GPU separable Gaussian blur)
+    // 1. Offscreen Text & Pillow Dome Heightmap Generation (Multi-Pass GPU Blur)
     // ─────────────────────────────────────────────────────────────────────────
     const textCanvas = document.createElement('canvas');
     const textCtx = textCanvas.getContext('2d');
@@ -112,10 +111,11 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
       const w = Math.floor(W * dpr);
       const h = Math.floor(H * dpr);
-      const opts = {
+      const opts: THREE.RenderTargetOptions = {
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
         format: THREE.RGBAFormat,
+        type: THREE.HalfFloatType,
       };
 
       rtTextBlurH = new THREE.WebGLRenderTarget(w, h, opts);
@@ -124,6 +124,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
 
     createHeightmapTargets();
 
+    // Strong separable Gaussian blur with square-root pillow profile
     const blurHMat = new THREE.ShaderMaterial({
       uniforms: {
         tInput: { value: null },
@@ -143,9 +144,9 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         void main() {
           vec2 texel = 1.0 / uResolution;
           float sum = 0.0;
-          float weights[9] = float[](0.05, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.05);
-          for (int i = -4; i <= 4; i++) {
-            sum += texture2D(tInput, vUv + vec2(float(i) * 5.5 * texel.x, 0.0)).r * weights[i + 4];
+          float weights[11] = float[](0.03, 0.06, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.06, 0.03);
+          for (int i = -5; i <= 5; i++) {
+            sum += texture2D(tInput, vUv + vec2(float(i) * 6.0 * texel.x, 0.0)).r * weights[i + 5];
           }
           gl_FragColor = vec4(vec3(sum), 1.0);
         }
@@ -171,11 +172,14 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         void main() {
           vec2 texel = 1.0 / uResolution;
           float sum = 0.0;
-          float weights[9] = float[](0.05, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.05);
-          for (int i = -4; i <= 4; i++) {
-            sum += texture2D(tInput, vUv + vec2(0.0, float(i) * 5.5 * texel.y)).r * weights[i + 4];
+          float weights[11] = float[](0.03, 0.06, 0.09, 0.12, 0.15, 0.18, 0.15, 0.12, 0.09, 0.06, 0.03);
+          for (int i = -5; i <= 5; i++) {
+            sum += texture2D(tInput, vUv + vec2(0.0, float(i) * 6.0 * texel.y)).r * weights[i + 5];
           }
-          gl_FragColor = vec4(vec3(sum), 1.0);
+          // Square-root pillow profile: h = sqrt(clamp(d / R, 0, 1))
+          // Inflates the interior into a soft, rounded puffy balloon dome
+          float pillow = sqrt(clamp(sum * 1.15, 0.0, 1.0));
+          gl_FragColor = vec4(vec3(pillow), 1.0);
         }
       `,
     });
@@ -211,7 +215,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       renderer.setRenderTarget(rtTextBlurH);
       renderer.render(blurScene, quadCamera);
 
-      // Pass 2: Vertical Gaussian blur to complete 2D height dome
+      // Pass 2: Vertical Gaussian blur with sqrt pillow transformation
       blurVMat.uniforms.tInput.value = rtTextBlurH.texture;
       blurVMat.uniforms.uResolution.value.set(W * dpr, H * dpr);
       blurQuad.material = blurVMat;
@@ -222,7 +226,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     };
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. Half-Float Ping-Pong Framebuffer Fluid Metaball Trail
+    // 2. Controlled Liquid Ink Trail (Radius Capped within 70px - 140px)
     // ─────────────────────────────────────────────────────────────────────────
     let fW = Math.floor(W / 2);
     let fH = Math.floor(H / 2);
@@ -241,7 +245,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
         format: THREE.RGBAFormat,
-        type: THREE.HalfFloatType, // 16-bit half float for artifact-free liquid decay
+        type: THREE.HalfFloatType,
       };
 
       rtPing = new THREE.WebGLRenderTarget(fW, fH, opts);
@@ -261,8 +265,8 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         tPrev: { value: null },
         uMouse: { value: new THREE.Vector2(-999, -999) },
         uPrevMouse: { value: new THREE.Vector2(-999, -999) },
-        uRadius: { value: 0.1 },
-        uDecay: { value: 0.974 },
+        uRadius: { value: 0.05 },
+        uDecay: { value: 0.965 }, // Dissolves smoothly in 1.2 - 1.8s
         uIsMoving: { value: 0.0 },
         uResolution: { value: new THREE.Vector2(fW, fH) },
       },
@@ -283,7 +287,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         uniform vec2 uResolution;
         varying vec2 vUv;
 
-        // Line segment distance formula for gapless fluid stamping
         float distToSegment(vec2 p, vec2 a, vec2 b, vec2 aspect) {
             vec2 pa = (p - a) * aspect;
             vec2 ba = (b - a) * aspect;
@@ -306,13 +309,13 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
                 texture2D(tPrev, vUv + vec2(0.0, texel.y)).r
             ) * 0.25;
 
-            // Time-scaled exponential decay
+            // Liquid decay
             float density = mix(prev, blurred, 0.22) * uDecay;
 
-            // Add smooth continuous stamp along segment
+            // Stamp smooth circles along path only when moving
             if (uIsMoving > 0.5) {
                 float d = distToSegment(vUv, uPrevMouse, uMouse, aspect);
-                float stamp = smoothstep(uRadius, uRadius * 0.25, d);
+                float stamp = smoothstep(uRadius, uRadius * 0.28, d);
                 density = max(density, stamp);
             }
 
@@ -326,12 +329,11 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     pingPongScene.add(pingPongQuad);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3. Composite Shader: Matcap + Fresnel + Specular + Inflated Normals
+    // 3. Composite Shader: Soft Inflated Balloon, Wrinkles & Broad Highlights
     // ─────────────────────────────────────────────────────────────────────────
     const compositeMat = new THREE.ShaderMaterial({
       uniforms: {
         tInk: { value: null },
-        tText: { value: null },
         tHeight: { value: null },
         tMatcapPrev: { value: matcapTextures[1] },
         tMatcapCurr: { value: matcapTextures[1] },
@@ -347,7 +349,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       `,
       fragmentShader: `
         uniform sampler2D tInk;
-        uniform sampler2D tText;
         uniform sampler2D tHeight;
         uniform sampler2D tMatcapPrev;
         uniform sampler2D tMatcapCurr;
@@ -356,27 +357,33 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         varying vec2 vUv;
 
         void main() {
-            // 1. Liquid threshold for organic metaball fluid edge
+            // 1. Organic metaball fluid edge
             float density = texture2D(tInk, vUv).r;
-            float inkMask = smoothstep(0.24, 0.52, density);
+            float inkMask = smoothstep(0.25, 0.55, density);
 
-            // 2. Text mask
-            float letterMask = texture2D(tText, vUv).r;
-
-            // 3. Compute surface normal from heightmap dome
+            // 2. Soft pillow height field (smooth dome, no hard bevel)
             vec2 texel = 1.0 / uResolution;
-            float hL = texture2D(tHeight, vUv - vec2(texel.x * 3.5, 0.0)).r;
-            float hR = texture2D(tHeight, vUv + vec2(texel.x * 3.5, 0.0)).r;
-            float hD = texture2D(tHeight, vUv - vec2(0.0, texel.y * 3.5)).r;
-            float hU = texture2D(tHeight, vUv + vec2(0.0, texel.y * 3.5)).r;
+            vec2 eps = texel * 5.5; // Broad baseline for rounded balloon dome
 
-            float dx = (hR - hL) * 14.0;
-            float dy = (hU - hD) * 14.0;
-            float nz = sqrt(max(0.02, 1.0 - min(0.98, dx * dx + dy * dy)));
+            float hC = texture2D(tHeight, vUv).r;
+            float hL = texture2D(tHeight, vUv - vec2(eps.x, 0.0)).r;
+            float hR = texture2D(tHeight, vUv + vec2(eps.x, 0.0)).r;
+            float hD = texture2D(tHeight, vUv - vec2(0.0, eps.y)).r;
+            float hU = texture2D(tHeight, vUv + vec2(0.0, eps.y)).r;
+
+            float dx = (hR - hL) * 3.8;
+            float dy = (hU - hD) * 3.8;
+            float nz = sqrt(max(0.04, 1.0 - min(0.96, dx * dx + dy * dy)));
             vec3 N = normalize(vec3(-dx, -dy, nz));
 
-            // 4. Matcap texture lookup
-            vec2 matcapUv = clamp(N.xy * 0.495 + 0.5, 0.005, 0.995);
+            // 3. Subtle pinched wrinkles/creases at joints and corners (low-frequency noise)
+            float wrinkle1 = sin(vUv.x * 85.0 + vUv.y * 65.0) * cos(vUv.x * 45.0 - vUv.y * 95.0);
+            float wrinkle2 = sin(vUv.x * 140.0 - vUv.y * 110.0) * 0.5;
+            float wrinkleMask = smoothstep(0.18, 0.55, hC) * (1.0 - smoothstep(0.65, 0.95, hC));
+            vec3 perturbedN = normalize(N + vec3(wrinkle1 * 0.06, wrinkle2 * 0.05, 0.0) * wrinkleMask);
+
+            // 4. Soft matcap lookup (no sharp pin lines)
+            vec2 matcapUv = clamp(perturbedN.xy * 0.49 + 0.5, 0.005, 0.995);
             vec3 prevMat = texture2D(tMatcapPrev, matcapUv).rgb;
             vec3 currMat = texture2D(tMatcapCurr, matcapUv).rgb;
 
@@ -384,18 +391,28 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
             float t = smoothstep(0.0, 1.0, uCrossfade);
             vec3 baseMat = mix(prevMat, currMat, t);
 
-            // 5. Fresnel + Specular lighting
-            float F = pow(1.0 - max(0.0, N.z), 2.5);
-            vec3 lightDir = normalize(vec3(0.45, 0.75, 0.8));
-            float spec = pow(max(0.0, dot(reflect(-lightDir, N), vec3(0.0, 0.0, 1.0))), 36.0);
-            vec3 shadedMaterial = baseMat + vec3(1.0) * spec * 0.45 + F * 0.18;
+            // 5. Broad soft highlights, gentle Fresnel rim, and subsurface-like glow
+            vec3 lightDir = normalize(vec3(0.35, 0.65, 0.85));
+            float broadHighlight = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 12.0) * 0.32;
+            float softSpec = pow(max(0.0, dot(reflect(-lightDir, perturbedN), vec3(0.0, 0.0, 1.0))), 24.0) * 0.28;
 
-            // 6. Final composite:
-            // Base state: pure white background (1,1,1), solid black letters (0,0,0)
+            float F = pow(1.0 - max(0.0, perturbedN.z), 2.2);
+            vec3 fresnelColor = mix(baseMat, vec3(1.0), 0.40);
+
+            // Subsurface-like soft interior glow
+            vec3 sss = baseMat * pow(clamp(1.0 - length(perturbedN.xy), 0.0, 1.0), 1.6) * 0.22;
+
+            vec3 shadedBalloon = baseMat + (broadHighlight + softSpec) * vec3(1.0) + fresnelColor * F * 0.32 + sss;
+
+            // 6. Anti-aliased letter mask derived from smooth height dome (NO dark outline!)
+            float letterMask = smoothstep(0.04, 0.18, hC);
+
+            // 7. Final composite:
+            // Base: pure white background (1,1,1), solid black letters (0,0,0)
             vec3 baseColor = mix(vec3(1.0), vec3(0.0), letterMask);
-            // Inked state: solid black ink on background, 3D inflated balloon on letters
-            vec3 inkedColor = mix(vec3(0.0), shadedMaterial, letterMask);
-            // Reveal via inkMask
+            // Inked: solid black ink on bg, soft 3D balloon on letters
+            vec3 inkedColor = mix(vec3(0.0), shadedBalloon, letterMask);
+            // Revealed smoothly by ink mask
             vec3 finalColor = mix(baseColor, inkedColor, inkMask);
 
             gl_FragColor = vec4(finalColor, 1.0);
@@ -410,7 +427,7 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     updateTextAndHeightmap();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 4. Critically Damped Spring Physics & Shuffled Material Playlist
+    // 4. Spring Physics & Invisible Background Material Shuffling
     // ─────────────────────────────────────────────────────────────────────────
     const pointer = {
       targetX: -999,
@@ -425,7 +442,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       smoothedSpeed: 0,
     };
 
-    // Material playlist shuffle (no immediate repeats)
     let playlist: number[] = [];
     const refillPlaylist = (exclude: number) => {
       const items = [0, 1, 2, 3, 4, 5, 6, 7].filter((i) => i !== exclude);
@@ -440,48 +456,30 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     let matPrev = 1;
     let crossfadeStart = performance.now();
     let lastAutoChangeTime = performance.now();
-    let userOverrideUntil = 0;
     let isNewStroke = true;
+    let recentStrokeLength = 0;
 
-    const advanceMaterial = (nextIdx?: number) => {
+    const advanceMaterial = () => {
       matPrev = matCurr;
-      if (typeof nextIdx === 'number') {
-        matCurr = nextIdx % 8;
-      } else {
-        if (playlist.length === 0) {
-          playlist = refillPlaylist(matCurr);
-        }
-        matCurr = playlist.pop()!;
+      if (playlist.length === 0) {
+        playlist = refillPlaylist(matCurr);
       }
+      matCurr = playlist.pop()!;
       crossfadeStart = performance.now();
       lastAutoChangeTime = performance.now();
 
       compositeMat.uniforms.tMatcapPrev.value = matcapTextures[matPrev];
       compositeMat.uniforms.tMatcapCurr.value = matcapTextures[matCurr];
-
-      if (materialBadgeRef.current) {
-        materialBadgeRef.current.textContent = MATERIAL_DEFS[matCurr].name;
-      }
     };
 
-    // Chip click temporary override (10s before auto-cycle resumes)
-    const handleChipClick = (e: MouseEvent) => {
-      e.stopPropagation();
-      userOverrideUntil = performance.now() + 10000;
-      advanceMaterial((matCurr + 1) % 8);
-    };
-
-    const chipEl = materialBadgeRef.current?.parentElement;
-    chipEl?.addEventListener('click', handleChipClick);
-
-    // Read pointer events with getCoalescedEvents() for gapless fluid tracing
+    // Coalesced pointer tracking
     const onPointerMove = (e: PointerEvent) => {
       const now = performance.now();
       const timeSinceLast = now - pointer.lastMoveTime;
 
       // Trigger material change on new stroke if idle > 400ms
       if (timeSinceLast > 400 || pointer.targetX < -900) {
-        if (!isNewStroke && now > userOverrideUntil) {
+        if (!isNewStroke) {
           advanceMaterial();
         }
         isNewStroke = true;
@@ -509,10 +507,8 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       }
     };
 
+    // Holding or clicking does NOT grow the blob; simply arms stroke
     const onPointerDown = (e: PointerEvent) => {
-      if (performance.now() > userOverrideUntil) {
-        advanceMaterial();
-      }
       isNewStroke = true;
       onPointerMove(e);
     };
@@ -546,32 +542,31 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
     const tick = (_time: number, deltaTime: number) => {
       if (document.hidden) return;
 
-      const dt = Math.min(deltaTime / 1000, 0.05); // Frame delta time in seconds
+      const dt = Math.min(deltaTime / 1000, 0.05);
       const now = performance.now();
 
       const timeSinceMove = now - pointer.lastMoveTime;
-      const isActivelyMoving = timeSinceMove < 280 && pointer.targetX > -900;
-      const isInkVisible = timeSinceMove < 2600;
+      const isActivelyMoving = timeSinceMove < 260 && pointer.targetX > -900;
+      const isInkVisible = timeSinceMove < 2200;
 
-      // Automatic material change every 3.5s while ink is active (if auto active & not overridden)
-      if (AUTO_MATERIAL && isInkVisible && now > userOverrideUntil) {
+      // Automatic material change every 3.5s while ink is active
+      if (AUTO_MATERIAL && isInkVisible) {
         if (now - lastAutoChangeTime > 3500) {
           advanceMaterial();
         }
       }
 
-      // Pause rendering if completely idle to conserve GPU/battery
+      // Pause rendering when idle to keep GPU at 0%
       if (!isInkVisible && !isActivelyMoving) {
         return;
       }
 
       // Critically Damped Spring Physics:
-      // Exact analytical solution: zero oscillation, smooth inertia lag (~0.12s)
       if (isActivelyMoving) {
         pointer.prevX = pointer.x;
         pointer.prevY = pointer.y;
 
-        const omega = 20.0; // Spring frequency (rad/s)
+        const omega = 20.0;
         const expTerm = Math.exp(-omega * dt);
 
         const diffX = pointer.x - pointer.targetX;
@@ -585,24 +580,40 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         pointer.vx = newVx;
         pointer.vy = newVy;
 
-        // Velocity-smoothed radius scaling between 150px and 260px
         const currentSpeed = Math.hypot(pointer.vx * W, pointer.vy * H);
         pointer.smoothedSpeed += (currentSpeed - pointer.smoothedSpeed) * Math.min(1.0, dt * 10.0);
 
-        const pixelDiameter = 150.0 + Math.min(pointer.smoothedSpeed * 0.12, 110.0);
+        // Clamped ink width: strictly between 70px (resting) and 140px (max speed)
+        // Holding cursor in place never balloons the blob
+        const minDiameter = 70.0;
+        const maxDiameter = 140.0;
+        const pixelDiameter = minDiameter + Math.min(pointer.smoothedSpeed * 0.07, maxDiameter - minDiameter);
         const radiusUV = (pixelDiameter * 0.5) / H;
+
+        // Track accumulated stroke length to prevent screen ink flooding
+        const moveDist = Math.hypot((pointer.x - pointer.prevX) * W, (pointer.y - pointer.prevY) * H);
+        if (moveDist > 1.0) {
+          recentStrokeLength += moveDist;
+        }
 
         pingPongMat.uniforms.uMouse.value.set(pointer.x, pointer.y);
         pingPongMat.uniforms.uPrevMouse.value.set(pointer.prevX, pointer.prevY);
         pingPongMat.uniforms.uRadius.value = radiusUV;
-        pingPongMat.uniforms.uIsMoving.value = 1.0;
+        pingPongMat.uniforms.uIsMoving.value = moveDist > 0.8 ? 1.0 : 0.0;
       } else {
         pingPongMat.uniforms.uIsMoving.value = 0.0;
         isNewStroke = false;
       }
 
-      // Time-scaled liquid decay (feels identical at 60Hz or 120Hz)
-      const frameDecay = Math.pow(0.974, dt * 60.0);
+      // Decay stroke length accumulation
+      recentStrokeLength *= Math.pow(0.88, dt * 60.0);
+
+      // Capped coverage: if ink accumulation exceeds ~35% of screen perimeter, accelerate decay
+      const coveragePressure = Math.max(0.0, (recentStrokeLength - 1400.0) / 1800.0);
+      const baseDecay = 0.965; // ~1.5s standard decay
+      const dynamicDecay = Math.max(0.920, baseDecay - coveragePressure * 0.045);
+      const frameDecay = Math.pow(dynamicDecay, dt * 60.0);
+
       pingPongMat.uniforms.uDecay.value = frameDecay;
       pingPongMat.uniforms.tPrev.value = rtPing.texture;
       pingPongMat.uniforms.uResolution.value.set(fW, fH);
@@ -619,7 +630,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       const crossfadeProgress = Math.min(1.0, (now - crossfadeStart) / 800);
 
       compositeMat.uniforms.tInk.value = rtPing.texture;
-      compositeMat.uniforms.tText.value = textTexture;
       compositeMat.uniforms.tHeight.value = rtTextHeightmap.texture;
       compositeMat.uniforms.uResolution.value.set(W * dpr, H * dpr);
       compositeMat.uniforms.uCrossfade.value = crossfadeProgress;
@@ -628,7 +638,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       renderer.render(compositeScene, quadCamera);
     };
 
-    // Shared single loop with Lenis and GSAP
     gsap.ticker.add(tick);
 
     return () => {
@@ -637,7 +646,6 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointerup', onPointerUp);
-      chipEl?.removeEventListener('click', handleChipClick);
 
       renderer.dispose();
       textTexture?.dispose();
@@ -654,24 +662,8 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand }) => {
         ref={canvasRef}
         id="stage"
         className="w-full h-full block select-none pointer-events-none"
-        aria-label={`${brand} WebGL liquid ink trail and 3D inflated balloon wordmark canvas`}
+        aria-label={`${brand} WebGL liquid ink trail and soft inflated balloon wordmark canvas`}
       />
-
-      {/* 3D Material Live Chip: Auto updates, click overrides temporarily for 10s */}
-      <div
-        className="absolute top-[80px] right-[22px] z-20 pointer-events-auto flex items-center gap-1.5 bg-black/5 hover:bg-black/10 backdrop-blur-md px-3 py-1.5 rounded-full border border-black/10 shadow-sm transition-all select-none cursor-pointer"
-        title="Click to manually cycle material (resumes auto in 10s)"
-      >
-        <span className="text-[10px] font-mono uppercase tracking-wider text-black/50 font-bold hidden md:inline">
-          3D MATERIAL:
-        </span>
-        <span
-          ref={materialBadgeRef}
-          className="text-[10px] font-mono font-bold uppercase tracking-wider text-black"
-        >
-          {MATERIAL_DEFS[1].name}
-        </span>
-      </div>
     </div>
   );
 };
