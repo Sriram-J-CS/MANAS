@@ -1,0 +1,808 @@
+================================================================================
+MANAS: AI DIGITAL MENTAL TWIN & WELLNESS COMPANION
+Complete Project Context Document
+================================================================================
+Last Updated: October 2026
+GitHub Repository: https://github.com/Sriram-J-CS/MANAS
+Research Lab: Intelligent Systems & Mental Health Computing Laboratory
+Institution: Department of Computer Science & Engineering
+
+--------------------------------------------------------------------------------
+PURPOSE OF THIS DOCUMENT
+--------------------------------------------------------------------------------
+This document is a comprehensive, self-contained description of the MANAS project.
+It is intended to be read by any AI assistant so it can fully understand the
+project's purpose, design, code structure, rules, and constraints — and then
+provide accurate, context-aware assistance for any task related to this project.
+
+If you are an AI reading this:
+  - Read this entire document before making any code suggestion or answer.
+  - Always follow the rules in Section 7 (Agent Rules).
+  - Never suggest anything that violates Section 5 (Safety & Privacy Rules).
+  - The project stack is: React 19 + Vite + Tailwind (Frontend), FastAPI (Backend),
+    SQLite (local) or Supabase Postgres (cloud), with Three.js for the 3D mascot.
+
+
+================================================================================
+SECTION 1: WHAT IS MANAS?
+================================================================================
+
+MANAS is a web-based emotional wellness companion built as a research project
+under the Computational Emotion & Digital Twin Research Initiative.
+
+WHO IT IS FOR:
+  - University students dealing with exam stress, loneliness, sleep issues.
+  - Early-career professionals facing burnout, workload pressure, anxiety.
+  - Target age: 18 and above (v1).
+  - Target geography: India (multilingual support across 8 Indian languages).
+
+WHAT IT DOES:
+  - Users talk (type first, voice later) to a friendly animated 3D cartoon mascot.
+  - The mascot listens, responds empathetically, tracks mood over time, and offers
+    evidence-based coping exercises (breathing, grounding, journaling prompts).
+  - If a user shows signs of distress or crisis, MANAS routes them to verified
+    national mental health helplines immediately.
+
+WHAT IT IS NOT:
+  - It is NOT therapy, clinical diagnosis, or medical treatment.
+  - It does NOT prescribe medication or give dosage advice.
+  - Every screen clearly states: "This is an AI companion, not a doctor or therapist."
+
+THE 5 CORE PRINCIPLES:
+  1. Safety First — every incoming message is screened for crisis signals before
+     any AI reply is generated.
+  2. Consent and Privacy — each data type is opt-in, deletable, and stored minimally.
+  3. Honest AI — always transparent that MANAS is an AI; never diagnoses.
+  4. Adapt, Don't Mimic — match the user's language and pace, never copy hopeless
+     or hostile language.
+  5. Small and Reliable — a simple, working product is better than a shaky complex one.
+
+
+================================================================================
+SECTION 2: TECHNOLOGY STACK
+================================================================================
+
+FRONTEND (React Client):
+  - Framework: React 19 + Vite (TypeScript, strict mode)
+  - Styling: Tailwind CSS v4 + Custom CSS design tokens (see DESIGN.md)
+  - Animation: Framer Motion (200-300ms ease-out transitions)
+  - 3D Engine: Three.js + React Three Fiber + Drei
+  - Icons: Lucide React (2px stroke, rounded)
+  - Audio: Web Audio API (frequency analysis, lip-sync)
+  - Smooth Scrolling: Lenis
+  - Forms/Validation: Zod
+  - Charts: Recharts (mood dashboard)
+  - Fonts: Nunito (headings/body), Noto Sans Tamil/Devanagari/etc (Indic scripts)
+  - Build Output: PWA (Progressive Web App), deployable to Vercel
+  - Tests: Playwright (UI flows and avatar rendering)
+
+BACKEND (FastAPI Server):
+  - Language: Python 3.10+
+  - Framework: FastAPI (async, streaming responses)
+  - Database ORM: sqlite3 (local dev) / psycopg2 (Supabase Postgres in cloud)
+  - Validation: Pydantic v2 (every request and response is a typed model)
+  - Encryption: Python cryptography library (AES-256-GCM for contact storage)
+  - HTTP Client: httpx (for calling external AI and TTS APIs)
+  - Config: python-dotenv (.env file, never committed to git)
+  - Tests: pytest
+
+ML SIDECARS (Optional Fast Pre-processing):
+  - Emotion Classifier: MuRIL-based (multilingual for Indian languages), exported
+    as ONNX for low-latency inference. Falls back gracefully if not available.
+  - Intent Classifier: ONNX model for detecting user intent categories.
+  - Risk Classifier: ONNX model for fast risk level pre-screening.
+  - All sidecars are FastAPI servers that run independently (e.g. port 8009).
+
+EXTERNAL SERVICES (All credentials in .env, never in code):
+  - AI Provider: Google Gemini / Anthropic Claude / OpenAI (selectable via env)
+  - Voice/TTS: ElevenLabs / Sarvam / Cartesia (streaming audio + viseme timings)
+  - Auth: Auth.js (NextAuth v5) with Google OAuth
+  - Database (cloud): Supabase Postgres
+  - Storage (cloud): Supabase Storage (S3-compatible, for 3D avatar .glb files)
+  - YouTube API: For curated mindfulness video resources
+
+
+================================================================================
+SECTION 3: FULL REPOSITORY STRUCTURE (EXPLAINED)
+================================================================================
+
+mental-health-chatbot/                     (Project root)
+  |
+  |-- .env.example                         Template env file with blank placeholders.
+  |                                        Copy to .env and populate to run locally.
+  |-- .gitignore                           Excludes .env, node_modules, .db files,
+  |                                        build outputs, test results, caches.
+  |-- README.md                            Public documentation on GitHub.
+  |-- LICENSE                              MIT License.
+  |-- package.json                         Root scripts: dev, build, preview.
+  |                                        All delegate to the frontend/ subdirectory.
+  |
+  |-- SPEC.md                              Product specification. Defines scope of
+  |                                        v1, v2, v3 and feature decisions.
+  |-- DESIGN.md                            UI/UX design system: color tokens,
+  |                                        typography, components, motion rules,
+  |                                        mascot style guide, screen descriptions.
+  |-- AGENT_RULES.md                       Rules for AI agents and developers.
+  |                                        Always read this before touching code.
+  |-- AVATAR_GUIDE.md                      Guide to 3D avatar rigging, blendshapes,
+  |                                        and asset format requirements.
+  |-- MASCOT_GUIDE.md                      Guide to mascot expressions, gestures,
+  |                                        states, and personalization pipeline.
+  |-- TEST_CASES.md                        200+ scripted conversation test cases
+  |                                        across emotional states, languages,
+  |                                        and crisis scenarios.
+  |-- EMOTICARE_README.md                  Legacy architecture doc (supplementary).
+  |
+  |-- backend/
+  |     |-- requirements.txt               fastapi, uvicorn, pydantic, python-dotenv,
+  |     |                                  httpx, cryptography, etc.
+  |     |-- app/
+  |     |     |-- main.py                  FastAPI app entry point. Registers all
+  |     |     |                            routes: /api/chat, /api/tts, /api/avatar,
+  |     |     |                            /api/onboard, /api/mood, /api/contact.
+  |     |     |                            Includes AES-256-GCM crypto utilities
+  |     |     |                            for zero-PII contact storage.
+  |     |     |-- database.py              SQLite schema initialization. Creates
+  |     |     |                            all tables on first start.
+  |     |     |-- safety/
+  |     |     |     |-- rules.py           Deterministic safety screener.
+  |     |     |     |                      Contains regex patterns for crisis
+  |     |     |     |                      phrases in English, Tamil, Hindi,
+  |     |     |     |                      Telugu, Kannada, Malayalam, Bengali,
+  |     |     |     |                      Marathi (both scripts and romanized).
+  |     |     |     |                      Returns: risk_level (none/low/medium/high),
+  |     |     |     |                      is_crisis, is_medication_query.
+  |     |     |     |-- templates.py       Pre-written, counselor-approved crisis
+  |     |     |                            response messages in 3+ languages.
+  |     |     |-- services/
+  |     |           |-- chat_engine.py     Core engine. Implements 3-phase pipeline:
+  |     |           |                      Phase 1: Two-pass understanding (emotion,
+  |     |           |                        intent, risk, cognitive distortions).
+  |     |           |                      Phase 2: ESConv-style response strategy
+  |     |           |                        selection (reflect, reframe, affirm,
+  |     |           |                        open question, information, small step,
+  |     |           |                        grounding exercise).
+  |     |           |                      Phase 3: RAG knowledge retrieval +
+  |     |           |                        long-term memory (user facts).
+  |     |           |                      Anti-repetition: 3-gram similarity check
+  |     |           |                        on last 6 bot replies, regenerates once
+  |     |           |                        if >0.6 similarity score.
+  |     |           |                      Personas: digital_twin, boy (Arun),
+  |     |           |                        girl (Meera), mascot (MANAS).
+  |     |           |-- pipeline.py        Full chat pipeline orchestrator.
+  |     |           |                      Order: auth -> consent -> safety ->
+  |     |           |                      build prompt -> call LLM -> validate JSON
+  |     |           |                      -> save data -> stream reply.
+  |     |           |-- llm.py             LLM abstraction layer. Supports:
+  |     |           |                        gemini (default), anthropic, openai.
+  |     |           |                      All LLM calls are made server-side only.
+  |     |           |-- rag.py             Retrieval-Augmented Generation. Loads
+  |     |           |                      knowledge markdown files, retrieves
+  |     |           |                      relevant context based on user query,
+  |     |           |                      and paraphrases into natural language
+  |     |           |                      (never raw bullet points).
+  |     |           |-- voice.py           Text-to-speech service. Calls external
+  |     |                                  TTS provider for streaming audio and
+  |     |                                  viseme timestamps. Falls back to browser
+  |     |                                  Web SpeechSynthesis if no API key.
+  |     |-- knowledge/                     Vetted psychoeducational reference docs.
+  |     |     |-- breathing.md             4-7-8 breathing, box breathing, physio sigh.
+  |     |     |-- cbt_thought_records.md   CBT thought reframing exercises.
+  |     |     |-- exam_stress.md           Evidence-based study stress coping.
+  |     |     |-- grounding_54321.md       5-4-3-2-1 sensory grounding protocol.
+  |     |     |-- helplines.md             All crisis helplines with numbers.
+  |     |     |-- sleep_hygiene.md         Sleep hygiene guidelines.
+  |     |-- tests/
+  |           |-- test_pipeline.py         Unit and integration tests for the
+  |                                        full chat pipeline.
+  |
+  |-- frontend/
+  |     |-- package.json                   React 19, Three.js, Framer Motion,
+  |     |                                  Tailwind, Playwright, etc.
+  |     |-- vite.config.ts                 Vite build config.
+  |     |-- tsconfig.*.json                TypeScript configurations.
+  |     |-- src/
+  |     |     |-- main.tsx                 App entry point.
+  |     |     |-- App.tsx                  Root component and routing.
+  |     |     |-- index.css                Global CSS with design tokens.
+  |     |     |-- components/
+  |     |     |     |-- ThreeMascot/       3D mascot rendering components.
+  |     |     |     |   |-- ThreeCartoonMascot.tsx
+  |     |     |     |   |                  Main 3D character component. Loads .glb,
+  |     |     |     |   |                  applies toon shader, rim lighting,
+  |     |     |     |   |                  blendshapes, and breathing animation.
+  |     |     |     |   |-- ThreeMascotStage.tsx
+  |     |     |     |   |                  Canvas stage with WebGL detection.
+  |     |     |     |   |-- WardrobeDrawer.tsx
+  |     |     |     |   |                  6-outfit switcher with transitions.
+  |     |     |     |   |-- Mascot2DFallback.tsx
+  |     |     |     |   |                  Animated 2D sprite for low-end devices.
+  |     |     |     |   |-- PhotoAttributeOnboarding.tsx
+  |     |     |     |   |                  Privacy-first photo analysis for avatar
+  |     |     |     |   |                  color personalization.
+  |     |     |     |   |-- useMascotAudioLipSync.ts
+  |     |     |     |                      Web Audio frequency -> viseme mapping hook.
+  |     |     |     |-- chat/
+  |     |     |     |   |-- ChatMessages.tsx      Chat conversation view.
+  |     |     |     |   |-- MessageBubble.tsx      Single message with emotion tags.
+  |     |     |     |   |-- ChatInput.tsx          Text input and voice button.
+  |     |     |     |   |-- BreathingWidget.tsx    Interactive 4-7-8 breathing pacer.
+  |     |     |     |   |-- GroundingWidget.tsx    5-4-3-2-1 grounding steps.
+  |     |     |     |   |-- MoodJourneyDrawer.tsx  7-day mood trend visualization.
+  |     |     |     |   |-- AuroraBackground.tsx   Animated background for chat.
+  |     |     |     |   |-- VoiceWaveformBar.tsx   Live audio waveform indicator.
+  |     |     |     |-- music/
+  |     |     |     |   |-- MusicDrawer.tsx        Calming ambient music browser.
+  |     |     |     |   |-- PersistentMiniPlayer.tsx  Floating audio mini player.
+  |     |     |     |-- mascot/
+  |     |     |     |   |-- MascotCustomizer.tsx   Avatar skin/hair/outfit editor.
+  |     |     |     |   |-- MascotViewer.tsx       Avatar preview panel.
+  |     |     |     |   |-- OutfitsPanel.tsx       Outfit selection grid.
+  |     |     |     |   |-- MascotSpeechBubble.tsx Speech bubble overlay on mascot.
+  |     |     |     |-- OnboardingModal.tsx    Multi-step onboarding gate.
+  |     |     |     |-- ChatCompanionModal.tsx Main conversational interface.
+  |     |     |     |-- ChatSettingsModal.tsx  Settings drawer.
+  |     |     |     |-- HelpModal.tsx          Help & Safety page (always accessible).
+  |     |     |     |-- InteractiveAvatar.tsx  Dual-mode avatar (3D Rig or 2D Sprite).
+  |     |     |     |-- AmbientMusicPlayer.tsx Solfeggio 432 Hz background audio.
+  |     |     |-- i18n/
+  |     |     |   |-- index.ts            Language detection and translation loader.
+  |     |     |   |-- languages.ts        Definitions for all 8 supported languages.
+  |     |     |   |-- locales/            One file per language: en, ta, hi, te,
+  |     |     |   |                       kn, ml, bn, mr.
+  |     |     |   |-- voiceEndPhrases.ts  Language-specific TTS ending phrases.
+  |     |     |-- lib/
+  |     |     |   |-- avatar/             3D avatar rendering utilities.
+  |     |     |   |   |-- lipSyncEngine.ts      Phoneme-to-viseme blendshape driver.
+  |     |     |   |   |-- FaceDriver.ts         Facial expression morph controller.
+  |     |     |   |   |-- Model3DRenderer.ts    GLB model loader and material setup.
+  |     |     |   |   |-- faceLandmarkService.ts MediaPipe face mesh integration.
+  |     |     |   |   |-- speechPerformance.ts  Audio performance analysis.
+  |     |     |   |-- emotion/
+  |     |     |   |   |-- emotionEngine.ts      Client-side emotion lexicon detector.
+  |     |     |   |-- voice/
+  |     |     |   |   |-- speechEngine.ts       Speech synthesis and streaming audio.
+  |     |     |   |-- music/
+  |     |     |   |   |-- musicPlayerService.ts Ambient music track management.
+  |     |     |   |   |-- musicTracks.ts        Track list and metadata.
+  |     |     |   |-- ai/
+  |     |     |       |-- aiChatService.ts      Frontend chat API client service.
+  |     |     |-- pages/
+  |     |     |   |-- DevAvatarCheckPage.tsx   Developer avatar test playground.
+  |     |     |   |-- DevLipSyncPage.tsx        Developer lip-sync verification.
+  |     |     |-- types/
+  |     |         |-- index.ts             Shared TypeScript types (MascotExpression,
+  |     |                                  ChatMessage, MoodEntry, UserProfile, etc.)
+  |     |-- public/
+  |           |-- avatars/
+  |           |   |-- boy.glb             Default male 3D character model.
+  |           |   |-- boy.png             Avatar preview thumbnail.
+  |           |   |-- girl.png            Avatar preview thumbnail.
+  |           |   |-- avatar.json         Avatar configuration metadata.
+  |           |-- models/variants/        GLB variants (hairstyle, glasses combos).
+  |           |-- avatars/faces/          2D face sprite frames for fallback mode.
+  |           |-- avatars/outfits/        Outfit preview thumbnails.
+  |
+  |-- ml/                                 Machine learning model development.
+  |     |-- DATASET_LICENSES.md           Licenses for training data used.
+  |     |-- serve_models.py               Launcher for all ONNX sidecar servers.
+  |     |-- emotion/
+  |     |   |-- MODEL_CARD.md             Details of MuRIL emotion classifier.
+  |     |   |-- serve_onnx.py             FastAPI server for emotion ONNX inference.
+  |     |   |-- train_emotion_muril.ipynb Training notebook (Jupyter).
+  |     |   |-- human_verification_sample.csv  Sample data for human review.
+  |     |-- intent/
+  |     |   |-- MODEL_CARD.md             Intent classifier specification.
+  |     |   |-- LABELING_GUIDE.md         Instructions for human labelers.
+  |     |   |-- serve_intent_onnx.py      FastAPI server for intent ONNX inference.
+  |     |   |-- intent_dataset_sample.csv Sample labeled intent data.
+  |     |   |-- train_intent_classifier.ipynb Training notebook.
+  |     |-- risk/
+  |     |   |-- MODEL_CARD.md             Risk classifier specification.
+  |     |   |-- serve_risk_onnx.py        FastAPI server for risk ONNX inference.
+  |     |   |-- risk_training_template.csv Template for risk labeling.
+  |     |   |-- train_risk_classifier.ipynb Training notebook.
+  |     |-- style/
+  |     |   |-- LORA_FINETUNING_GUIDE.md  Guide for LoRA fine-tuning LLM on
+  |     |   |                             empathetic conversation datasets.
+  |     |   |-- lora_empathy_tuning.ipynb LoRA fine-tuning notebook.
+  |     |-- feedback/
+  |         |-- FEEDBACK_LOOP.md           Active learning pipeline documentation.
+  |         |-- export_feedback.py         Exports rated conversation pairs for
+  |                                        clinical review and model retraining.
+  |         |-- batches/                   Clinical review batch CSV/JSON files.
+  |
+  |-- eval/                               Quantitative evaluation framework.
+  |     |-- run_eval.py                   Runs test_cases.json through the pipeline
+  |     |                                 and checks against expected outputs.
+  |     |-- test_cases.json               200+ benchmark scenarios covering: normal
+  |     |                                 emotional support, crisis detection (T22-T30),
+  |     |                                 medication requests, multilingual inputs.
+  |     |-- rubric.md                     Clinical empathy and safety scoring criteria.
+  |     |-- human_review_sample.csv       Sample of bot replies for human evaluation.
+  |     |-- i18n_translation_review_sheet.csv  Translation quality review.
+  |     |-- reports/                      Latest evaluation results and reports.
+  |
+  |-- scripts/                            Developer utility scripts.
+  |     |-- run_migration.py              Database migration runner.
+  |     |-- generate_eval_dataset.py      Generates evaluation scenarios.
+  |     |-- generate_200_eval_dataset.py  Extended 200-case eval generator.
+  |     |-- build_chat_engine.py          Chat engine bootstrap/test runner.
+  |     |-- build_asset_pack.py           Packages 3D avatar assets for deployment.
+  |     |-- blender_avatar_source.py      Blender Python script for avatar rigging.
+  |     |-- generate_avatar_assets.js     Generates 2D face sprite variants.
+  |     |-- language-qa.ts                Language quality assurance runner.
+  |     |-- voice_language_qa.py          Voice/TTS quality assurance checker.
+  |     |-- generate_i18n_review_sheet.py Generates translation review spreadsheet.
+  |
+  |-- tests/                              Top-level test files.
+  |     |-- test_crisis.py                Tests all crisis detection scenarios.
+  |     |-- test_30_conversations.py      Tests 30 full conversation flows.
+  |
+  |-- knowledge/                          Root-level knowledge base copy.
+  |     |-- breathing.md, cbt_thought_records.md, exam_stress.md,
+  |         grounding_54321.md, helplines.md, sleep_hygiene.md
+  |
+  |-- src/                                Next.js Server API Route Handlers
+  |     |-- app/api/
+  |     |   |-- chat/route.ts             /api/chat - Rate-limited, authenticated
+  |     |   |                             streaming chat endpoint.
+  |     |   |-- tts/route.ts              /api/tts - TTS streaming + viseme timings.
+  |     |   |-- avatar/
+  |     |   |   |-- model-url/route.ts    /api/avatar/model-url - Signed S3 URLs
+  |     |   |   |                         for 3D model download.
+  |     |   |   |-- photo-attributes/route.ts  Vision analysis of user photo for
+  |     |   |   |                              avatar personalization (photo deleted
+  |     |   |   |                              immediately after extraction).
+  |     |   |   |-- wardrobe/route.ts     /api/avatar/wardrobe - Save outfit choice.
+  |     |   |-- contact/route.ts          /api/contact - Encrypted contact storage.
+  |     |   |-- contact/verify/route.ts   /api/contact/verify - OTP verification.
+  |     |-- lib/
+  |         |-- auth.ts                   Auth.js/NextAuth session verification.
+  |         |-- rate-limit.ts             Sliding window IP + token rate limiter.
+  |         |-- s3-storage.ts             Supabase S3 client and presigned URLs.
+  |         |-- db.ts                     Supabase Postgres client.
+  |         |-- crypto.ts                 AES-256-GCM and HMAC-SHA256 utilities.
+  |         |-- migrations/               SQL migration scripts.
+
+
+================================================================================
+SECTION 4: THE MESSAGE PROCESSING PIPELINE (What happens per chat message)
+================================================================================
+
+Every single chat message from the user goes through this exact sequence.
+The order must NEVER be changed:
+
+STEP 1 — AUTHENTICATE
+  Verify user's session token or JWT. Reject unauthenticated requests with 401.
+
+STEP 2 — CHECK CONSENT
+  Verify the user's consent settings (server-side, not just frontend).
+  Only process/store data types the user has consented to.
+
+STEP 3 — SAFETY CHECK (DETERMINISTIC, ALWAYS BEFORE LLM)
+  Run rules.py check_safety() on the raw message text.
+  The safety screener uses compiled regex patterns across all 8 languages
+  (both native scripts and romanized forms).
+
+  Returns one of:
+    - risk_level: "none" — proceed normally
+    - risk_level: "low"  — add gentle note internally
+    - risk_level: "medium" — LLM should check in carefully about wellbeing
+    - risk_level: "high" or "imminent" — CRISIS ROUTE (see below)
+
+  CRISIS ROUTE (when risk_level = "high"):
+    - Do NOT call the LLM for a response.
+    - Return a pre-written, counselor-approved crisis template immediately.
+    - Include: Tele-MANAS 14416, Emergency 112, KIRAN 1800-599-0019.
+    - The mascot switches to "concerned" expression — no bouncing, no smiling.
+    - A "high" risk flag stays active for the entire session.
+
+STEP 4 — BUILD PROMPT (2-pass understanding pipeline)
+  Pass A (hidden, fast):
+    Ask the LLM to analyze and return JSON with:
+      - primary_emotion, secondary_emotion, intensity (1-5)
+      - underlying_need (vent / comfort / advice / perspective / just_be_heard)
+      - topic_tags (exams, work, sleep, loneliness, relationships, etc.)
+      - cognitive_distortions detected
+      - triggers and people mentioned
+      - what has helped before
+      - user_readiness (not_ready / exploring / ready_for_action)
+      - risk_level (cross-check)
+
+  Pass B (visible reply):
+    Conditioned on Pass A output. Select ONE response strategy from ESConv set:
+      - reflect_feelings
+      - ask_open_question (max 1 question per reply)
+      - affirm_and_normalize
+      - offer_reframe
+      - give_information (using RAG knowledge)
+      - suggest_small_step
+      - offer_grounding_exercise
+
+    Stage model: Always explore -> gain insight -> then action (never jump to advice
+    when the user just wants to vent or is not ready for action).
+
+  Retrieve long-term memory: top 5 facts about the user from past sessions
+  (worries, goals, people they mentioned, what helped before).
+
+  Retrieve RAG context: relevant knowledge from the /knowledge/ markdown files,
+  paraphrased naturally (never copy-pasted as bullet lists).
+
+STEP 5 — CALL LLM (server-side only, streamed)
+  The LLM must return VALID JSON matching this schema:
+    {
+      "reply": "...",
+      "emotion": { "label": "...", "intensity": 0.0 },
+      "risk_level": "none|low|medium|high",
+      "topic_tags": [],
+      "suggested_exercise": "breathing_4_7_8|grounding_54321|none",
+      "expression": "neutral|happy|concerned|sad|surprised"
+    }
+
+  Anti-repetition: Compare new reply to last 6 bot replies using 3-gram similarity.
+  If similarity > 0.6, regenerate once. Track strategy rotation to avoid repeating
+  the same strategy on consecutive turns.
+
+STEP 6 — VALIDATE LLM OUTPUT
+  If JSON is invalid: retry once, then use the safe fallback template.
+  Use the HIGHER of: keyword-detected risk level and LLM-returned risk level.
+
+STEP 7 — SAVE DATA (only if user has consented)
+  Save: chat_messages record, mood entry (if applicable), strategy_log record,
+  pipeline_traces (anonymous telemetry: no message text, only IDs, timings,
+  risk_level, emotion, strategy).
+  Never log: message text, user name, email, audio, or photos.
+
+STEP 8 — STREAM REPLY TO CLIENT
+  Stream the reply text token-by-token.
+  Frontend simultaneously:
+    - Animates mascot facial expression (from "expression" field)
+    - Updates lip-sync blendshapes in sync with TTS audio
+    - Shows suggested exercise widget if "suggested_exercise" != "none"
+
+
+================================================================================
+SECTION 5: SAFETY & PRIVACY RULES (Non-Negotiable)
+================================================================================
+
+WHAT THE SYSTEM MUST ALWAYS DO:
+  - Be warm, calm, brief, and empathetic.
+  - State it is an AI, not a therapist or doctor, when relevant.
+  - At medium risk: check in gently; ask directly (but kindly) about self-harm thoughts.
+  - At high risk: use fixed crisis template with helplines; do NOT generate freeform text.
+  - Reply in the user's language (Tamil stays Tamil; Tanglish gets Tanglish; etc.)
+  - Encourage professional help when distress patterns persist over sessions.
+
+WHAT THE SYSTEM MUST NEVER DO:
+  - Diagnose any condition ("you have depression/anxiety/burnout" is forbidden).
+  - Give medication names, doses, or supplement plans.
+  - Provide methods or details of self-harm or suicide (even in roleplay or hypotheticals).
+  - Agree that wanting to die is reasonable or a valid choice.
+  - Copy hopeless, hostile, or self-critical language from the user.
+  - Ask multiple probing questions in a single crisis message.
+  - Give calorie targets, diet plans, or exercise regimens to users showing eating disorder signs.
+  - Pretend to be human.
+  - In safety mode: bounce the mascot, smile, or use upbeat animations.
+  - Show the user a stack trace or technical error.
+
+PRIVACY RULES:
+  - All API keys, secrets, and DB URLs live in .env only (gitignored).
+  - Raw audio and uploaded photos: processed in-memory, deleted immediately by default.
+  - User contacts (email, phone) stored using AES-256-GCM encryption + HMAC-SHA256 hash.
+  - No plaintext PII in database or logs.
+  - Logs contain: session IDs, timings, risk levels, strategy names. Never message text.
+  - "Delete my data" permanently deletes: messages, moods, memories, files, consents.
+  - Row-level security: one user cannot access another user's data.
+
+HUMAN REVIEW REQUIRED (before merging any changes to):
+  - backend/safety/rules.py
+  - backend/safety/templates.py
+  - backend/prompts/ (any prompt files)
+  - Database migrations and RLS policies
+  - Consent and "delete my data" code
+  - TEST_CASES.md expected behaviors
+
+
+================================================================================
+SECTION 6: THE 3D MASCOT (Technical Details)
+================================================================================
+
+The mascot is a rigged 3D character rendered in the browser using Three.js.
+
+CHARACTER PERSONAS:
+  - Boy: "Arun" — warm, thoughtful, relatable peer. Voice: warm-friendly.
+  - Girl: "Meera" — empathetic, calming, non-judgmental. Voice: calming-gentle.
+  - Digital Twin: "Your Inner Wise Self" — compassionate future-self persona.
+  - Mascot: "MANAS Living Mascot" — mindful, grounding, cyber-physical feel.
+
+3D MODEL REQUIREMENTS (.glb format):
+  Required facial blendshapes:
+    jawOpen, viseme_aa, viseme_E, viseme_I, viseme_O, viseme_U,
+    blinkLeft, blinkRight, smile, frown, browInnerUp, browDownLeft, browDownRight
+  Outfit variants: hoodie, formal, kurta_saree, sports, pyjamas, festive
+
+MASCOT STATES:
+  - idle:     slow breathing bob, blink every 3-5 seconds
+  - listening: gentle head tilt toward user
+  - thinking:  eyes look upward
+  - speaking:  mouth animated via lip-sync blendshapes
+  - safety:    calm concerned face, NO bouncing or smiling
+
+EXPRESSIONS SUPPORTED:
+  neutral, happy, concerned, sad, surprised
+  (calm, thinking, tired — future versions)
+
+LIP-SYNC PIPELINE:
+  1. TTS provider streams audio + viseme timestamps (ms, viseme_id pairs)
+  2. lipSyncEngine.ts maps viseme IDs to blendshape morph targets
+  3. FaceDriver.ts smoothly interpolates blendshape values per frame
+  4. Fallback (no TTS API key): Web Audio FFT frequency analysis drives jaw open/close
+
+PERSONALIZATION:
+  - User uploads a photo (with explicit consent).
+  - Server vision model extracts: skinTone (hex), hairColor (hex), hasGlasses (bool),
+    outfitColor (hex).
+  - Photo is IMMEDIATELY deleted from memory and storage after attribute extraction.
+  - User can manually edit all attributes in the mascot customizer.
+
+2D FALLBACK:
+  For devices without WebGL or users with reduced-motion preference:
+  Animated sprite-sheet portrait. Expressions: neutral, happy, concerned, surprised.
+
+
+================================================================================
+SECTION 7: AGENT RULES (Read Before Any Code Task)
+================================================================================
+
+PROCESS:
+  1. Plan first. Write a short plan (files to touch, steps, tests) before writing code.
+  2. Wait for approval on anything touching: safety, auth, privacy, or DB schema.
+  3. Run the app and tests after changes. Provide test output.
+  4. If a requirement is unclear, ask — never invent assumptions.
+  5. Do not refactor or reformat files you were not asked to touch.
+  6. If a change could weaken safety or privacy, stop and flag it.
+
+CODE RULES:
+  - Frontend: TypeScript strict mode. Function components and hooks only.
+    Follow DESIGN.md tokens exactly — no hard-coded hex colors in components.
+  - Backend: Python 3.10+, async FastAPI, Pydantic models for every request/response.
+    Type hints everywhere.
+  - Secrets: NEVER in code, prompts, logs, or git. Use .env only.
+  - Errors: Handle gracefully with a friendly user-facing message.
+  - Logging: Log IDs, timings, risk levels only. Never log message text or PII.
+  - Tests: Unit tests for every backend function; Playwright for UI flows.
+
+DEFINITION OF DONE:
+  - Feature works.
+  - Tests written and passing.
+  - Crisis test cases T22-T30 pass every run.
+  - UI matches DESIGN.md tokens.
+  - No secrets or personal data in code or logs.
+  - Human-review-required files are flagged if modified.
+
+
+================================================================================
+SECTION 8: DATABASE SCHEMA (SQLite / Postgres)
+================================================================================
+
+TABLE: users
+  id (TEXT, PK), name, age, is_minor, reasons (JSON array), tone, role,
+  language, style_pref, avatar_data (JSON), voice_pref, consent_chat,
+  consent_mood, consent_cadence, consent_timestamp, created_at
+
+TABLE: chat_messages
+  id (TEXT, PK), user_id, sender (user|bot), text, language, emotion,
+  risk_level, expression, typing_speed, strategy_used, state_label,
+  stress_level, suggested_exercise, helplines (JSON), created_at
+
+TABLE: mood_entries
+  id (TEXT, PK), user_id, score (1-5), tags (JSON), note, created_at
+
+TABLE: user_memories
+  id (TEXT, PK), user_id, category, fact, importance (float), created_at
+
+TABLE: safety_events
+  id (TEXT, PK), user_id, trigger_word, risk_level, action_taken, timestamp
+
+TABLE: strategy_log
+  id (TEXT, PK), user_id, strategy, created_at
+
+TABLE: user_contacts (ALL PII encrypted with AES-256-GCM)
+  id, user_id, email_ciphertext, email_hash (HMAC), phone_ciphertext,
+  phone_hash, email_verified, phone_verified, consent_at, consent_version
+
+TABLE: contact_audit_logs (no PII, only hashed IPs)
+  id, user_id, action, ip_hash, user_agent, created_at
+
+TABLE: user_retention_settings
+  user_id, retention_days, auto_purge_enabled, updated_at
+
+TABLE: message_feedback
+  id, message_id, user_id, rating, felt_understood, comment, user_consent,
+  user_message, bot_reply, created_at
+
+TABLE: pipeline_traces (anonymous telemetry, NO message text)
+  id, session_id, language, risk_level, primary_emotion, intensity, topic,
+  intent, strategy_used, critic_passed, regeneration_count, duration_ms, created_at
+
+
+================================================================================
+SECTION 9: DESIGN SYSTEM (from DESIGN.md)
+================================================================================
+
+FEELING: Calm, warm, friendly, safe. "A kind friend in a quiet room."
+Never clinical, never childish, never noisy.
+
+COLOR TOKENS:
+  --bg:            Light: #FAF7F2   Dark: #121A22   (App background, warm off-white)
+  --surface:       Light: #FFFFFF   Dark: #1B2631   (Cards, bubbles, sheets)
+  --text:          Light: #1F2A37   Dark: #E8EEF3   (Main text)
+  --text-muted:    Light: #5B6673   Dark: #A9B6C2   (Secondary text)
+  --primary:       Light: #276E8B   Dark: #6FB7D3   (Buttons, links, user bubble)
+  --sage:          Light: #5FA88B   Dark: #6FBF9F   (Calm accents, exercise widgets)
+  --lavender:      Light: #A99BE0   Dark: #B7ACEA   (Mascot accents, highlights)
+  --help:          Light: #B84A33   Dark: #E07B63   (Help & Safety button ONLY)
+  --border:        Light: #E6E0D6   Dark: #2B3947   (Dividers)
+
+MOOD COLORS (1=very low to 5=great):
+  1: #6C7FB8   2: #8FA7CC   3: #B8C4CE   4: #8CCBA9   5: #5FB58C
+
+TYPOGRAPHY:
+  - Body/Headings: Nunito (weights 400, 600, 800)
+  - Tamil: Noto Sans Tamil
+  - Hindi: Noto Sans Devanagari
+  - Other Indic scripts: matching Noto Sans families
+  - Base size: 16px, chat text: 17px, line height: 1.6 (1.7 for Indic scripts)
+  - Type scale: 14 / 16 / 18 / 22 / 28 / 36
+  - User can increase text size to 150% in Settings
+
+SPACING & SHAPE:
+  - Grid: 8px base unit
+  - Screen padding: 16px mobile, max content width: 720px (chat), 1080px (dashboard)
+  - Border radius: cards 16px, sheets 24px, buttons fully rounded
+  - One soft shadow only: 0 4px 16px rgba(31,42,55,0.08)
+  - Touch targets: minimum 48px
+
+ANIMATION:
+  - 200-300ms ease-out for all transitions (Framer Motion)
+  - Breathing pacer: 4s expand, 6s contract
+  - Mascot idle: blink every 3-5s, slow breathing bob
+  - Respect prefers-reduced-motion (disable all non-essential animations)
+  - No confetti, no urgent red pulses, no streak-shaming
+
+
+================================================================================
+SECTION 10: SUPPORTED LANGUAGES
+================================================================================
+
+Code  | Language   | Native Name  | TTS Voice Code
+------+------------+--------------+---------------
+en    | English    | English      | en-IN
+ta    | Tamil      | தமிழ்        | ta-IN
+hi    | Hindi      | हिन्दी       | hi-IN
+te    | Telugu     | తెలుగు       | te-IN
+kn    | Kannada    | ಕನ್ನಡ        | kn-IN
+ml    | Malayalam  | മലയാളം       | ml-IN
+bn    | Bengali    | বাংলা        | bn-IN
+mr    | Marathi    | मराठी        | mr-IN
+
+All crisis detection patterns include: native script + romanized/transliterated forms.
+The LLM always replies in the same language and script the user wrote in.
+Tamil script stays Tamil script; Tanglish inputs get Tanglish or Tamil replies.
+
+
+================================================================================
+SECTION 11: CRISIS HELPLINES (Always Display These at High Risk)
+================================================================================
+
+1. Tele-MANAS (Government of India, Ministry of Health)
+   Numbers: 14416 or 1800-891-4416
+   Hours: 24/7, 365 days/year
+   Languages: 14+ Indian languages
+   Services: Free, confidential crisis counseling and psychiatric referrals
+
+2. KIRAN Mental Health Helpline (Government of India)
+   Number: 1800-599-0019
+   Hours: 24/7
+   Services: Early screening, psychological first aid, anxiety support
+
+3. National Emergency Services
+   Number: 112
+
+4. Vandrevala Foundation
+   Number: +91 9999 666 555
+   Hours: 24/7 free emotional crisis support
+
+5. Sneha India (Tamil Nadu focus)
+   Number: +91 44 2464 0050
+   Hours: 24 hours
+
+
+================================================================================
+SECTION 12: LLM OUTPUT SCHEMA (Required JSON Format)
+================================================================================
+
+Every LLM response MUST be valid JSON matching this schema exactly:
+
+{
+  "reply": "<string: the visible response to the user, 2-5 sentences>",
+  "emotion": {
+    "label": "<string: one of: anxiety, sadness, anger, stressed, joy, relief, curiosity, neutral>",
+    "intensity": <float: 0.0 to 1.0>
+  },
+  "risk_level": "<string: none | low | medium | high>",
+  "topic_tags": ["<string>", ...],
+  "suggested_exercise": "<string: breathing_4_7_8 | grounding_54321 | none>",
+  "expression": "<string: neutral | happy | concerned | sad | surprised>"
+}
+
+If the LLM output is invalid JSON: retry once, then use the safe fallback.
+
+
+================================================================================
+SECTION 13: ENVIRONMENT VARIABLES REFERENCE
+================================================================================
+
+All variables in .env.local (never committed to git):
+
+DATABASE_URL          — Postgres/SQLite connection string
+AUTH_SECRET           — 32-byte secret for session JWT signing
+GOOGLE_CLIENT_ID      — Google OAuth Client ID
+GOOGLE_CLIENT_SECRET  — Google OAuth Client Secret
+AI_PROVIDER_API_KEY   — Gemini / Anthropic / OpenAI key (server-side only)
+VOICE_PROVIDER_API_KEY — ElevenLabs / Sarvam / Cartesia TTS key
+STORAGE_ENDPOINT      — Supabase S3-compatible storage URL
+STORAGE_ACCESS_KEY    — Supabase Storage access key
+STORAGE_SECRET_KEY    — Supabase Storage secret key
+STORAGE_BUCKET        — Storage bucket name (e.g. emoticare-avatars)
+YOUTUBE_API_KEY       — For mindfulness video integration
+MUSIC_PROVIDER_CLIENT_ID — Ambient music provider
+MUSIC_PROVIDER_CLIENT_SECRET — Ambient music provider secret
+ANTHROPIC_API_KEY     — Optional: Anthropic Claude key
+LLM_PROVIDER          — gemini (default) | anthropic | openai
+LLM_TIMEOUT_SECONDS   — API call timeout (default 15)
+ONNX_EMOTION_URL      — URL of ONNX emotion sidecar (optional, e.g. http://localhost:8009)
+PGVECTOR_URL          — Postgres pgvector for embeddings (optional)
+DATA_ENCRYPTION_KEY   — AES-256 key for contact encryption
+DATA_HASH_KEY         — HMAC key for contact hashing
+TWILIO_ACCOUNT_SID    — Optional: SMS/OTP provider
+SMS_PROVIDER_API_KEY  — Optional: SMS provider
+
+
+================================================================================
+SECTION 14: HOW TO RUN LOCALLY
+================================================================================
+
+1. Clone and configure:
+     git clone https://github.com/Sriram-J-CS/MANAS.git
+     cd MANAS
+     cp .env.example .env
+     (fill in .env with your actual keys)
+
+2. Start the backend:
+     cd backend
+     python -m venv venv
+     .\venv\Scripts\activate   (Windows) or source venv/bin/activate (Mac/Linux)
+     pip install -r requirements.txt
+     uvicorn app.main:app --reload --port 8000
+     API available at: http://localhost:8000
+     Swagger docs at:  http://localhost:8000/docs
+
+3. Start the frontend (new terminal):
+     cd frontend
+     npm install
+     npm run dev
+     App available at: http://localhost:5173
+
+4. Run tests:
+     cd backend && pytest tests/
+     python ../eval/run_eval.py   (full 200-scenario clinical evaluation)
+
+5. Optional ONNX sidecars (for fast emotion pre-check):
+     cd ml && python serve_models.py
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
