@@ -53,34 +53,23 @@
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ How It Works (Simple Architecture)
 
 ```mermaid
-graph TD
-    User([User]) <--> Frontend[React 19 + Three.js Frontend]
-    Frontend <--> API[FastAPI / Next.js Server Routes]
-    
-    subgraph Safety Pipeline
-        API --> Guardrail{Pre-Screen Safety Check}
-        Guardrail -->|High Risk / Crisis| CrisisTemplates[Vetted Tele-MANAS 14416 Template]
-        Guardrail -->|Safe| RAG[RAG Psychoeducational Retriever]
-    end
-    
-    subgraph Core AI & ML
-        RAG --> LLM[Streaming LLM Engine]
-        API --> TTS[Speech & Lip-Sync Synthesizer]
-        API -.-> ONNX[Fast ONNX Emotion Classifier Sidecar]
-    end
-    
-    subgraph Data & Storage
-        API --> DB[(SQLite / Supabase Postgres)]
-        API --> Crypto[AES-256-GCM Zero-PII Vault]
-    end
-
-    CrisisTemplates --> Frontend
-    LLM --> Frontend
-    TTS --> Frontend
+flowchart LR
+    A[👤 User] --> B[💻 Frontend<br/>3D Mascot & Chat]
+    B --> C[🛡️ Safety Check<br/>Immediate Crisis Screen]
+    C -->|If High Risk / Emergency| D[🚨 Emergency Helplines<br/>Tele-MANAS 14416]
+    C -->|If Safe| E[🤖 Empathetic AI<br/>Support & Coping Tools]
+    D --> B
+    E --> B
 ```
+
+### In 3 Simple Steps:
+1. **Interactive Experience**: You talk or type to the animated 3D companion in your browser.
+2. **Safety First**: Every message is instantly checked for crisis keywords. If someone is in distress, the system immediately shows emergency helpline numbers (Tele-MANAS 14416).
+3. **Empathetic Support**: If safe, the AI responds with warm, supportive conversation, guided breathing, and grounding exercises.
+
 
 ---
 
