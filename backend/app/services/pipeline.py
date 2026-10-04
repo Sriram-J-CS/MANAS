@@ -966,15 +966,19 @@ async def run_chat_pipeline(
     # STAGE 5: Retrieval (User Memories + Knowledge Chunks)
     retrieval = retrieve_context(user_id, message, emotion=understanding["primary_emotion"])
 
-    # STAGE 6: Generation (LLM Gemini 3.8 Flash Digital Mental Twin with dynamic fallback)
+    # STAGE 6: Generation (LLM Gemini Digital Mental Twin with dynamic fallback)
     try:
+        user_mems = [m.get("fact", "") for m in retrieval.get("user_memories", []) if isinstance(m, dict) and m.get("fact")]
+        hist = [{"sender": "mascot", "text": r} for r in recent_bot_replies] if recent_bot_replies else []
         generation = await generate_chat_response(
             message=message,
             user_name=user_name,
             language=detected_lang,
             role="student",
             style_pref=tone,
-            typing_cps=typing_cps
+            typing_cps=typing_cps,
+            history=hist,
+            memories=user_mems
         )
         if not generation or not generation.get("reply"):
             raise ValueError("Empty LLM reply")

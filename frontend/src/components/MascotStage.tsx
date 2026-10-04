@@ -30,7 +30,7 @@ export const MascotStage: React.FC<MascotStageProps> = ({
   audioEnergy = 0,
   onOutfitChange,
   className = '',
-  prefer3D = false,
+  prefer3D = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<AvatarRenderer | null>(null);

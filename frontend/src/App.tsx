@@ -30,6 +30,8 @@ import { MemoryCenterModal } from './components/memory/MemoryCenterModal';
 import { JournalAndGoalsModal } from './components/journal/JournalAndGoalsModal';
 import { SafetyPlanModal } from './components/safety/SafetyPlanModal';
 import { PrivacyCenterModal } from './components/privacy/PrivacyCenterModal';
+import { PageIntroCurtain } from './components/effects/PageIntroCurtain';
+import { FloatingBackgroundShapes } from './components/effects/FloatingBackgroundShapes';
 
 export function App() {
   const [currentLang, setCurrentLang] = useState<Language>('en');
@@ -241,6 +243,12 @@ export function App() {
         currentLang === 'ta' ? 'font-tamil' : ''
       }`}
     >
+      {/* Calm Page-Load Reveal Veil (< 1.2s) */}
+      <PageIntroCurtain />
+
+      {/* Floating Soft 3D-Style Shapes Reacting Gently to Cursor */}
+      <FloatingBackgroundShapes />
+
       {/* Custom Awwwards Cursor */}
       <Cursor visible={cursorVisible} text={cursorText} />
 

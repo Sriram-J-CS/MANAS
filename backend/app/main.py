@@ -149,6 +149,12 @@ class FeedbackRequest(BaseModel):
 def health():
     return {"status": "ok", "app": "MANAS AI Emotional Wellness Companion", "version": "2.0.0"}
 
+@app.get("/api/ai/health")
+async def ai_health():
+    """Verify Gemini AI provider connectivity without exposing keys."""
+    from .services.gemini_provider import gemini
+    return await gemini.health_check()
+
 @app.post("/api/onboarding")
 def save_onboarding(req: OnboardingRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
     uid = current_uid or req.user_id or str(uuid.uuid4())

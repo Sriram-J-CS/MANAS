@@ -154,6 +154,13 @@ export const WorksTrack: React.FC<WorksTrackProps> = ({
                     </span>
                   </div>
                 )}
+
+                {/* On hover caption at bottom-left */}
+                <div className="absolute bottom-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                  <span className="px-2.5 py-1 rounded-full bg-black/80 backdrop-blur-md border border-white/25 text-[10px] font-mono tracking-wider text-white uppercase shadow-sm">
+                    {item.tag} · {item.title}
+                  </span>
+                </div>
               </div>
             </div>
           );

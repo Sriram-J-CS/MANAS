@@ -30,15 +30,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Right: Account & MENU triggers */}
       <div className="flex items-center gap-2.5 sm:gap-4 pointer-events-auto">
-        {onOpenVoiceRatingLab && (
-          <button
-            onClick={onOpenVoiceRatingLab}
-            className="text-[10px] sm:text-[11px] font-bold tracking-[0.05em] uppercase text-emerald-300 hover:text-white px-2.5 sm:px-3 py-1 rounded-full border border-emerald-400/40 hover:border-emerald-300 transition-all cursor-pointer font-mono bg-emerald-500/10"
-            title="Google Cloud TTS Chirp 3 HD Voice Rating Lab"
-          >
-            Voice Lab (8 Langs)
-          </button>
-        )}
+        {/* Voice Lab button removed from navbar – accessible via MENU overlay */}
         {onOpenAuth && (
           <button
             onClick={onOpenAuth}

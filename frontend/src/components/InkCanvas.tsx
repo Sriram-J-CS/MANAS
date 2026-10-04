@@ -29,6 +29,8 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
     const mouse = {
       x: -999,
       y: -999,
+      easedX: -999,
+      easedY: -999,
       px: -999,
       py: -999,
       lastMove: 0,
@@ -112,6 +114,12 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
     }, 200);
 
     const frame = (now: number) => {
+      // Pause rendering when tab is hidden to save battery & GPU
+      if (document.hidden) {
+        animId = requestAnimationFrame(frame);
+        return;
+      }
+
       // Respect prefers-reduced-motion
       if (prefersReducedMotion) {
         ctx.fillStyle = '#ffffff';
@@ -128,13 +136,27 @@ export const InkCanvas: React.FC<InkCanvasProps> = ({ brand, textures }) => {
 
       // 2. Lissajous auto-animation if idle > 1.2s or on touch devices
       const isIdle = now - mouse.lastMove > 1200 || mouse.x < 0;
-      let curX = mouse.x;
-      let curY = mouse.y;
+
+      let curX: number;
+      let curY: number;
 
       if (isIdle) {
         const t = now * 0.0014;
         curX = W / 2 + Math.sin(t * 1.5) * (W * 0.32);
         curY = H / 2 + Math.sin(t * 2.2 + 0.5) * (H * 0.22);
+        mouse.easedX = curX;
+        mouse.easedY = curY;
+      } else {
+        if (mouse.easedX < -900) {
+          mouse.easedX = mouse.x;
+          mouse.easedY = mouse.y;
+        } else {
+          // Soothing, calm cursor lag with cubic-bezier-like easing
+          mouse.easedX += (mouse.x - mouse.easedX) * 0.22;
+          mouse.easedY += (mouse.y - mouse.easedY) * 0.22;
+        }
+        curX = mouse.easedX;
+        curY = mouse.easedY;
       }
 
       const dx = curX - mouse.px;

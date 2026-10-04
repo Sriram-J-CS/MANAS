@@ -5,7 +5,9 @@ All passwords hashed with bcrypt. Tokens are JWTs.
 import os
 import uuid
 import time
-import random
+import secrets
+import hmac
+import hashlib
 import logging
 from typing import Dict, List
 from fastapi import APIRouter, HTTPException, Request, status, Depends
@@ -185,20 +187,25 @@ def send_mobile_otp(req: SendMobileOtpRequest, request: Request):
     _check_auth_rate(f"otp_{client_ip}", max_calls=6, window=300)
 
     clean_phone = req.phone
-    otp_code = f"{random.randint(100000, 999999)}"
+    # CSPRNG: generate cryptographically secure 6-digit OTP
+    otp_code = f"{secrets.randbelow(900000) + 100000}"
     expires_at = time.time() + 600  # 10 minutes
+
+    # Store only HMAC-SHA256 hash — never store plaintext OTP in DB
+    secret_key = os.environ.get("OTP_HMAC_SECRET", "manas_otp_salt_change_in_production")
+    otp_hash = hmac.new(secret_key.encode(), otp_code.encode(), hashlib.sha256).hexdigest()
 
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR REPLACE INTO mobile_otps (phone, otp_code, expires_at, attempts)
         VALUES (?, ?, ?, 0)
-    """, (clean_phone, otp_code, expires_at))
+    """, (clean_phone, otp_hash, expires_at))
     conn.commit()
     conn.close()
 
-    # Log clearly to console so user can see it
-    logger.info("[MOBILE OTP] Sent verification code %s to phone %s", otp_code, clean_phone)
+    # Log OTP plaintext to console so developer/admin can see it (never sent over network)
+    logger.info("[MOBILE OTP] Dispatching code to phone %s", clean_phone)
     print(f"\n======================================================\n[MOBILE OTP DISPATCH] Phone: {clean_phone} | OTP Code: {otp_code}\n======================================================\n", flush=True)
 
     masked = clean_phone[:4] + "******" + clean_phone[-2:] if len(clean_phone) > 6 else clean_phone
@@ -255,7 +262,10 @@ def verify_mobile_otp(req: VerifyMobileOtpRequest, request: Request):
             detail="Too many invalid attempts. Please request a fresh OTP."
         )
 
-    if req.code != row["otp_code"]:
+    # Verify using constant-time HMAC comparison to prevent timing attacks
+    secret_key = os.environ.get("OTP_HMAC_SECRET", "manas_otp_salt_change_in_production")
+    expected_hash = hmac.new(secret_key.encode(), req.code.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_hash, row["otp_code"]):
         cursor.execute("UPDATE mobile_otps SET attempts = attempts + 1 WHERE phone = ?", (clean_phone,))
         conn.commit()
         conn.close()

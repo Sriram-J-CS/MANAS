@@ -984,7 +984,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               isSpeaking={isAvatarSpeaking}
               isUserTyping={isListening || isTyping}
               audioEnergy={audioEnergy}
-              prefer3D={false}
+              prefer3D={true}
             />
           </div>
         </section>

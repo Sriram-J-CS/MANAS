@@ -87,7 +87,11 @@ class SpeechEngine {
   private isListeningActive = false;
   private isSpeaking = false;
   private bargeInListeners: Set<() => void> = new Set();
-  
+  private audioCtx: AudioContext | null = null;
+  private analyserNode: AnalyserNode | null = null;
+  private analyserRAF: number | null = null;
+  private currentBlobUrl: string | null = null;
+
   // MediaRecorder fallback state for browsers without Web Speech STT
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
@@ -128,6 +132,25 @@ class SpeechEngine {
         this.currentAudioElement.currentTime = 0;
       } catch (_) {}
       this.currentAudioElement = null;
+    }
+    // Cancel Web Audio API analysis loop
+    if (this.analyserRAF !== null) {
+      cancelAnimationFrame(this.analyserRAF);
+      this.analyserRAF = null;
+    }
+    // Disconnect and release AudioContext
+    if (this.analyserNode) {
+      try { this.analyserNode.disconnect(); } catch (_) {}
+      this.analyserNode = null;
+    }
+    if (this.audioCtx) {
+      try { this.audioCtx.close(); } catch (_) {}
+      this.audioCtx = null;
+    }
+    // Revoke blob URL to prevent memory leak
+    if (this.currentBlobUrl) {
+      try { URL.revokeObjectURL(this.currentBlobUrl); } catch (_) {}
+      this.currentBlobUrl = null;
     }
     if (this.energyInterval) {
       clearInterval(this.energyInterval);
@@ -218,7 +241,9 @@ class SpeechEngine {
   }
 
   /**
-   * Plays base64 audio and animates mouth energy.
+   * Plays base64 audio with Web Audio API AnalyserNode for real lip-sync energy.
+   * Falls back to sine-wave interval if AudioContext is unavailable (e.g. Safari restrictions).
+   * Automatically revokes blob URL when audio ends to prevent memory leaks.
    */
   private playBase64Audio(base64Data: string, opts: SpeechEngineOptions): void {
     const audioUrl = base64Data.startsWith('data:')
@@ -226,20 +251,75 @@ class SpeechEngine {
       : `data:audio/wav;base64,${base64Data}`;
 
     const audio = new Audio(audioUrl);
+    // Store blob URL for revocation (only for blob: URLs)
+    if (audioUrl.startsWith('blob:')) {
+      this.currentBlobUrl = audioUrl;
+    }
     this.currentAudioElement = audio;
 
+    const startWebAudioAnalysis = (): boolean => {
+      if (typeof AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined') {
+        return false;
+      }
+      try {
+        const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AC() as AudioContext;
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.7;
+        const source = ctx.createMediaElementSource(audio);
+        source.connect(analyser);
+        analyser.connect(ctx.destination);
+        this.audioCtx = ctx;
+        this.analyserNode = analyser;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const poll = () => {
+          if (!this.analyserNode || !this.isSpeaking) return;
+          this.analyserNode.getByteFrequencyData(dataArray);
+          // RMS energy from frequency bins 0-80 (vocal formant range)
+          const len = Math.min(80, dataArray.length);
+          let sumSq = 0;
+          for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
+          const rms = Math.sqrt(sumSq / len);
+          opts.onEnergy?.(Math.min(1.0, Math.max(0.0, rms * 2.2)));
+          this.analyserRAF = requestAnimationFrame(poll);
+        };
+        this.analyserRAF = requestAnimationFrame(poll);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
     audio.onplay = () => {
+      this.isSpeaking = true;
       opts.onStart?.();
-      this.startVisemeEnergyInterval(opts.onEnergy);
+      const usedWebAudio = startWebAudioAnalysis();
+      if (!usedWebAudio) {
+        // Fallback: sine-wave approximation when Web Audio API is blocked
+        this.startVisemeEnergyInterval(opts.onEnergy);
+      }
     };
 
     audio.onended = () => {
+      this.isSpeaking = false;
+      if (this.analyserRAF !== null) {
+        cancelAnimationFrame(this.analyserRAF);
+        this.analyserRAF = null;
+      }
       this.stopVisemeEnergyInterval(opts.onEnergy);
+      // Revoke blob URL now that playback is complete
+      if (this.currentBlobUrl) {
+        try { URL.revokeObjectURL(this.currentBlobUrl); } catch (_) {}
+        this.currentBlobUrl = null;
+      }
       this.currentAudioElement = null;
       opts.onEnd?.();
     };
 
     audio.onerror = (e) => {
+      this.isSpeaking = false;
       this.stopVisemeEnergyInterval(opts.onEnergy);
       this.currentAudioElement = null;
       opts.onError?.(e);

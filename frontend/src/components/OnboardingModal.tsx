@@ -180,13 +180,13 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   const getStepGuideText = (currentStep: number): string => {
     switch (currentStep) {
       case 1:
-        return t.steps.name.mascotGuide;
+        return t.steps.language.mascotGuide;
       case 2:
+        return t.steps.name.mascotGuide;
+      case 3:
         return isMinor
           ? `${t.steps.age.mascotGuide} ${t.steps.age.minorSafeDesc}`
           : t.steps.age.mascotGuide;
-      case 3:
-        return t.steps.language.mascotGuide;
       case 4:
         return t.steps.contact.mascotGuide;
       case 5:
@@ -372,15 +372,22 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
   // Navigation handlers
   const handleNextStep1 = () => {
+    // Step 1: Language selected -> move to Step 2 (Name)
+    setStep(2);
+  };
+
+  const handleNextStep2 = () => {
+    // Step 2: Name input
     if (!name.trim()) {
       setNameError('Please enter your name or a comforting nickname');
       return;
     }
     setNameError('');
-    setStep(2);
+    setStep(3);
   };
 
-  const handleNextStep2 = () => {
+  const handleNextStep3 = () => {
+    // Step 3: Age & Minor Safety
     if (age < 13) {
       setAgeError('Users under 13 must speak with a trusted adult or contact Childline 1098.');
       return;
@@ -390,10 +397,6 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       return;
     }
     setAgeError('');
-    setStep(3);
-  };
-
-  const handleNextStep3 = () => {
     setStep(4);
   };
 
@@ -571,12 +574,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             </span>
             <div className="h-4 w-[1px] bg-[#0A0A0A]/10 dark:bg-[#FFFFFF]/10" />
             <span className="text-xs font-medium text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60">
-              {step === 1 && 'Welcome & Name'}
-              {step === 2 && 'Age & Safety Mode'}
-              {step === 3 && 'Language Choice'}
-              {step === 4 && 'Secure Contact & OTP'}
-              {step === 5 && 'Visual Avatar'}
-              {step === 6 && 'Audio & Voice'}
+              {step === 1 && (t.steps.language.title || 'Language Choice')}
+              {step === 2 && (t.steps.name.title || 'Welcome & Name')}
+              {step === 3 && (t.steps.age.title || 'Age & Safety Mode')}
+              {step === 4 && (t.steps.contact.title || 'Secure Contact & OTP')}
+              {step === 5 && (t.steps.photo.title || 'Visual Avatar')}
+              {step === 6 && (t.steps.voice.title || 'Audio & Voice')}
             </span>
           </div>
 
@@ -640,10 +643,61 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         {/* Main Step Body */}
         <div className="p-6 flex-1 min-h-[340px] flex flex-col justify-center">
           <AnimatePresence mode="wait">
-            {/* STEP 1: NAME */}
+            {/* STEP 1: LANGUAGE (8 Indic Languages in Native Script) */}
             {step === 1 && (
               <motion.div
                 key="step1"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.25 }}
+                className="flex flex-col gap-4 max-w-xl mx-auto w-full"
+              >
+                <div>
+                  <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0A0A0A] dark:text-[#FFFFFF]">
+                    {t.steps.language.title}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60 mt-1">
+                    {t.steps.language.subtitle}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[280px] overflow-y-auto pr-1">
+                  {SUPPORTED_LANGUAGES.map((lang) => {
+                    const isSelected = selectedLanguage === lang.code;
+                    return (
+                      <button
+                        key={lang.code}
+                        type="button"
+                        onClick={() => setSelectedLanguage(lang.code)}
+                        className={`p-3.5 rounded-2xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 dark:bg-[#8B5CF6]/20 shadow-sm'
+                            : 'border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 hover:border-[#8B5CF6]/40 bg-[#FBF9F5] dark:bg-[#1E2638]/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-base font-bold text-[#0A0A0A] dark:text-[#FFFFFF]">
+                            {lang.nativeName}
+                          </span>
+                          <span className="text-[11px] font-mono text-[#0A0A0A]/50 dark:text-[#FFFFFF]/50 uppercase">
+                            {lang.englishName}
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 line-clamp-1">
+                          {lang.description}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+
+            {/* STEP 2: NAME */}
+            {step === 2 && (
+              <motion.div
+                key="step2"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -670,7 +724,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       setName(e.target.value);
                       setNameError('');
                     }}
-                    onKeyDown={(e) => e.key === 'Enter' && handleNextStep1()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleNextStep2()}
                     placeholder={t.steps.name.placeholder}
                     className="w-full pl-10 pr-4 py-3.5 rounded-2xl bg-[#F8F6F0] dark:bg-[#1E2638] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all text-[#0A0A0A] dark:text-[#FFFFFF]"
                     autoFocus
@@ -686,14 +740,13 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 <p className="text-xs text-[#0A0A0A]/50 dark:text-[#FFFFFF]/50">
                   {t.steps.name.helpText}
                 </p>
-
               </motion.div>
             )}
 
-            {/* STEP 2: AGE & MINOR-SAFE MODE */}
-            {step === 2 && (
+            {/* STEP 3: AGE & MINOR-SAFE MODE */}
+            {step === 3 && (
               <motion.div
-                key="step2"
+                key="step3"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -767,57 +820,6 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                     </label>
                   </motion.div>
                 )}
-              </motion.div>
-            )}
-
-            {/* STEP 3: LANGUAGE (8 Indic Languages in Native Script) */}
-            {step === 3 && (
-              <motion.div
-                key="step3"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
-                className="flex flex-col gap-4 max-w-xl mx-auto w-full"
-              >
-                <div>
-                  <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0A0A0A] dark:text-[#FFFFFF]">
-                    {t.steps.language.title}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60 mt-1">
-                    {t.steps.language.subtitle}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[280px] overflow-y-auto pr-1">
-                  {SUPPORTED_LANGUAGES.map((lang) => {
-                    const isSelected = selectedLanguage === lang.code;
-                    return (
-                      <button
-                        key={lang.code}
-                        type="button"
-                        onClick={() => setSelectedLanguage(lang.code)}
-                        className={`p-3.5 rounded-2xl border text-left flex flex-col gap-1 transition-all ${
-                          isSelected
-                            ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 dark:bg-[#8B5CF6]/20 shadow-sm'
-                            : 'border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 hover:border-[#8B5CF6]/40 bg-[#FBF9F5] dark:bg-[#1E2638]/50'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-base font-bold text-[#0A0A0A] dark:text-[#FFFFFF]">
-                            {lang.nativeName}
-                          </span>
-                          <span className="text-[11px] font-mono text-[#0A0A0A]/50 dark:text-[#FFFFFF]/50 uppercase">
-                            {lang.englishName}
-                          </span>
-                        </div>
-                        <p className="text-xs text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 line-clamp-1">
-                          {lang.description}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
               </motion.div>
             )}
 

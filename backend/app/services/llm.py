@@ -182,6 +182,8 @@ def generate_dynamic_fallback(
         }]
     }
 
+from .gemini_provider import gemini
+
 async def generate_chat_response(
     message: str,
     user_name: str = "Friend",
@@ -189,143 +191,57 @@ async def generate_chat_response(
     role: str = "student",
     style_pref: str = "reflective",
     typing_cps: float = 0.0,
-    history: Optional[list] = None
+    history: Optional[list] = None,
+    memories: Optional[list] = None,
+    twin_context: Optional[dict] = None
 ) -> Dict[str, Any]:
     """
-    Generates intelligent, compassionate digital twin responses using Gemini 3.8 Flash (gemini-flash-latest).
+    Generates intelligent, compassionate digital twin responses using GeminiProvider.
     Incorporates user's typing speed, emotional valence, and language context.
     Falls back gracefully to rich dynamic local engine if offline or rate-limited.
     """
-    api_key = get_api_key()
+    # 1. Attempt generation via GeminiProvider
+    if gemini.is_configured():
+        res = await gemini.generate(
+            message=message,
+            user_name=user_name,
+            language=language,
+            role=role,
+            style_pref=style_pref,
+            history=history,
+            memories=memories,
+            twin_context=twin_context,
+            typing_cps=typing_cps,
+        )
+        if res and res.get("reply"):
+            reply = res["reply"]
+            spoken = res.get("spoken_text") or reply
+            emotion = res.get("emotion", "calm")
+            gesture = res.get("gesture", "nod")
+            expression = res.get("expression", "calm")
+            return {
+                "reply": reply,
+                "spoken_text": spoken,
+                "emotion": emotion,
+                "gesture": gesture,
+                "expression": expression,
+                "risk_level": "none",
+                "suggested_exercise": "breathing_4_7_8" if emotion in ("concerned", "supportive") else "none",
+                "provider": "google_gemini",
+                "model": res.get("model", "gemini-1.5-flash"),
+                "segments": [{
+                    "spoken_text": spoken,
+                    "text": reply,
+                    "emotion": emotion,
+                    "gesture": gesture
+                }]
+            }
 
-    if api_key and len(api_key) > 15:
-        # Candidate model endpoints in order of preference
-        models = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-pro-latest"]
-        
-        speed_context = "normal"
-        if typing_cps > 32.0:
-            speed_context = f"Very fast ({typing_cps:.1f} chars/sec - racing thoughts, possible anxiety or panic)"
-        elif 0.0 < typing_cps < 12.0:
-            speed_context = f"Slow/halting ({typing_cps:.1f} chars/sec - hesitation, emotional heaviness, fatigue)"
-
-        user_context_block = f"""
-USER PROFILE & CONTEXT:
-- Name: {user_name}
-- Role: {role}
-- Requested Language: {language}
-- Conversational Tone Preference: {style_pref}
-- Real-time Typing Speed: {speed_context}
-
-USER'S MESSAGE:
-"{message}"
-"""
-        full_prompt = f"{SYSTEM_PROMPT}\n\n{user_context_block}"
-
-        for model_name in models:
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-                payload = {
-                    "contents": [{"parts": [{"text": full_prompt}]}],
-                    "generationConfig": {
-                        "temperature": 0.65,
-                        "maxOutputTokens": 450,
-                    }
-                }
-
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        data = res.json()
-                        candidates = data.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            # Find text part (ignoring thought tokens)
-                            raw_text = ""
-                            for p in parts:
-                                if "text" in p and p["text"]:
-                                    raw_text = p["text"].strip()
-                                    break
-                            
-                            if raw_text:
-                                parsed = None
-                                # 1. Try extracting JSON object { ... }
-                                match = re.search(r"\{[\s\S]*\}", raw_text)
-                                if match:
-                                    try:
-                                        parsed = json.loads(match.group(0), strict=False)
-                                    except Exception:
-                                        pass
-
-                                # 2. Extract reply value if json.loads failed
-                                if not parsed or not isinstance(parsed, dict) or not parsed.get("reply"):
-                                    # Look for "reply": "..."
-                                    idx = raw_text.find('"reply"')
-                                    if idx != -1:
-                                        colon_idx = raw_text.find(':', idx)
-                                        if colon_idx != -1:
-                                            quote_start = raw_text.find('"', colon_idx)
-                                            if quote_start != -1:
-                                                # Scan to closing unescaped quote
-                                                i = quote_start + 1
-                                                res_chars = []
-                                                while i < len(raw_text):
-                                                    if raw_text[i] == '\\' and i + 1 < len(raw_text):
-                                                        res_chars.append(raw_text[i+1])
-                                                        i += 2
-                                                    elif raw_text[i] == '"':
-                                                        break
-                                                    else:
-                                                        res_chars.append(raw_text[i])
-                                                        i += 1
-                                                extracted_reply = "".join(res_chars).strip()
-                                                if extracted_reply:
-                                                    parsed = {"reply": extracted_reply}
-
-                                if parsed and isinstance(parsed, dict) and parsed.get("reply"):
-                                    reply = parsed["reply"]
-                                    spoken = parsed.get("spoken_text") or reply
-                                    emotion = parsed.get("emotion", "calm")
-                                    gesture = parsed.get("gesture", "nod")
-                                    expression = parsed.get("expression", "calm")
-                                    risk = parsed.get("risk_level", "none")
-                                    exercise = parsed.get("suggested_exercise", "none")
-
-                                    return {
-                                        "reply": reply,
-                                        "spoken_text": spoken,
-                                        "emotion": emotion,
-                                        "gesture": gesture,
-                                        "expression": expression,
-                                        "risk_level": risk,
-                                        "suggested_exercise": exercise,
-                                        "segments": [{
-                                            "spoken_text": spoken,
-                                            "text": reply,
-                                            "emotion": emotion,
-                                            "gesture": gesture
-                                        }]
-                                    }
-                                else:
-                                    # Plain text fallback: strip any markdown fences
-                                    clean_raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
-                                    return {
-                                        "reply": clean_raw,
-                                        "spoken_text": clean_raw,
-                                        "emotion": "calm",
-                                        "gesture": "nod",
-                                        "expression": "calm",
-                                        "risk_level": "none",
-                                        "suggested_exercise": "none",
-                                        "segments": [{
-                                            "spoken_text": clean_raw,
-                                            "text": clean_raw,
-                                            "emotion": "calm",
-                                            "gesture": "nod"
-                                        }]
-                                    }
-            except Exception as e:
-                log.warning("Gemini generation attempt failed on model %s: %s", model_name, e)
-                continue
-
-    # Graceful intelligent fallback
+    # 2. Rich contextual dynamic fallback engine
     return generate_dynamic_fallback(message, user_name, language, role, style_pref, typing_cps)
+
+
+async def gemini_health_check() -> Dict[str, Any]:
+    """Check status of Gemini provider."""
+    return await gemini.health_check()
+
