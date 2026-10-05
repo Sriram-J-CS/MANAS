@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Sparkles, Monitor, MoveHorizontal, Shirt, Check, Volume2, Play } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Sparkles, Monitor, MoveHorizontal, Shirt, Check, Volume2, Play, Shield, Trash2, Download, AlertTriangle } from 'lucide-react';
 import type { UserProfile } from './OnboardingModal';
 import { RealMascot } from './RealMascot';
 import type { OutfitType } from './ThreeMascot/ThreeCartoonMascot';
@@ -12,6 +12,7 @@ interface ChatSettingsModalProps {
   onUpdateProfile: (updated: Partial<UserProfile>) => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  onDeleteData?: () => void;
 }
 
 const SAMPLE_PHRASES: Record<string, string> = {
@@ -41,8 +42,122 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
   onUpdateProfile,
   isFullscreen,
   onToggleFullscreen,
+  onDeleteData,
 }) => {
   const [isPlayingVoiceTest, setIsPlayingVoiceTest] = useState(false);
+  const [autoSaveChat, setAutoSaveChat] = useState<boolean>(true);
+  const [manualOnlyMode, setManualOnlyMode] = useState<boolean>(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [deleteConfirmPhrase, setDeleteConfirmPhrase] = useState<string>('');
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [statusMsg, setStatusMsg] = useState<string>('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const fetchSettings = async () => {
+      try {
+        const token = localStorage.getItem('manas_access_token');
+        const res = await fetch('/api/settings/app', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setAutoSaveChat(data.auto_save_chat ?? true);
+          setManualOnlyMode(data.manual_only_mode ?? false);
+        }
+      } catch (_) {}
+    };
+    fetchSettings();
+  }, [isOpen]);
+
+  const handleToggleAutoSave = async (val: boolean) => {
+    setAutoSaveChat(val);
+    try {
+      const token = localStorage.getItem('manas_access_token');
+      await fetch('/api/settings/app', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ auto_save_chat: val }),
+      });
+    } catch (_) {}
+  };
+
+  const handleToggleManualOnly = async (val: boolean) => {
+    setManualOnlyMode(val);
+    if (val) setAutoSaveChat(false);
+    try {
+      const token = localStorage.getItem('manas_access_token');
+      await fetch('/api/settings/app', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ manual_only_mode: val, ...(val ? { auto_save_chat: false } : {}) }),
+      });
+    } catch (_) {}
+  };
+
+  const handleExportData = async () => {
+    setIsExporting(true);
+    try {
+      const token = localStorage.getItem('manas_access_token');
+      const res = await fetch('/api/privacy/export', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `manas_encrypted_export_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setStatusMsg('Export downloaded successfully.');
+        setTimeout(() => setStatusMsg(''), 3000);
+      }
+    } catch (_) {
+      setStatusMsg('Export failed.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDeleteEverything = async () => {
+    if (deleteConfirmPhrase.trim() !== 'DELETE EVERYTHING') {
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      const token = localStorage.getItem('manas_access_token');
+      const res = await fetch('/api/settings/delete-everything', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ confirm_phrase: 'DELETE EVERYTHING' }),
+      });
+      if (res.ok) {
+        setShowDeleteConfirm(false);
+        if (onDeleteData) {
+          onDeleteData();
+        } else {
+          localStorage.clear();
+          window.location.reload();
+        }
+      }
+    } catch (_) {
+      setStatusMsg('Purge failed.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const speakSample = (gender: 'boy' | 'girl', pitch: number) => {
     setIsPlayingVoiceTest(true);
@@ -443,7 +558,7 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
             </div>
             <button
               onClick={onToggleFullscreen}
-              className={`px-3 py-1.5 rounded-xl border text-xs font-mono uppercase flex items-center gap-1.5 transition-all ${
+              className={`px-3 py-1.5 rounded-xl border text-xs font-mono uppercase flex items-center gap-1.5 transition-all cursor-pointer ${
                 isFullscreen
                   ? 'bg-cyan-500 text-black border-cyan-400 font-bold'
                   : 'border-white/20 text-white hover:border-white'
@@ -452,6 +567,138 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
               <Monitor className="w-3.5 h-3.5" />
               <span>{isFullscreen ? 'Big Screen Active' : 'Enable Big Screen'}</span>
             </button>
+          </div>
+
+          {/* Section 4: Auto-Save & Manual-Only Mode */}
+          <div className="pt-4 border-t border-white/10 space-y-3">
+            <label className="block text-xs font-mono uppercase tracking-wider text-white/80">
+              4. Automatic Chat Extraction
+            </label>
+
+            {/* Auto-save from chat toggle */}
+            <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between">
+              <div>
+                <span className="font-bold text-xs text-white block">
+                  Auto-Save From Chat
+                </span>
+                <span className="text-[11px] text-white/50 font-sans block leading-relaxed mt-0.5">
+                  Background extraction detects mood, stress, memories, and wellness tools from conversation (default on).
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleAutoSave(!autoSaveChat)}
+                disabled={manualOnlyMode}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer ml-3 ${
+                  autoSaveChat && !manualOnlyMode ? 'bg-cyan-500' : 'bg-slate-700'
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    autoSaveChat && !manualOnlyMode ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Manual only mode toggle */}
+            <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between">
+              <div>
+                <span className="font-bold text-xs text-white block">
+                  Manual Only Mode
+                </span>
+                <span className="text-[11px] text-white/50 font-sans block leading-relaxed mt-0.5">
+                  Disables all chat-driven saves. You maintain 100% control by logging data solely via manual forms.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleManualOnly(!manualOnlyMode)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer ml-3 ${
+                  manualOnlyMode ? 'bg-amber-500' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    manualOnlyMode ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Section 5: Data & Privacy Controls */}
+          <div className="pt-4 border-t border-white/10 space-y-3">
+            <label className="block text-xs font-mono uppercase tracking-wider text-white/80">
+              5. Data Privacy & Portability (DPDP Act)
+            </label>
+
+            {statusMsg && (
+              <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono">
+                {statusMsg}
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={handleExportData}
+                disabled={isExporting}
+                className="flex-1 p-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/15 text-xs font-mono flex items-center justify-center gap-2 text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{isExporting ? 'Exporting...' : 'Export My Data (JSON)'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="flex-1 p-3 rounded-2xl bg-rose-950/20 hover:bg-rose-950/40 border border-rose-500/30 text-xs font-mono flex items-center justify-center gap-2 text-rose-300 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Delete Everything</span>
+              </button>
+            </div>
+
+            {/* Delete Confirmation Box */}
+            {showDeleteConfirm && (
+              <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-500/40 space-y-3 mt-2 animate-in fade-in">
+                <div className="flex items-center gap-2 text-rose-300 text-xs font-bold font-mono uppercase">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  Irreversible Data Erasure
+                </div>
+                <p className="text-xs text-rose-200/80 leading-relaxed font-sans">
+                  This will permanently delete all encrypted chat messages, memories, wellness logs, goals, journal entries, and presence. Type <span className="font-mono font-bold text-white bg-rose-900/60 px-1 rounded">DELETE EVERYTHING</span> to confirm:
+                </p>
+                <input
+                  type="text"
+                  value={deleteConfirmPhrase}
+                  onChange={(e) => setDeleteConfirmPhrase(e.target.value)}
+                  placeholder="DELETE EVERYTHING"
+                  className="w-full px-3 py-2 rounded-xl bg-black/60 border border-rose-500/30 text-white font-mono text-xs focus:outline-none focus:border-rose-400"
+                />
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeleteConfirm(false);
+                      setDeleteConfirmPhrase('');
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-mono text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteEverything}
+                    disabled={deleteConfirmPhrase.trim() !== 'DELETE EVERYTHING' || isDeleting}
+                    className="px-4 py-1.5 rounded-xl text-xs font-mono font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {isDeleting ? 'Deleting...' : 'Confirm Purge'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

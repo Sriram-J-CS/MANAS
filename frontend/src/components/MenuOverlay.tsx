@@ -20,6 +20,7 @@ interface MenuOverlayProps {
   onOpenJournalGoals?: () => void;
   onOpenSafetyPlan?: () => void;
   onOpenPrivacy?: () => void;
+  onOpenNotifications?: () => void;
 }
 
 export const MenuOverlay: React.FC<MenuOverlayProps> = ({
@@ -40,6 +41,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
   onOpenJournalGoals,
   onOpenSafetyPlan,
   onOpenPrivacy,
+  onOpenNotifications,
 }) => {
   if (!isOpen) return null;
 
@@ -52,9 +54,10 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
     { num: '06', label: 'JOURNAL & GOALS', action: onOpenJournalGoals },
     { num: '07', label: 'SAFETY PLAN & HELPLINES', action: onOpenSafetyPlan },
     { num: '08', label: 'PRIVACY CENTER & CONSENT', action: onOpenPrivacy },
-    { num: '09', label: 'VOICE RATING LAB (8 LANGUAGES)', action: onOpenVoiceRatingLab },
-    { num: '10', label: 'CUSTOMIZE 3D MASCOT', action: onOpenMascotCustomizer },
-    { num: '11', label: 'CALM SPACE & AUDIO', action: onOpenCalm },
+    { num: '09', label: 'NOTIFICATIONS & REMINDERS', action: onOpenNotifications },
+    { num: '10', label: 'VOICE RATING LAB (8 LANGUAGES)', action: onOpenVoiceRatingLab },
+    { num: '11', label: 'CUSTOMIZE 3D MASCOT', action: onOpenMascotCustomizer },
+    { num: '12', label: 'CALM SPACE & AUDIO', action: onOpenCalm },
   ];
 
   const handleItemClick = (item: (typeof navItems)[0]) => {

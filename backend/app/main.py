@@ -41,6 +41,22 @@ from .auth.routes import router as auth_router
 from .auth.dependencies import require_auth, require_admin, get_current_user_id
 from .services.agent_orchestrator import router as agent_router
 from .services.domain_routes import router as domain_router
+from .services.user_crypto import encrypt_user_text, decrypt_user_text
+from .services.chat_extractor import run_chat_background_extraction, undo_auto_save_action
+from .services.notifications import (
+    get_vapid_public_key,
+    subscribe_push_device,
+    unsubscribe_push_device,
+    get_notification_preferences,
+    update_notification_preferences,
+    create_in_app_notification,
+    list_in_app_notifications,
+    mark_notification_read,
+    mark_all_notifications_read,
+    delete_in_app_notification,
+    send_web_push_notification,
+)
+from .services.privacy import purge_all_user_presence, export_all_user_data
 
 # Initialize SQLite database schema
 init_db()
@@ -66,7 +82,7 @@ async def security_headers_middleware(request: Request, call_next):
 
 # CORS — restrict to configured frontend origins only.
 # In production set FRONTEND_ORIGIN env var to https://yourdomain.com
-_FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
+_FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8008,http://127.0.0.1:8008")
 _ALLOWED_ORIGINS = [o.strip() for o in _FRONTEND_ORIGIN.split(",") if o.strip()]
 
 app.add_middleware(
@@ -371,12 +387,12 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
         cur.execute("""
             INSERT INTO chat_messages (id, user_id, sender, text, language, typing_speed)
             VALUES (?, ?, 'user', ?, ?, ?)
-        """, (user_msg_id, uid, req.message, req.language, req.typing_cps))
+        """, (user_msg_id, uid, encrypt_user_text(uid, req.message), req.language, req.typing_cps))
         cur.execute("""
             INSERT INTO chat_messages (
                 id, user_id, sender, text, language, emotion, risk_level, expression, helplines
             ) VALUES (?, ?, 'mascot', ?, ?, 'concerned', 'high', 'concerned', ?)
-        """, (bot_msg_id, uid, crisis_text, req.language, json.dumps(helplines_data)))
+        """, (bot_msg_id, uid, encrypt_user_text(uid, crisis_text), req.language, json.dumps(helplines_data)))
         conn.commit()
         conn.close()
 
@@ -406,22 +422,22 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
 
         return StreamingResponse(crisis_stream(), media_type="text/event-stream")
 
-    # 2. Persist user message in DB
+    # 2. Persist user message in DB with per-user encryption
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO chat_messages (id, user_id, sender, text, language, typing_speed)
         VALUES (?, ?, 'user', ?, ?, ?)
-    """, (user_msg_id, uid, req.message, req.language, req.typing_cps))
+    """, (user_msg_id, uid, encrypt_user_text(uid, req.message), req.language, req.typing_cps))
     conn.commit()
 
-    # 3. Retrieve prior turns (excluding the one just saved)
+    # 3. Retrieve prior turns (decrypted per user)
     cur.execute("""
         SELECT sender, text FROM chat_messages
         WHERE user_id = ? AND id != ?
         ORDER BY created_at ASC
     """, (uid, user_msg_id))
-    prior_messages = [dict(r) for r in cur.fetchall()]
+    prior_messages = [{"sender": r["sender"], "text": decrypt_user_text(uid, r["text"])} for r in cur.fetchall()]
 
     if len(prior_messages) > 20:
         older = prior_messages[:-20]
@@ -432,17 +448,48 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
         last_20 = prior_messages
         rolling_summary = ""
 
-    # Retrieve last 5 bot messages for anti-repetition enforcement
+    # Retrieve last 6 bot messages for anti-repetition, name frequency, and breathing throttle
     cur.execute("""
-        SELECT text FROM chat_messages
+        SELECT text, suggested_exercise FROM chat_messages
         WHERE user_id = ? AND sender = 'mascot'
-        ORDER BY created_at DESC LIMIT 5
+        ORDER BY created_at DESC LIMIT 6
     """, (uid,))
-    recent_bot_messages = [r["text"] for r in cur.fetchall()]
+    recent_bot_rows = cur.fetchall()
+    recent_bot_messages = [decrypt_user_text(uid, r["text"]) for r in recent_bot_rows]
+
+    # Calculate turns since user's name was last mentioned
+    name_to_find = (req.user_name or "").strip().lower()
+    turns_since_name = 10
+    if name_to_find and name_to_find != "friend":
+        for idx, bm in enumerate(recent_bot_messages):
+            if name_to_find in bm.lower():
+                turns_since_name = idx
+                break
+
+    # Check if breathing was suggested in the last 4 turns
+    breathing_shown_recently = any(r["suggested_exercise"] == "breathing_4_7_8" for r in recent_bot_rows[:4])
+
+    # Retrieve saved long-term memories for user (decrypted)
+    cur.execute("""
+        SELECT category, fact FROM user_memories
+        WHERE user_id = ?
+        ORDER BY created_at DESC LIMIT 15
+    """, (uid,))
+    saved_memories = [{"category": m["category"], "fact": decrypt_user_text(uid, m["fact"])} for m in cur.fetchall()]
+
     conn.close()
 
     # Retrieve previous session memory summary if present
     session_mem = get_latest_session_summary(uid)
+
+    # Launch non-blocking background extraction call with Gemini function calling & thinking level MEDIUM
+    extraction_task = asyncio.create_task(
+        run_chat_background_extraction(
+            user_id=uid,
+            user_message=req.message,
+            recent_history=prior_messages
+        )
+    )
 
     # 4. Stream response from Gemini API
     async def live_stream():
@@ -458,7 +505,10 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
             history_turns=last_20,
             rolling_summary=rolling_summary,
             session_memory=session_mem,
-            recent_bot_messages=recent_bot_messages
+            recent_bot_messages=recent_bot_messages,
+            saved_memories=saved_memories,
+            turns_since_name_used=turns_since_name,
+            breathing_shown_recently=breathing_shown_recently
         ):
             if kind == "token":
                 accumulated_text += payload
@@ -476,14 +526,22 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
                     ]
                 yield f"event: meta\ndata: {json.dumps(final_meta)}\n\n"
 
-        # 5. Persist bot reply in DB
+        # Check background extraction results to yield auto_save events if ready
+        try:
+            auto_saves = await asyncio.wait_for(asyncio.shield(extraction_task), timeout=2.8)
+            for act in auto_saves:
+                yield f"event: auto_save\ndata: {json.dumps(act)}\n\n"
+        except Exception:
+            pass
+
+        # 5. Persist bot reply in DB with per-user encryption
         reply_to_store = final_meta.get("reply") or accumulated_text or "Connection hiccup, please try again."
         emo_to_store = final_meta.get("emotion", "calm")
         risk_to_store = final_meta.get("risk_level", "none")
         tool_to_store = final_meta.get("suggest_tool", "none")
 
         exercise_to_store = "none"
-        if tool_to_store == "breathing":
+        if tool_to_store == "breathing" and not breathing_shown_recently:
             exercise_to_store = "breathing_4_7_8"
         elif tool_to_store == "grounding":
             exercise_to_store = "grounding_54321"
@@ -497,12 +555,12 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
                     suggested_exercise
                 ) VALUES (?, ?, 'mascot', ?, ?, ?, ?, ?, ?)
             """, (
-                bot_msg_id, uid, reply_to_store, req.language, emo_to_store, risk_to_store, emo_to_store,
-                exercise_to_store
+                bot_msg_id, uid, encrypt_user_text(uid, reply_to_store), req.language,
+                emo_to_store, risk_to_store, emo_to_store, exercise_to_store
             ))
             conn_b.commit()
             conn_b.close()
-        except Exception as e:
+        except Exception:
             pass
 
         yield "event: done\ndata: {}\n\n"
@@ -550,7 +608,7 @@ def get_chat_history(user_id: str, limit: int = 100, current_uid: Optional[str] 
         result.append({
             "id": r["id"],
             "sender": r["sender"],
-            "text": r["text"],
+            "text": decrypt_user_text(effective_uid, r["text"]),
             "language": r["language"] or "en",
             "time": "Earlier",
             "expression": r["expression"] or "neutral",
@@ -637,6 +695,290 @@ def clear_session_summary(user_id: str, current_uid: Optional[str] = Depends(get
     uid = current_uid or user_id or "anonymous"
     deleted_count = delete_user_session_summaries(uid)
     return {"status": "success", "deleted_count": deleted_count, "message": "Session memory deleted successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTO-SAVE UNDO & CONFIRMATION ENDPOINTS (Requirements 1, 2, 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AutoSaveUndoRequest(BaseModel):
+    action_id: str
+
+@app.post("/api/chat/auto-save/undo")
+def undo_chat_auto_save(req: AutoSaveUndoRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    return undo_auto_save_action(uid, req.action_id)
+
+class ConfirmReminderRequest(BaseModel):
+    reminder_id: str
+
+@app.post("/api/chat/auto-save/confirm-reminder")
+def confirm_reminder_endpoint(req: ConfirmReminderRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE user_reminders
+        SET status = 'confirmed'
+        WHERE id = ? AND user_id = ?
+    """, (req.reminder_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Reminder not found.")
+    return {"status": "success", "message": "Reminder confirmed and scheduled."}
+
+class ConfirmPreferenceRequest(BaseModel):
+    pref_key: str
+    pref_value: str
+
+@app.post("/api/chat/auto-save/confirm-preference")
+def confirm_preference_endpoint(req: ConfirmPreferenceRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    pid = str(uuid.uuid4())
+    cursor.execute("""
+        INSERT INTO user_preferences (id, user_id, pref_key, pref_value, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, pref_key) DO UPDATE SET
+            pref_value = excluded.pref_value,
+            updated_at = CURRENT_TIMESTAMP
+    """, (pid, uid, req.pref_key, req.pref_value))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": f"Preference '{req.pref_key}' saved."}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTIFICATIONS & WEB PUSH (Requirement 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/notifications/vapid-public-key")
+def get_vapid_key_endpoint():
+    return {"public_key": get_vapid_public_key()}
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]
+
+@app.post("/api/notifications/subscribe")
+def subscribe_web_push(req: PushSubscribeRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    p256dh = req.keys.get("p256dh", "")
+    auth = req.keys.get("auth", "")
+    if not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="Invalid push subscription keys.")
+    return subscribe_push_device(uid, req.endpoint, p256dh, auth)
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+@app.post("/api/notifications/unsubscribe")
+def unsubscribe_web_push(req: PushUnsubscribeRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    return unsubscribe_push_device(uid, req.endpoint)
+
+@app.get("/api/notifications/preferences")
+def get_notif_prefs(current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    return get_notification_preferences(uid)
+
+class NotifPrefsUpdateRequest(BaseModel):
+    enabled: Optional[bool] = True
+    type_checkin: Optional[bool] = True
+    type_breathing: Optional[bool] = True
+    type_journal: Optional[bool] = True
+    type_goals: Optional[bool] = True
+    time_pref: Optional[str] = "09:00"
+    frequency: Optional[str] = "daily"
+    quiet_hours_start: Optional[str] = "22:00"
+    quiet_hours_end: Optional[str] = "08:00"
+    language: Optional[str] = "en"
+
+@app.post("/api/notifications/preferences")
+def set_notif_prefs(req: NotifPrefsUpdateRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    return update_notification_preferences(uid, req.dict())
+
+@app.get("/api/notifications")
+def get_in_app_notifs(limit: int = 50, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    return list_in_app_notifications(uid, limit=limit)
+
+@app.post("/api/notifications/read/{notification_id}")
+def mark_notif_read(notification_id: str, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    ok = mark_notification_read(uid, notification_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+    return {"status": "success"}
+
+@app.post("/api/notifications/read-all")
+def mark_all_notifs_read(current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    count = mark_all_notifications_read(uid)
+    return {"status": "success", "marked_read": count}
+
+@app.delete("/api/notifications/{notification_id}")
+def delete_notif(notification_id: str, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    ok = delete_in_app_notification(uid, notification_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+    return {"status": "success"}
+
+class TestPushRequest(BaseModel):
+    type: Optional[str] = "checkin"
+    message: Optional[str] = "Time for your check-in."
+
+@app.post("/api/notifications/test-push")
+def test_push_endpoint(req: TestPushRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    return send_web_push_notification(
+        user_id=uid,
+        notif_type=req.type or "checkin",
+        custom_message=req.message,
+        ignore_quiet_hours=True
+    )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# APP SETTINGS & DATA DELETION (Requirements 6, 7)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/settings/app")
+def get_app_settings(current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT auto_save_from_chat, manual_only_mode, tentative_patterns_opt_in
+        FROM user_app_settings
+        WHERE user_id = ?
+    """, (uid,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {
+            "auto_save_from_chat": True,
+            "manual_only_mode": False,
+            "tentative_patterns_opt_in": False
+        }
+    return {
+        "auto_save_from_chat": bool(row["auto_save_from_chat"]),
+        "manual_only_mode": bool(row["manual_only_mode"]),
+        "tentative_patterns_opt_in": bool(row["tentative_patterns_opt_in"])
+    }
+
+class AppSettingsUpdateRequest(BaseModel):
+    auto_save_from_chat: Optional[bool] = None
+    manual_only_mode: Optional[bool] = None
+    tentative_patterns_opt_in: Optional[bool] = None
+
+@app.post("/api/settings/app")
+def update_app_settings(req: AppSettingsUpdateRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    current = get_app_settings(uid)
+
+    new_auto_save = req.auto_save_from_chat if req.auto_save_from_chat is not None else current["auto_save_from_chat"]
+    new_manual = req.manual_only_mode if req.manual_only_mode is not None else current["manual_only_mode"]
+    new_opt_in = req.tentative_patterns_opt_in if req.tentative_patterns_opt_in is not None else current["tentative_patterns_opt_in"]
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO user_app_settings (user_id, auto_save_from_chat, manual_only_mode, tentative_patterns_opt_in, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            auto_save_from_chat = excluded.auto_save_from_chat,
+            manual_only_mode = excluded.manual_only_mode,
+            tentative_patterns_opt_in = excluded.tentative_patterns_opt_in,
+            updated_at = CURRENT_TIMESTAMP
+    """, (uid, 1 if new_auto_save else 0, 1 if new_manual else 0, 1 if new_opt_in else 0))
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "success",
+        "settings": {
+            "auto_save_from_chat": new_auto_save,
+            "manual_only_mode": new_manual,
+            "tentative_patterns_opt_in": new_opt_in
+        }
+    }
+
+class DeleteEverythingRequest(BaseModel):
+    confirmation: str  # Must match 'DELETE EVERYTHING'
+
+@app.post("/api/settings/delete-everything")
+def delete_everything_endpoint(req: DeleteEverythingRequest, request: Request, current_uid: Optional[str] = Depends(get_current_user_id)):
+    if req.confirmation.strip().upper() != "DELETE EVERYTHING":
+        raise HTTPException(status_code=400, detail="Confirmation phrase must be 'DELETE EVERYTHING'")
+    uid = current_uid or "anonymous"
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    return purge_all_user_presence(uid, client_ip=client_ip, reason="user_requested_delete_everything")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TENTATIVE OCEAN PATTERNS (Requirement 3: Opt-in only, clearly non-clinical)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/personality/tentative-patterns")
+def get_tentative_patterns(current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    settings = get_app_settings(uid)
+    if not settings.get("tentative_patterns_opt_in"):
+        return {
+            "opted_in": False,
+            "message": "Tentative patterns are disabled. You can optionally opt in to explore conversational tendencies.",
+            "disclaimer": "Non-clinical, exploratory communication patterns only. Not a medical or psychological diagnosis."
+        }
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT pattern_summary, evidence_points, disclaimer, updated_at
+        FROM tentative_patterns
+        WHERE user_id = ?
+    """, (uid,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return {
+            "opted_in": True,
+            "has_patterns": False,
+            "message": "No tentative patterns detected yet. Chat naturally to generate non-clinical observational tendencies.",
+            "disclaimer": "Non-clinical exploratory patterns only."
+        }
+
+    return {
+        "opted_in": True,
+        "has_patterns": True,
+        "pattern_summary": row["pattern_summary"],
+        "evidence_points": json.loads(row["evidence_points"] or "[]"),
+        "disclaimer": row["disclaimer"],
+        "updated_at": row["updated_at"]
+    }
+
+class TentativeOptInRequest(BaseModel):
+    opt_in: bool
+
+@app.post("/api/personality/tentative-patterns/opt-in")
+def set_tentative_patterns_opt_in(req: TentativeOptInRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO user_app_settings (user_id, tentative_patterns_opt_in, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            tentative_patterns_opt_in = excluded.tentative_patterns_opt_in,
+            updated_at = CURRENT_TIMESTAMP
+    """, (uid, 1 if req.opt_in else 0))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "tentative_patterns_opt_in": req.opt_in}
 
 
 class AvatarStylizeRequest(BaseModel):
@@ -1170,10 +1512,16 @@ def save_contact(req: ContactRequest, request: Request, current_uid: Optional[st
     phone_cipher = encrypt_data(clean_phone) if clean_phone else ""
     phone_hash = compute_keyed_hash(clean_phone) if clean_phone else ""
     
-    # 2. Generate 6-digit OTP for email verification
-    import random
-    otp_code = f"{random.randint(100000, 999999)}"
-    OTP_STORE[email_hash] = otp_code
+    # 2. Generate cryptographically secure 6-digit OTP for email verification (CSPRNG)
+    import secrets
+    import time
+    otp_code = f"{secrets.randbelow(900000) + 100000}"
+    # Store code with 5-minute expiry and attempt counter
+    OTP_STORE[email_hash] = {
+        "code": otp_code,
+        "expires_at": time.time() + 300,
+        "attempts": 0
+    }
     
     # 3. Store record in database with zero plaintext PII
     conn = get_db()
@@ -1223,11 +1571,24 @@ def verify_contact(req: ContactVerifyRequest, request: Request):
     clean_email = req.email.strip().lower()
     email_hash = compute_keyed_hash(clean_email)
     
-    expected_code = OTP_STORE.get(email_hash)
-    if not expected_code:
+    stored = OTP_STORE.get(email_hash)
+    if not stored:
         raise HTTPException(status_code=400, detail="No verification pending for this email or code expired.")
+
+    # Check expiration (5 minutes)
+    if isinstance(stored, dict):
+        if time.time() > stored.get("expires_at", 0):
+            OTP_STORE.pop(email_hash, None)
+            raise HTTPException(status_code=400, detail="Verification code has expired. Please request a fresh one.")
+        if stored.get("attempts", 0) >= 4:
+            OTP_STORE.pop(email_hash, None)
+            raise HTTPException(status_code=400, detail="Too many invalid attempts. Please request a fresh code.")
+        stored["attempts"] += 1
+        expected_code = stored.get("code", "")
+    else:
+        expected_code = str(stored)
     
-    if req.code.strip() != expected_code:
+    if not hmac.compare_digest(req.code.strip(), expected_code):
         raise HTTPException(status_code=400, detail="Invalid verification code. Please check and try again.")
     
     conn = get_db()
@@ -1459,4 +1820,44 @@ def update_voice_system_status(req: VoiceStatusUpdateRequest):
     """Allows QA script to disable failing languages dynamically."""
     set_voice_language_status(req.language, req.is_enabled)
     return {"status": "success", "language": req.language, "is_enabled": req.is_enabled}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Root & SPA Static Serving (Port 8008 directly renders EmotiCare AI)
+# ─────────────────────────────────────────────────────────────────────────────
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+
+if os.path.exists(DIST_DIR) and os.path.exists(os.path.join(DIST_DIR, "index.html")):
+    for sub in ["assets", "avatar", "avatars", "models", "fx"]:
+        sub_path = os.path.join(DIST_DIR, sub)
+        if os.path.exists(sub_path):
+            app.mount(f"/{sub}", StaticFiles(directory=sub_path), name=sub)
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(os.path.join(DIST_DIR, "index.html"))
+
+    @app.get("/{full_path:path}")
+    async def catch_all_spa(full_path: str):
+        # Do not catch API or documentation endpoints
+        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        file_path = os.path.join(DIST_DIR, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(DIST_DIR, "index.html"))
+else:
+    @app.get("/")
+    def root():
+        return {
+            "app": "EmotiCare AI / MANAS",
+            "status": "online",
+            "version": "2.0.0",
+            "docs": "/docs",
+            "health": "/api/health",
+            "frontend_dev_url": "http://localhost:5173",
+            "message": "FastAPI backend is live. Access the frontend at http://localhost:5173 or run 'npm run build' in frontend/ to serve here."
+        }
 

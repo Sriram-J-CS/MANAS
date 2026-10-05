@@ -569,6 +569,112 @@ def init_db():
     )
     """)
 
+    # Auto-Save Audit Table (for transparent UI toasts and one-click Undo)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS auto_save_audit (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        target_screen TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details_json TEXT DEFAULT '{}',
+        is_undone INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # In-App Notifications Center
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS in_app_notifications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        action_url TEXT,
+        is_read INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Web Push Subscriptions (VAPID)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # User Notification Preferences
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS notification_preferences (
+        user_id TEXT PRIMARY KEY,
+        enabled INTEGER DEFAULT 1,
+        type_checkin INTEGER DEFAULT 1,
+        type_breathing INTEGER DEFAULT 1,
+        type_journal INTEGER DEFAULT 1,
+        type_goals INTEGER DEFAULT 1,
+        time_pref TEXT DEFAULT '09:00',
+        frequency TEXT DEFAULT 'daily',
+        quiet_hours_start TEXT DEFAULT '22:00',
+        quiet_hours_end TEXT DEFAULT '08:00',
+        language TEXT DEFAULT 'en',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # User App Settings (Auto-save toggle, manual-only mode, tentative patterns opt-in)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_app_settings (
+        user_id TEXT PRIMARY KEY,
+        auto_save_from_chat INTEGER DEFAULT 1,
+        manual_only_mode INTEGER DEFAULT 0,
+        tentative_patterns_opt_in INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # User Reminders (implied or explicit, confirmed via ONE confirmation prompt)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_reminders (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        reminder_text TEXT NOT NULL,
+        time_or_recurrence TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # User Preferences Key-Value Store
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_preferences (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        pref_key TEXT NOT NULL,
+        pref_value TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, pref_key)
+    )
+    """)
+
+    # Tentative Personality Patterns (Strictly non-clinical exploratory observations with user opt-in)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tentative_patterns (
+        user_id TEXT PRIMARY KEY,
+        pattern_summary TEXT,
+        evidence_points TEXT,
+        disclaimer TEXT DEFAULT 'Non-clinical exploratory pattern based on conversation style',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # -----------------------------------------------------------------------
     # PERFORMANCE INDEXES
     # -----------------------------------------------------------------------
@@ -581,6 +687,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_user_status ON goals(user_id, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_user_cat ON user_memories(user_id, category)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_summaries_user ON session_summaries(user_id, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_auto_save_user_time ON auto_save_audit(user_id, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON in_app_notifications(user_id, is_read, created_at)")
 
     conn.commit()
     conn.close()

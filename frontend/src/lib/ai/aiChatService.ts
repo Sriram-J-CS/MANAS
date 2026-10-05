@@ -98,6 +98,7 @@ export async function streamChatMessage(
   options: SendMessageOptions & {
     onMeta?: (meta: Partial<StructuredAIResponse> & { id: string }) => void;
     onToken?: (token: string) => void;
+    onAutoSave?: (autoSaveData: any) => void;
   }
 ): Promise<StructuredAIResponse> {
   const {
@@ -110,6 +111,7 @@ export async function streamChatMessage(
     age = 20,
     onMeta,
     onToken,
+    onAutoSave,
   } = options;
 
   const toneMap: Record<MascotPersonality, string> = {
@@ -194,6 +196,8 @@ export async function streamChatMessage(
               accumulatedText += payload.token;
               onToken?.(payload.token);
             }
+          } else if (event === 'auto_save') {
+            onAutoSave?.(payload);
           }
         } catch (_) {}
       }

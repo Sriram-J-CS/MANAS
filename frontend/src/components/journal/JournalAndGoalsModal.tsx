@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, BookOpen, Target, Calendar, Sparkles, Plus, Trash2, CheckCircle2, Lock, ArrowUpRight } from 'lucide-react';
+import { X, BookOpen, Target, Calendar, Sparkles, Plus, Trash2, CheckCircle2, Lock, ArrowUpRight, Edit3, Check, RefreshCw } from 'lucide-react';
 
 interface JournalAndGoalsModalProps {
   isOpen: boolean;
@@ -40,6 +40,17 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
 
   // Weekly reflection state
   const [reflection, setReflection] = useState<any>(null);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+
+  // Daily Summary state
+  const [dailySummary, setDailySummary] = useState<any>(null);
+
+  // Edit states
+  const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
+  const [editJTitle, setEditJTitle] = useState('');
+  const [editJContent, setEditJContent] = useState('');
+  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
+  const [editGTitle, setEditGTitle] = useState('');
 
   const fetchAllData = async () => {
     const authToken = token || localStorage.getItem('manas_access_token');
@@ -72,6 +83,13 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
       if (rRes.ok) {
         const rData = await rRes.json();
         setReflection(rData);
+      }
+
+      // 5. Daily Summary
+      const dsRes = await fetch('/api/journal/daily-summary', { headers });
+      if (dsRes.ok) {
+        const dsData = await dsRes.json();
+        setDailySummary(dsData);
       }
     } catch (_) {}
   };
@@ -119,6 +137,25 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
         method: 'DELETE',
         headers: (authToken ? { Authorization: `Bearer ${authToken}` } : {}) as HeadersInit
       });
+      fetchAllData();
+    } catch (_) {}
+  };
+
+  const handleUpdateJournal = async (id: string) => {
+    try {
+      const authToken = token || localStorage.getItem('manas_access_token');
+      await fetch(`/api/journal/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({
+          title: editJTitle,
+          content: editJContent
+        })
+      });
+      setEditingJournalId(null);
       fetchAllData();
     } catch (_) {}
   };
@@ -171,6 +208,42 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
       });
       fetchAllData();
     } catch (_) {}
+  };
+
+  const handleUpdateGoalTitle = async (id: string) => {
+    try {
+      const authToken = token || localStorage.getItem('manas_access_token');
+      await fetch(`/api/goals/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({
+          title: editGTitle
+        })
+      });
+      setEditingGoalId(null);
+      fetchAllData();
+    } catch (_) {}
+  };
+
+  const handleTriggerWeeklySynthesis = async () => {
+    setIsSynthesizing(true);
+    try {
+      const authToken = token || localStorage.getItem('manas_access_token');
+      const res = await fetch('/api/reflections/weekly/synthesize', {
+        method: 'POST',
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReflection(data);
+      }
+    } catch (_) {}
+    finally {
+      setIsSynthesizing(false);
+    }
   };
 
   const handleSaveFutureSelf = async (e: React.FormEvent) => {
@@ -261,6 +334,23 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
           {/* Tab 1: Journal */}
           {activeTab === 'journal' && (
             <div className="space-y-6">
+              {/* Daily Summary Card (Auto-generated from chat & reflections) */}
+              {dailySummary?.summary && (
+                <div className="p-4 rounded-2xl bg-cyan-950/25 border border-cyan-500/30 text-xs space-y-1.5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-cyan-300 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider">
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> Today's Daily Summary
+                    </span>
+                    <span className="text-[10px] font-mono text-cyan-400/60">
+                      Auto-Synthesized
+                    </span>
+                  </div>
+                  <p className="text-slate-200 leading-relaxed font-sans text-xs">
+                    {dailySummary.summary}
+                  </p>
+                </div>
+              )}
+
               <form onSubmit={handleSaveJournal} className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
                 <span className="text-[11px] font-mono text-white/40 uppercase block">New Reflection Entry</span>
                 <input
@@ -305,23 +395,68 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {journals.map((j) => (
-                    <div key={j.id} className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 text-xs space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-white text-sm">{j.title}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-white/40">{j.created_at?.slice(0, 10)}</span>
-                          <button
-                            onClick={() => handleDeleteJournal(j.id)}
-                            className="p-1 rounded text-white/30 hover:text-rose-400 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                  {journals.map((j: any) => {
+                    const isEditing = editingJournalId === j.id;
+                    return (
+                      <div key={j.id} className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          {!isEditing ? (
+                            <span className="font-bold text-white text-sm">{j.title}</span>
+                          ) : (
+                            <input
+                              type="text"
+                              value={editJTitle}
+                              onChange={(e) => setEditJTitle(e.target.value)}
+                              className="px-2.5 py-1 rounded bg-black/60 border border-violet-400 text-white font-bold text-xs"
+                            />
+                          )}
+
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-white/40 mr-1">{j.created_at?.slice(0, 10)}</span>
+                            {isEditing ? (
+                              <button
+                                onClick={() => handleUpdateJournal(j.id)}
+                                className="p-1 rounded text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer"
+                                title="Save changes"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setEditingJournalId(j.id);
+                                  setEditJTitle(j.title || '');
+                                  setEditJContent(j.content || '');
+                                }}
+                                className="p-1 rounded text-white/30 hover:text-white transition-colors cursor-pointer"
+                                title="Edit entry"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteJournal(j.id)}
+                              className="p-1 rounded text-white/30 hover:text-rose-400 transition-colors cursor-pointer"
+                              title="Delete entry"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
+
+                        {!isEditing ? (
+                          <p className="text-white/80 leading-relaxed whitespace-pre-wrap">{j.content}</p>
+                        ) : (
+                          <textarea
+                            rows={3}
+                            value={editJContent}
+                            onChange={(e) => setEditJContent(e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded bg-black/60 border border-violet-400 text-white text-xs"
+                          />
+                        )}
                       </div>
-                      <p className="text-white/80 leading-relaxed whitespace-pre-wrap">{j.content}</p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -363,35 +498,68 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {goals.map((g) => (
-                    <div key={g.id} className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 text-xs space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white">{g.title}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 capitalize">
-                            {g.category}
-                          </span>
-                          <button
-                            onClick={() => handleDeleteGoal(g.id)}
-                            className="p-1 rounded text-white/30 hover:text-rose-400 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                  {goals.map((g: any) => {
+                    const isEditingGoal = editingGoalId === g.id;
+                    return (
+                      <div key={g.id} className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 text-xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          {!isEditingGoal ? (
+                            <span className="font-semibold text-white">{g.title}</span>
+                          ) : (
+                            <input
+                              type="text"
+                              value={editGTitle}
+                              onChange={(e) => setEditGTitle(e.target.value)}
+                              className="px-2.5 py-0.5 rounded bg-black/60 border border-violet-400 text-white font-semibold text-xs"
+                            />
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 capitalize">
+                              {g.category}
+                            </span>
+                            {isEditingGoal ? (
+                              <button
+                                onClick={() => handleUpdateGoalTitle(g.id)}
+                                className="p-1 rounded text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                                title="Save title"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setEditingGoalId(g.id);
+                                  setEditGTitle(g.title);
+                                }}
+                                className="p-1 rounded text-white/40 hover:text-white cursor-pointer"
+                                title="Edit goal"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteGoal(g.id)}
+                              className="p-1 rounded text-white/30 hover:text-rose-400 transition-colors cursor-pointer"
+                              title="Delete goal"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={g.progress_pct || 0}
+                            onChange={(e) => handleUpdateGoalProgress(g.id, Number(e.target.value))}
+                            className="flex-1 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-violet-500"
+                          />
+                          <span className="text-[11px] font-mono text-white/60 w-10 text-right">{g.progress_pct || 0}%</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={g.progress_pct || 0}
-                          onChange={(e) => handleUpdateGoalProgress(g.id, Number(e.target.value))}
-                          className="flex-1 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-violet-500"
-                        />
-                        <span className="text-[11px] font-mono text-white/60 w-10 text-right">{g.progress_pct || 0}%</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -438,7 +606,7 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
 
               {futureEntries.length > 0 && (
                 <div className="space-y-3">
-                  {futureEntries.map((fe) => (
+                  {futureEntries.map((fe: any) => (
                     <div key={fe.id} className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 text-xs space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-[10px] text-violet-400 uppercase tracking-widest">{fe.horizon?.replace('_', ' ')}</span>
@@ -458,12 +626,25 @@ export const JournalAndGoalsModal: React.FC<JournalAndGoalsModalProps> = ({
           {/* Tab 4: Weekly Reflection */}
           {activeTab === 'reflection' && (
             <div className="space-y-4">
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-xs font-mono text-white/60 uppercase">Weekly Reflection & Synthesis</span>
+                <button
+                  type="button"
+                  onClick={handleTriggerWeeklySynthesis}
+                  disabled={isSynthesizing}
+                  className="px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-mono text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSynthesizing ? 'animate-spin' : ''}`} />
+                  <span>{isSynthesizing ? 'Synthesizing...' : 'Synthesize 7-Day Logs'}</span>
+                </button>
+              </div>
+
               {!reflection?.has_reflection ? (
                 <div className="text-center py-12 rounded-2xl bg-white/[0.02] border border-dashed border-white/10 p-6">
                   <Calendar className="w-8 h-8 text-violet-400 mx-auto mb-2 opacity-60" />
                   <h4 className="text-sm font-semibold text-white mb-1">No Weekly Synthesis Available Yet</h4>
                   <p className="text-xs text-white/50 max-w-sm mx-auto">
-                    {reflection?.message || 'Check in with your mood or journal over the week to generate an evidence-based longitudinal summary.'}
+                    {reflection?.message || 'Check in with your mood or journal over the week to generate an evidence-based longitudinal summary, or click "Synthesize 7-Day Logs" above.'}
                   </p>
                 </div>
               ) : (

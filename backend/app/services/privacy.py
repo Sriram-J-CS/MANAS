@@ -72,6 +72,7 @@ def set_user_consent(user_id: str, consent_type: str, granted: bool, client_ip: 
 
 def export_all_user_data(user_id: str) -> Dict[str, Any]:
     """Generates a complete, machine-readable JSON archive of all personal data for the user."""
+    from .user_crypto import decrypt_user_text
     conn = get_db()
     cursor = conn.cursor()
 
@@ -83,29 +84,53 @@ def export_all_user_data(user_id: str) -> Dict[str, Any]:
     cursor.execute("SELECT consent_type, granted, updated_at FROM user_consents WHERE user_id = ?", (user_id,))
     consents = [dict(r) for r in cursor.fetchall()]
 
-    # Memories
+    # Memories (decrypted)
     cursor.execute("SELECT id, category, fact, importance, created_at FROM user_memories WHERE user_id = ?", (user_id,))
-    memories = [dict(r) for r in cursor.fetchall()]
+    memories = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["fact"] = decrypt_user_text(user_id, d["fact"])
+        memories.append(d)
 
-    # Mood logs
+    # Mood logs (decrypted)
     cursor.execute("SELECT score, tags, note, created_at FROM mood_entries WHERE user_id = ?", (user_id,))
-    moods = [dict(r) for r in cursor.fetchall()]
+    moods = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["note"] = decrypt_user_text(user_id, d.get("note") or "")
+        moods.append(d)
 
-    # Wellness logs
+    # Wellness logs (decrypted)
     cursor.execute("SELECT metric_type, score, note, created_at FROM wellness_entries WHERE user_id = ?", (user_id,))
-    wellness = [dict(r) for r in cursor.fetchall()]
+    wellness = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["note"] = decrypt_user_text(user_id, d.get("note") or "")
+        wellness.append(d)
 
-    # Chat history
+    # Chat history (decrypted)
     cursor.execute("SELECT sender, text, language, emotion, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC", (user_id,))
-    chats = [dict(r) for r in cursor.fetchall()]
+    chats = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["text"] = decrypt_user_text(user_id, d["text"])
+        chats.append(d)
 
-    # Goals
+    # Goals (decrypted)
     cursor.execute("SELECT title, category, target_date, status, progress_pct, created_at FROM goals WHERE user_id = ?", (user_id,))
-    goals = [dict(r) for r in cursor.fetchall()]
+    goals = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["title"] = decrypt_user_text(user_id, d["title"])
+        goals.append(d)
 
-    # Journal
+    # Journal (decrypted)
     cursor.execute("SELECT title, content, tags, mood_score, is_private, created_at FROM journal_entries WHERE user_id = ?", (user_id,))
-    journals = [dict(r) for r in cursor.fetchall()]
+    journals = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["content"] = decrypt_user_text(user_id, d["content"])
+        journals.append(d)
 
     # Personality
     cursor.execute("SELECT openness, conscientiousness, extraversion, agreeableness, neuroticism, confidence FROM personality_assessments WHERE user_id = ?", (user_id,))
@@ -115,11 +140,24 @@ def export_all_user_data(user_id: str) -> Dict[str, Any]:
     cursor.execute("SELECT warning_signs, internal_coping, distraction_places, trusted_people, safe_environment_steps FROM safety_plans WHERE user_id = ?", (user_id,))
     safety_plan = cursor.fetchone()
 
+    # What works
+    cursor.execute("SELECT strategy_name, total_uses, positive_feedback_count, negative_feedback_count, success_rate FROM what_works_profiles WHERE user_id = ?", (user_id,))
+    what_works = [dict(r) for r in cursor.fetchall()]
+
+    # Reminders
+    cursor.execute("SELECT reminder_text, time_or_recurrence, status, created_at FROM user_reminders WHERE user_id = ?", (user_id,))
+    reminders = [dict(r) for r in cursor.fetchall()]
+
+    # Notifications
+    cursor.execute("SELECT type, title, message, is_read, created_at FROM in_app_notifications WHERE user_id = ?", (user_id,))
+    notifications = [dict(r) for r in cursor.fetchall()]
+
     conn.close()
 
     export_archive = {
         "export_timestamp": datetime.utcnow().isoformat(),
         "application": "EmotiCare AI / MANAS",
+        "user_id": user_id,
         "data_owner": user_id,
         "profile": dict(user_row) if user_row else {},
         "consents": consents,
@@ -129,6 +167,9 @@ def export_all_user_data(user_id: str) -> Dict[str, Any]:
         "chat_messages": chats,
         "goals": goals,
         "journals": journals,
+        "what_works": what_works,
+        "reminders": reminders,
+        "notifications": notifications,
         "personality": dict(personality) if personality else None,
         "safety_plan": dict(safety_plan) if safety_plan else None
     }
@@ -177,6 +218,15 @@ def purge_all_user_presence(user_id: str, client_ip: str = "127.0.0.1", reason: 
         ("user_consents", "user_id"),
         ("user_retention_settings", "user_id"),
         ("data_exports", "user_id"),
+        ("auto_save_audit", "user_id"),
+        ("in_app_notifications", "user_id"),
+        ("web_push_subscriptions", "user_id"),
+        ("notification_preferences", "user_id"),
+        ("user_app_settings", "user_id"),
+        ("user_reminders", "user_id"),
+        ("user_preferences", "user_id"),
+        ("tentative_patterns", "user_id"),
+        ("session_summaries", "user_id"),
         ("users", "id"),
         ("auth_users", "id")
     ]
@@ -202,7 +252,8 @@ def purge_all_user_presence(user_id: str, client_ip: str = "127.0.0.1", reason: 
     conn.close()
 
     return {
-        "status": "success",
+        "status": "purged",
+        "success": True,
         "message": f"All data for account {user_id} has been permanently and irreversibly purged.",
         "purged_at": datetime.utcnow().isoformat()
     }

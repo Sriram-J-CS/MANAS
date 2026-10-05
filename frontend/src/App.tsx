@@ -29,6 +29,9 @@ import { MemoryCenterModal } from './components/memory/MemoryCenterModal';
 import { JournalAndGoalsModal } from './components/journal/JournalAndGoalsModal';
 import { SafetyPlanModal } from './components/safety/SafetyPlanModal';
 import { PrivacyCenterModal } from './components/privacy/PrivacyCenterModal';
+import { NotificationCenterModal } from './components/notifications/NotificationCenterModal';
+import { NotificationPreferencesModal } from './components/notifications/NotificationPreferencesModal';
+import { registerServiceWorker } from './lib/push/pushService';
 import { PageIntroCurtain } from './components/effects/PageIntroCurtain';
 import { FloatingBackgroundShapes } from './components/effects/FloatingBackgroundShapes';
 
@@ -52,6 +55,8 @@ export function App() {
   const [isJournalGoalsOpen, setIsJournalGoalsOpen] = useState(false);
   const [isSafetyPlanOpen, setIsSafetyPlanOpen] = useState(false);
   const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isNotificationPrefsOpen, setIsNotificationPrefsOpen] = useState(false);
 
   // Authenticated user state
   const [authUser, setAuthUser] = useState<{ user_id: string; name: string; email?: string; phone?: string } | null>(() => {
@@ -105,9 +110,9 @@ export function App() {
 
   const config = siteConfigByLang[currentLang];
 
-  // Initialize smooth scroll via Lenis + GSAP ScrollTrigger, and load avatar config on startup
   useEffect(() => {
     avatar.loadConfigOnStartup();
+    registerServiceWorker();
     const lenisInstance = initLenis();
 
     // Direct chat opening or voice lab opening via URL query param or hash
@@ -261,6 +266,7 @@ export function App() {
         user={authUser}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenVoiceRatingLab={() => setIsVoiceRatingLabOpen(true)}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
       />
 
       {/* Fullscreen Overlay Menu */}
@@ -282,6 +288,7 @@ export function App() {
         onOpenJournalGoals={() => setIsJournalGoalsOpen(true)}
         onOpenSafetyPlan={() => setIsSafetyPlanOpen(true)}
         onOpenPrivacy={() => setIsPrivacyOpen(true)}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
       />
 
 
@@ -357,6 +364,7 @@ export function App() {
         onOpenJournalGoals={() => setIsJournalGoalsOpen(true)}
         onOpenSafetyPlan={() => setIsSafetyPlanOpen(true)}
         onOpenPrivacy={() => setIsPrivacyOpen(true)}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
       />
 
       {/* 3D Mascot Customizer Studio Modal */}
@@ -373,6 +381,7 @@ export function App() {
         onUpdateProfile={handleUpdateProfile}
         isFullscreen={true}
         onToggleFullscreen={() => { }}
+        onDeleteData={handleDeleteAllUserData}
       />
 
       {/* 24/7 Crisis Help & Tele-MANAS Safety Modal */}
@@ -447,6 +456,29 @@ export function App() {
         isOpen={isPrivacyOpen}
         onClose={() => setIsPrivacyOpen(false)}
         onAccountDeleted={handleDeleteAllUserData}
+      />
+
+      {/* Notification Center & Preferences Modals */}
+      <NotificationCenterModal
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        onOpenPreferences={() => {
+          setIsNotificationsOpen(false);
+          setIsNotificationPrefsOpen(true);
+        }}
+        onNavigateAction={(url) => {
+          setIsNotificationsOpen(false);
+          if (url.includes('twin')) setIsTwinOpen(true);
+          else if (url.includes('memory')) setIsMemoryOpen(true);
+          else if (url.includes('journal')) setIsJournalGoalsOpen(true);
+          else if (url.includes('calm')) setIsCalmOpen(true);
+          else handleStartTalking();
+        }}
+      />
+
+      <NotificationPreferencesModal
+        isOpen={isNotificationPrefsOpen}
+        onClose={() => setIsNotificationPrefsOpen(false)}
       />
     </div>
   );

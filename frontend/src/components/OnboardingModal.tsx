@@ -951,6 +951,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   </span>
                 )}
 
+                {/* Auto-Save from Chat Feature Explanation */}
+                <div className="p-3.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/25 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-cyan-500 shrink-0 mt-0.5" />
+                  <div className="text-xs space-y-1">
+                    <span className="font-bold text-cyan-900 dark:text-cyan-200">
+                      Auto-Save From Chat (Default On)
+                    </span>
+                    <p className="text-[11px] text-cyan-950/80 dark:text-cyan-100/70 leading-relaxed font-sans">
+                      As you talk with your companion, details you mention (such as mood, sleep, stress, memories, or goals) are automatically organized into your Mental Twin and Memory Center. Every entry has a 1-click Undo toast, is fully editable & deletable, and can be switched to Manual Only mode anytime in Settings.
+                    </p>
+                  </div>
+                </div>
+
                 {/* OTP Verification Section */}
                 {!emailVerified ? (
                   <div className="flex flex-col gap-3 pt-2">

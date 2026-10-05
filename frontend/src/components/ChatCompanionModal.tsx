@@ -20,7 +20,9 @@ import {
   BookOpen,
   Volume2,
   VolumeX,
+  Bell,
 } from 'lucide-react';
+import { AutoSaveToast, type AutoSaveEventData } from './chat/AutoSaveToast';
 import type { UserProfile } from './OnboardingModal';
 import type { ChatMessage, MascotExpression } from '../types';
 import type { MascotEmotion } from '../lib/emotion/emotionEngine';
@@ -67,6 +69,7 @@ interface ChatCompanionModalProps {
   onOpenJournalGoals?: () => void;
   onOpenSafetyPlan?: () => void;
   onOpenPrivacy?: () => void;
+  onOpenNotifications?: () => void;
 }
 
 /**
@@ -129,6 +132,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   onOpenJournalGoals,
   onOpenSafetyPlan,
   onOpenPrivacy,
+  onOpenNotifications,
 }) => {
   if (!isOpen) return null;
 
@@ -142,6 +146,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   const [isOutfitsOpen, setIsOutfitsOpen] = useState<boolean>(false);
   const [isLangMenuOpen, setIsLangMenuOpen] = useState<boolean>(false);
   const [isAvatarStudioOpen, setIsAvatarStudioOpen] = useState<boolean>(false);
+  const [activeAutoSave, setActiveAutoSave] = useState<AutoSaveEventData | null>(null);
 
   // Audio Mixer & Controls State
   const [isAudioMenuOpen, setIsAudioMenuOpen] = useState<boolean>(false);
@@ -643,6 +648,11 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         stylePref: userProfile.stylePref || 'reflective',
         age: userProfile.age || 20,
         typing_cps: typingCPS,
+        onAutoSave: (autoSaveData) => {
+          if (autoSaveData) {
+            setActiveAutoSave(autoSaveData);
+          }
+        },
         onMeta: (meta) => {
           setIsThinking(false);
           if (meta.emotion) setMascotExpr(meta.emotion as MascotEmotion);
@@ -879,6 +889,19 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
               <span className="hidden sm:inline">Privacy</span>
+            </button>
+          )}
+
+          {/* Notifications Trigger */}
+          {onOpenNotifications && (
+            <button
+              type="button"
+              onClick={onOpenNotifications}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-xs font-mono text-cyan-700 font-bold transition-colors cursor-pointer shadow-xs"
+              title="Notification Center & Reminders"
+            >
+              <Bell className="w-3.5 h-3.5 text-cyan-600" />
+              <span className="hidden sm:inline">Notifications</span>
             </button>
           )}
 
@@ -1569,6 +1592,65 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           }
         }}
       />
+
+      {/* Real-time Auto-Save Toast with Undo & Confirmation */}
+      {activeAutoSave && (
+        <AutoSaveToast
+          event={activeAutoSave}
+          onUndo={async (actionId) => {
+            try {
+              const token = localStorage.getItem('manas_access_token');
+              await fetch('/api/chat/auto-save/undo', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ action_id: actionId }),
+              });
+            } catch (err) {
+              console.warn('Failed to undo auto save:', err);
+            }
+          }}
+          onConfirm={
+            activeAutoSave.requires_confirmation
+              ? async (event) => {
+                  try {
+                    const token = localStorage.getItem('manas_access_token');
+                    const headers: Record<string, string> = {
+                      'Content-Type': 'application/json',
+                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    };
+                    if (event.tool === 'set_reminder') {
+                      await fetch('/api/chat/auto-save/confirm-reminder', {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                          action_id: event.action_id,
+                          text: event.reminder_text || event.summary,
+                          time_or_recurrence: event.time_or_recurrence || '09:00',
+                        }),
+                      });
+                    } else if (event.tool === 'update_preference') {
+                      await fetch('/api/chat/auto-save/confirm-preference', {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({
+                          action_id: event.action_id,
+                          key: event.pref_key || 'preference',
+                          value: event.pref_value || event.summary,
+                        }),
+                      });
+                    }
+                  } catch (err) {
+                    console.warn('Failed to confirm auto save:', err);
+                  }
+                }
+              : undefined
+          }
+          onDismiss={() => setActiveAutoSave(null)}
+        />
+      )}
     </div>
   );
 };

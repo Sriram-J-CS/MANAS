@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from ..database import get_db
 from ..auth.dependencies import require_auth, get_current_user_id
+from .user_crypto import encrypt_user_text, decrypt_user_text
 from .twin import get_user_twin_overview, record_typing_observation, evaluate_proactive_checkin
 from .personality import (
     get_personality_scenarios,
@@ -104,10 +105,28 @@ def log_wellness_metric(req: WellnessLogRequest, uid: str = Depends(require_auth
     cursor.execute("""
         INSERT INTO wellness_entries (id, user_id, metric_type, score, note)
         VALUES (?, ?, ?, ?, ?)
-    """, (entry_id, uid, req.metric_type, req.score, req.note or ""))
+    """, (entry_id, uid, req.metric_type, req.score, encrypt_user_text(uid, req.note or "")))
     conn.commit()
     conn.close()
     return {"status": "saved", "id": entry_id, "metric_type": req.metric_type, "score": req.score}
+
+@router.get("/wellness/latest")
+def get_latest_wellness(uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, metric_type, score, note, created_at
+        FROM wellness_entries
+        WHERE user_id = ?
+        ORDER BY created_at DESC LIMIT 1
+    """, (uid,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {"has_entry": False}
+    d = dict(row)
+    d["note"] = decrypt_user_text(uid, d.get("note") or "")
+    return {"has_entry": True, **d}
 
 @router.get("/wellness/history")
 def get_wellness_history(uid: str = Depends(require_auth), limit: int = 50):
@@ -119,9 +138,49 @@ def get_wellness_history(uid: str = Depends(require_auth), limit: int = 50):
         WHERE user_id = ?
         ORDER BY created_at DESC LIMIT ?
     """, (uid, limit))
-    rows = [dict(r) for r in cursor.fetchall()]
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["note"] = decrypt_user_text(uid, d.get("note") or "")
+        rows.append(d)
     conn.close()
     return {"entries": rows}
+
+class WellnessEditRequest(BaseModel):
+    metric_type: Optional[str] = None
+    score: Optional[float] = None
+    note: Optional[str] = None
+
+@router.put("/wellness/{entry_id}")
+def edit_wellness_entry(entry_id: str, req: WellnessEditRequest, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    enc_note = encrypt_user_text(uid, req.note) if req.note is not None else None
+    cursor.execute("""
+        UPDATE wellness_entries
+        SET metric_type = COALESCE(?, metric_type),
+            score = COALESCE(?, score),
+            note = COALESCE(?, note)
+        WHERE id = ? AND user_id = ?
+    """, (req.metric_type, req.score, enc_note, entry_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Wellness entry not found.")
+    return {"status": "success", "id": entry_id}
+
+@router.delete("/wellness/{entry_id}")
+def delete_wellness_entry(entry_id: str, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM wellness_entries WHERE id = ? AND user_id = ?", (entry_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Wellness entry not found.")
+    return {"status": "success", "message": "Wellness entry deleted."}
 
 
 # ===========================================================================
@@ -209,7 +268,11 @@ def get_memory_center(uid: str = Depends(require_auth)):
         WHERE user_id = ?
         ORDER BY created_at DESC
     """, (uid,))
-    rows = [dict(r) for r in cursor.fetchall()]
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["fact"] = decrypt_user_text(uid, d["fact"])
+        rows.append(d)
     conn.close()
 
     grouped: Dict[str, List[Any]] = {}
@@ -238,7 +301,7 @@ def add_memory_item(req: MemoryCreateRequest, uid: str = Depends(require_auth)):
     cursor.execute("""
         INSERT INTO user_memories (id, user_id, category, fact, importance)
         VALUES (?, ?, ?, ?, ?)
-    """, (mid, uid, req.category or "preferences", req.fact.strip(), req.importance or 1.0))
+    """, (mid, uid, req.category or "preferences", encrypt_user_text(uid, req.fact.strip()), req.importance or 1.0))
     conn.commit()
     conn.close()
     return {"status": "success", "id": mid, "fact": req.fact}
@@ -255,7 +318,7 @@ def edit_memory_item(memory_id: str, req: MemoryEditRequest, uid: str = Depends(
         UPDATE user_memories
         SET fact = ?, category = COALESCE(?, category)
         WHERE id = ? AND user_id = ?
-    """, (req.fact.strip(), req.category, memory_id, uid))
+    """, (encrypt_user_text(uid, req.fact.strip()), req.category, memory_id, uid))
     affected = cursor.rowcount
     conn.commit()
     conn.close()
@@ -323,13 +386,16 @@ def list_journal_entries(uid: str = Depends(require_auth), limit: int = 50):
         WHERE user_id = ?
         ORDER BY created_at DESC LIMIT ?
     """, (uid, limit))
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    for r in rows:
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["content"] = decrypt_user_text(uid, d["content"])
         try:
-            r["tags"] = json.loads(r["tags"]) if r["tags"] else []
+            d["tags"] = json.loads(d["tags"]) if d["tags"] else []
         except Exception:
-            r["tags"] = []
+            d["tags"] = []
+        rows.append(d)
+    conn.close()
     return {"entries": rows}
 
 @router.post("/journal")
@@ -342,10 +408,47 @@ def create_journal_entry(req: JournalCreateRequest, uid: str = Depends(require_a
     cursor.execute("""
         INSERT INTO journal_entries (id, user_id, title, content, tags, mood_score, is_private)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (jid, uid, req.title or "Untitled", req.content.strip(), json.dumps(req.tags or []), req.mood_score, 1 if req.is_private else 0))
+    """, (jid, uid, req.title or "Untitled", encrypt_user_text(uid, req.content.strip()), json.dumps(req.tags or []), req.mood_score, 1 if req.is_private else 0))
     conn.commit()
     conn.close()
     return {"status": "saved", "id": jid, "title": req.title}
+
+class JournalEditRequest(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    tags: Optional[List[str]] = None
+    mood_score: Optional[int] = None
+    is_private: Optional[bool] = None
+
+@router.put("/journal/{journal_id}")
+def edit_journal_entry(journal_id: str, req: JournalEditRequest, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    enc_content = encrypt_user_text(uid, req.content.strip()) if req.content is not None else None
+    cursor.execute("""
+        UPDATE journal_entries
+        SET title = COALESCE(?, title),
+            content = COALESCE(?, content),
+            tags = COALESCE(?, tags),
+            mood_score = COALESCE(?, mood_score),
+            is_private = COALESCE(?, is_private),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (
+        req.title,
+        enc_content,
+        json.dumps(req.tags) if req.tags is not None else None,
+        req.mood_score,
+        1 if req.is_private else 0 if req.is_private is not None else None,
+        journal_id,
+        uid
+    ))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Journal entry not found.")
+    return {"status": "success", "id": journal_id}
 
 @router.delete("/journal/{journal_id}")
 def delete_journal_entry(journal_id: str, uid: str = Depends(require_auth)):
@@ -358,6 +461,50 @@ def delete_journal_entry(journal_id: str, uid: str = Depends(require_auth)):
     if affected == 0:
         raise HTTPException(status_code=404, detail="Journal entry not found.")
     return {"status": "success", "message": "Journal entry deleted."}
+
+@router.get("/journal/daily-summary")
+def get_daily_journal_summary(uid: str = Depends(require_auth)):
+    """Automatically generates and returns daily reflection synthesis from today's logs."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT content, created_at FROM journal_entries
+        WHERE user_id = ? AND date(created_at) = date('now')
+        ORDER BY created_at DESC
+    """, (uid,))
+    j_rows = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT score, tags FROM mood_entries
+        WHERE user_id = ? AND date(created_at) = date('now')
+        ORDER BY created_at DESC
+    """, (uid,))
+    m_rows = cursor.fetchall()
+    conn.close()
+
+    if not j_rows and not m_rows:
+        return {
+            "has_summary": False,
+            "message": "No reflections logged yet today. Chat or write in your journal to generate a daily summary."
+        }
+
+    decrypted_j = [decrypt_user_text(uid, r["content"]) for r in j_rows]
+    mood_scores = [r["score"] for r in m_rows]
+    avg_mood = round(sum(mood_scores) / len(mood_scores), 1) if mood_scores else None
+
+    summary_pts = []
+    if mood_scores:
+        summary_pts.append(f"Recorded {len(mood_scores)} mood check-in(s) averaging {avg_mood}/5.")
+    if decrypted_j:
+        summary_pts.append(f"Key insight: {decrypted_j[0][:100]}...")
+
+    return {
+        "has_summary": True,
+        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "summary": " ".join(summary_pts) or "You showed up for yourself today with mindfulness and care.",
+        "avg_mood": avg_mood,
+        "total_checkins": len(mood_scores) + len(j_rows)
+    }
 
 
 # ===========================================================================
@@ -380,7 +527,11 @@ def list_goals(uid: str = Depends(require_auth)):
         WHERE user_id = ?
         ORDER BY created_at DESC
     """, (uid,))
-    rows = [dict(r) for r in cursor.fetchall()]
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["title"] = decrypt_user_text(uid, d["title"])
+        rows.append(d)
     conn.close()
     return {"goals": rows}
 
@@ -394,10 +545,35 @@ def create_goal(req: GoalCreateRequest, uid: str = Depends(require_auth)):
     cursor.execute("""
         INSERT INTO goals (id, user_id, title, category, target_date, habit_linked)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (gid, uid, req.title.strip(), req.category or "mindfulness", req.target_date, req.habit_linked))
+    """, (gid, uid, encrypt_user_text(uid, req.title.strip()), req.category or "mindfulness", req.target_date, req.habit_linked))
     conn.commit()
     conn.close()
     return {"status": "saved", "id": gid, "title": req.title}
+
+class GoalEditRequest(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    target_date: Optional[str] = None
+
+@router.put("/goals/{goal_id}")
+def edit_goal(goal_id: str, req: GoalEditRequest, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    enc_title = encrypt_user_text(uid, req.title.strip()) if req.title is not None else None
+    cursor.execute("""
+        UPDATE goals
+        SET title = COALESCE(?, title),
+            category = COALESCE(?, category),
+            target_date = COALESCE(?, target_date),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (enc_title, req.category, req.target_date, goal_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Goal not found.")
+    return {"status": "success", "id": goal_id}
 
 class GoalPatchRequest(BaseModel):
     progress_pct: Optional[int] = None
@@ -533,6 +709,139 @@ def get_weekly_reflection(uid: str = Depends(require_auth)):
         "next_intentions": ["Keep a gentle, consistent morning routine"],
         "average_mood_7d": avg_mood
     }
+
+@router.post("/reflections/weekly/synthesize")
+def synthesize_weekly_reflection(uid: str = Depends(require_auth)):
+    """Automatically synthesizes past 7 days of mood logs, journals, and goals into a weekly synthesis."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT score FROM mood_entries
+        WHERE user_id = ? AND created_at >= datetime('now', '-7 days')
+    """, (uid,))
+    moods_7d = [r["score"] for r in cursor.fetchall()]
+
+    cursor.execute("""
+        SELECT count(*) as c FROM goals
+        WHERE user_id = ? AND status = 'completed'
+    """, (uid,))
+    completed_goals = (cursor.fetchone() or {})["c"] or 0
+
+    cursor.execute("""
+        SELECT content FROM journal_entries
+        WHERE user_id = ? AND created_at >= datetime('now', '-7 days')
+    """, (uid,))
+    journals_7d = [decrypt_user_text(uid, r["content"]) for r in cursor.fetchall()]
+
+    avg_mood = round(sum(moods_7d) / len(moods_7d), 2) if moods_7d else 3.5
+    summary = f"Over the past 7 days, you completed {len(moods_7d)} mood check-in(s) averaging {avg_mood}/5, and recorded {len(journals_7d)} mindful reflection(s)."
+    wins = ["Dedicated moments for mindful check-ins", f"Accomplished {completed_goals} milestone goal(s)"]
+    challenges = ["Maintaining emotional balance amidst workload"]
+    intentions = ["Continue daily 4-7-8 breathing pauses", "Keep gentle boundaries around bedtime"]
+
+    ref_id = str(uuid.uuid4())
+    week_start = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+    cursor.execute("""
+        INSERT INTO weekly_reflections (id, user_id, week_start, summary_text, wins, challenges, next_intentions)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (ref_id, uid, week_start, summary, json.dumps(wins), json.dumps(challenges), json.dumps(intentions)))
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "synthesized",
+        "id": ref_id,
+        "week_start": week_start,
+        "summary_text": summary,
+        "wins": wins,
+        "challenges": challenges,
+        "next_intentions": intentions,
+        "average_mood_7d": avg_mood
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT WORKS EDIT & DELETE
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WhatWorksEditRequest(BaseModel):
+    positive_feedback_count: Optional[int] = None
+    negative_feedback_count: Optional[int] = None
+
+@router.put("/interventions/what-works/{strategy_name}")
+def edit_what_works_strategy(strategy_name: str, req: WhatWorksEditRequest, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    pos = req.positive_feedback_count if req.positive_feedback_count is not None else 1
+    neg = req.negative_feedback_count if req.negative_feedback_count is not None else 0
+    total = pos + neg
+    success_rate = round(pos / max(1, total), 2)
+    cursor.execute("""
+        UPDATE what_works_profiles
+        SET positive_feedback_count = ?,
+            negative_feedback_count = ?,
+            total_uses = ?,
+            success_rate = ?,
+            last_used_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND strategy_name = ?
+    """, (pos, neg, total, success_rate, uid, strategy_name))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Strategy not found in profile.")
+    return {"status": "success", "strategy_name": strategy_name}
+
+@router.delete("/interventions/what-works/{strategy_name}")
+def delete_what_works_strategy(strategy_name: str, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM what_works_profiles WHERE user_id = ? AND strategy_name = ?", (uid, strategy_name))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Strategy not found in profile.")
+    return {"status": "success", "message": f"Strategy {strategy_name} removed from profile."}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MOOD JOURNEY EDIT & DELETE
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MoodEditRequest(BaseModel):
+    score: Optional[int] = None
+    tags: Optional[str] = None
+    note: Optional[str] = None
+
+@router.put("/mood/{mood_id}")
+def edit_mood_entry(mood_id: str, req: MoodEditRequest, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    enc_note = encrypt_user_text(uid, req.note) if req.note is not None else None
+    cursor.execute("""
+        UPDATE mood_entries
+        SET score = COALESCE(?, score),
+            tags = COALESCE(?, tags),
+            note = COALESCE(?, note)
+        WHERE id = ? AND user_id = ?
+    """, (req.score, req.tags, enc_note, mood_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Mood entry not found.")
+    return {"status": "success", "id": mood_id}
+
+@router.delete("/mood/{mood_id}")
+def delete_mood_entry(mood_id: str, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM mood_entries WHERE id = ? AND user_id = ?", (mood_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Mood entry not found.")
+    return {"status": "success", "message": "Mood entry deleted."}
 
 
 # ===========================================================================

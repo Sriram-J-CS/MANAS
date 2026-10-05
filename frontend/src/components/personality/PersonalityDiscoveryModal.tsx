@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Sparkles, Compass, CheckCircle2, RotateCcw, ArrowRight } from 'lucide-react';
+import { X, Sparkles, Compass, CheckCircle2, RotateCcw, ArrowRight, ShieldAlert, Eye, EyeOff } from 'lucide-react';
 
 interface PersonalityModalProps {
   isOpen: boolean;
@@ -15,6 +15,9 @@ export const PersonalityDiscoveryModal: React.FC<PersonalityModalProps> = ({ isO
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [isAssessing, setIsAssessing] = useState(false);
   const [showQuiz, setShowQuiz] = useState(false);
+  const [tentativeOptIn, setTentativeOptIn] = useState<boolean>(false);
+  const [tentativePatterns, setTentativePatterns] = useState<any[]>([]);
+  const [isOptingIn, setIsOptingIn] = useState<boolean>(false);
 
   const fetchProfileAndQuestions = async () => {
     try {
@@ -37,7 +40,45 @@ export const PersonalityDiscoveryModal: React.FC<PersonalityModalProps> = ({ isO
         const qData = await qRes.json();
         setScenarios(qData.scenarios || []);
       }
+
+      // Fetch tentative patterns opt-in status
+      const patRes = await fetch('/api/personality/tentative-patterns', {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+      });
+      if (patRes.ok) {
+        const patData = await patRes.json();
+        setTentativeOptIn(patData.opted_in ?? false);
+        setTentativePatterns(patData.patterns ?? []);
+      }
     } catch (_) {}
+  };
+
+  const handleToggleTentativeOptIn = async (val: boolean) => {
+    setIsOptingIn(true);
+    try {
+      const authToken = token || localStorage.getItem('manas_access_token');
+      const res = await fetch('/api/personality/tentative-patterns/opt-in', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({ opt_in: val })
+      });
+      if (res.ok) {
+        setTentativeOptIn(val);
+        const patRes = await fetch('/api/personality/tentative-patterns', {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+        });
+        if (patRes.ok) {
+          const patData = await patRes.json();
+          setTentativePatterns(patData.patterns ?? []);
+        }
+      }
+    } catch (_) {}
+    finally {
+      setIsOptingIn(false);
+    }
   };
 
   useEffect(() => {
@@ -214,6 +255,80 @@ export const PersonalityDiscoveryModal: React.FC<PersonalityModalProps> = ({ isO
                 </button>
               </div>
             )}
+
+            {/* Tentative Conversational Patterns (Strictly Opt-in & Non-Clinical) */}
+            <div className="mt-8 pt-6 border-t border-white/10 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    Tentative Conversational Patterns
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300">
+                      Opt-In Only
+                    </span>
+                  </h4>
+                  <p className="text-xs text-white/50 mt-0.5">
+                    Explore subtle recurring linguistic habits observed during conversation
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleToggleTentativeOptIn(!tentativeOptIn)}
+                  disabled={isOptingIn}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    tentativeOptIn
+                      ? 'bg-teal-500/20 border-teal-400/50 text-teal-300'
+                      : 'bg-white/5 border-white/15 text-white/60 hover:text-white'
+                  }`}
+                >
+                  {tentativeOptIn ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <span>{tentativeOptIn ? 'Opted In' : 'Opt In to View'}</span>
+                </button>
+              </div>
+
+              {/* Non-Clinical Disclaimer Banner */}
+              <div className="p-3.5 rounded-2xl bg-amber-950/25 border border-amber-500/30 flex items-start gap-2.5 text-xs text-amber-200/90 leading-relaxed font-sans">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-amber-300 font-mono uppercase text-[11px] block mb-0.5">
+                    Non-Clinical Exploration Notice:
+                  </span>
+                  MANAS never labels, diagnoses, or classifies personality traits from your chat messages. Any tentative reflections shown here are exploratory communication tendencies, strictly enabled only with your explicit opt-in.
+                </div>
+              </div>
+
+              {/* Pattern Cards (Only visible if user opted in) */}
+              {tentativeOptIn ? (
+                <div className="space-y-2 pt-1">
+                  {tentativePatterns.length === 0 ? (
+                    <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 text-center text-xs text-white/40 font-mono">
+                      No conversational patterns detected yet. Chat naturally and check back later.
+                    </div>
+                  ) : (
+                    tentativePatterns.map((pat, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/10 flex items-center justify-between text-xs"
+                      >
+                        <div className="space-y-0.5">
+                          <span className="font-semibold text-white">{pat.pattern || pat.text}</span>
+                          {pat.notes && <p className="text-[11px] text-white/50">{pat.notes}</p>}
+                        </div>
+                        {pat.confidence && (
+                          <span className="text-[10px] font-mono text-teal-400/80 bg-teal-500/10 px-2 py-0.5 rounded-full border border-teal-500/20">
+                            Confidence {Math.round(pat.confidence * 100)}%
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-dashed border-white/10 text-center text-xs text-white/40 font-mono">
+                  Tentative conversational patterns are hidden. Click "Opt In to View" above to display them.
+                </div>
+              )}
+            </div>
           </div>
         </motion.div>
       </div>

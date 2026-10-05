@@ -27,6 +27,36 @@ def calculate_ngram_similarity(text1: str, text2: str, n: int = 3) -> float:
         return 0.0
     return len(set1.intersection(set2)) / len(set1.union(set2))
 
+import httpx
+try:
+    _res = httpx.get("http://127.0.0.1:8008/docs", timeout=0.3)
+    use_live_server = (_res.status_code == 200)
+except Exception:
+    use_live_server = False
+
+def parse_sse_response(text: str) -> dict:
+    meta = {}
+    tokens = []
+    for line in text.split("\n"):
+        if line.startswith("data:"):
+            chunk = line[5:].strip()
+            try:
+                data = json.loads(chunk)
+                if "token" in data:
+                    tokens.append(data["token"])
+                elif "reply" in data or "risk_level" in data:
+                    meta.update(data)
+            except Exception:
+                pass
+    if "reply" not in meta and tokens:
+        meta["reply"] = "".join(tokens)
+    return meta
+
+if not use_live_server:
+    from fastapi.testclient import TestClient
+    from backend.app.main import app
+    test_client = TestClient(app)
+
 def send_chat(message: str, user_id: str = "test-user", user_name: str = "Friend", lang: str = "en", tone: str = "gentle"):
     payload = {
         "user_id": user_id,
@@ -38,13 +68,12 @@ def send_chat(message: str, user_id: str = "test-user", user_name: str = "Friend
         "is_minor": False,
         "reasons": ["Stress", "Exam anxiety"]
     }
-    req = urllib.request.Request(
-        BASE_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    if use_live_server:
+        res = httpx.post(BASE_URL, json=payload, timeout=25.0)
+        return parse_sse_response(res.text) if "event:" in res.text else res.json()
+    else:
+        res = test_client.post("/api/chat", json=payload)
+        return parse_sse_response(res.text) if "event:" in res.text else res.json()
 
 TEST_CASES = [
     # --- Category 1: Exam Anxiety (1-6) ---

@@ -24,13 +24,14 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger("manas.gemini_provider")
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "gemini-flash-latest",
     "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-pro-latest"
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-flash-lite",
 ]
 MODELS_CHAIN = list(dict.fromkeys(FALLBACK_MODELS))
 
@@ -71,6 +72,9 @@ def build_companion_system_prompt(
     recent_bot_messages: Optional[List[str]] = None,
     rolling_summary: str = "",
     session_memory: Optional[Dict[str, Any]] = None,
+    saved_memories: Optional[List[Dict[str, Any]]] = None,
+    breathing_shown_recently: bool = False,
+    turns_since_name_used: int = 5,
 ) -> str:
     """
     System prompt adhering strictly to clinical safety and conversational guidelines:
@@ -82,7 +86,8 @@ def build_companion_system_prompt(
     - Ask at most ONE gentle open question.
     - Vary openers and structure every turn.
     - Never repeat a phrase used in the last 5 bot messages.
-    - No stock lines like "I'm right here beside you" unless it genuinely fits.
+    - Name usage: Max once every ~5 turns.
+    - Saved memories: Reference naturally without robotic listing.
     """
     lang_map = {
         "ta": "Tamil",
@@ -113,32 +118,62 @@ def build_companion_system_prompt(
         helped = session_memory.get("what_helped", "")
         summary = session_memory.get("summary", "")
         memory_prompt = (
-            f"\nPREVIOUS SESSION MEMORY (RECALL GENTLY IF RELEVANT):\n"
+            f"\nPREVIOUS SESSION SUMMARY (RECALL GENTLY IF RELEVANT):\n"
             f"- Past Themes: {themes}\n"
             f"- What Helped: {helped}\n"
             f"- Summary: {summary}\n"
+        )
+
+    saved_mem_prompt = ""
+    if saved_memories:
+        m_lines = []
+        for m in saved_memories[:8]:
+            cat = m.get("category", "fact")
+            fct = m.get("fact", "")
+            if fct:
+                m_lines.append(f"- [{cat.capitalize()}] {fct}")
+        if m_lines:
+            saved_mem_prompt = (
+                f"\nSAVED MEMORIES (REFERENCE NATURALLY WHEN GENUINELY RELEVANT, DO NOT RECITE ROBOTICALLY):\n"
+                + "\n".join(m_lines) + "\n"
+            )
+
+    name_rule = ""
+    if turns_since_name_used < 4:
+        name_rule = (
+            f"\nNAME USAGE MANDATE: You used the user's name recently. DO NOT mention their name '{user_name}' in this reply. "
+            f"Address them warmly and directly without repeating their name.\n"
+        )
+    else:
+        name_rule = (
+            f"\nNAME USAGE: You may use their name '{user_name}' only if it feels exceptionally warm and natural, "
+            f"otherwise speak to them directly without repeating their name.\n"
+        )
+
+    breathing_rule = ""
+    if breathing_shown_recently:
+        breathing_rule = (
+            "\nEXERCISE SUGGESTION: A breathing exercise was shown in the last 4 turns. "
+            "Do NOT suggest breathing again right now; keep suggest_tool as 'none' or 'grounding'/'journaling'.\n"
         )
 
     rolling_prompt = ""
     if rolling_summary:
         rolling_prompt = f"\nSUMMARY OF OLDER CONVERSATION TURNS:\n{rolling_summary}\n"
 
-    return f"""You are MANAS, a warm, friendly emotional wellness companion.
-You are a supportive friend, NOT a therapist.
+    return f"""You are MANAS, an emotionally intelligent, empathetic companion and digital mental twin.
+You talk and think like an authentic close friend or trusted confidant who genuinely cares — NOT a textbook therapist, NOT an AI robot, and NOT a customer service agent.
 
-STRICT CLINICAL BOUNDARIES:
-- Never diagnose any medical or mental health condition.
-- Never prescribe medications, dosages, or medical treatments.
-
-CONVERSATIONAL GUIDELINES:
-1. REFLECTION: Reflect the user's exact words and feelings so they feel deeply understood.
-2. LANGUAGE & NATURAL SPOKEN STYLE: Reply in the user's chosen language ({lang_label}) in natural spoken style. Code-mixing (like Tanglish or Hinglish) is completely allowed if that feels natural and conversational.
-3. CONCISENESS: Exactly 2 to 4 short sentences. Do not write long paragraphs or lists.
-4. INQUIRY: Ask at most ONE gentle open question to invite the user to share further.
-5. VARIETY & OPENERS: Vary your openers and sentence structure every single turn.
-6. NO STOCK LINES: Absolutely NO stock lines (e.g. "I'm right here beside you", "Take a deep breath with me") unless it specifically and genuinely fits their exact context.
-{anti_repetition_prompt}{memory_prompt}{rolling_prompt}
-USER PROFILE:
+CORE CONVERSATIONAL PRINCIPLES:
+1. THINK ON YOUR OWN: Analyze what the user is experiencing in depth. Think for yourself and offer genuine perspective, heartfelt advice, and comforting presence just as a wise, loving close friend would in real life. Avoid formulaic therapy scripts or generic canned rules.
+2. STRICT CLINICAL BOUNDARIES: Never diagnose any medical or mental health disorders. Never prescribe drugs or clinical treatments.
+3. DEEP REFLECTION & EMPATHY: Directly mirror and validate the user's specific feelings and real situation before offering thoughts. If they are venting or overwhelmed, hold quiet space first. If they want guidance, offer clear, comforting perspective.
+4. AUTHENTIC NATURAL SPOKEN LANGUAGE ({lang_label}): Speak fluently in the user's chosen language ({lang_label}). Everyday natural conversational style and colloquial code-mixing (such as Tanglish for Tamil, Hinglish for Hindi) are warmly embraced so it feels like talking to a real friend.
+5. CONCISE & THOUGHTFUL: Exactly 2 to 4 gentle, impactful sentences. No bulleted essays or clinical lectures.
+6. GENTLE INQUIRY: Ask at most ONE natural, open-hearted question to invite them to share if they feel comfortable.
+7. NEVER REPEAT: Vary your opening lines and phrasing every single turn. Never repeat stock phrases like "I'm right here beside you" or previous answers.
+{anti_repetition_prompt}{saved_mem_prompt}{memory_prompt}{rolling_prompt}{name_rule}{breathing_rule}
+USER CONTEXT:
 - Preferred Name: {user_name}
 - Age: {age}
 - Language: {lang_label} ({language})
@@ -214,6 +249,9 @@ class GeminiProvider:
         rolling_summary: str = "",
         session_memory: Optional[Dict[str, Any]] = None,
         recent_bot_messages: Optional[List[str]] = None,
+        saved_memories: Optional[List[Dict[str, Any]]] = None,
+        turns_since_name_used: int = 5,
+        breathing_shown_recently: bool = False,
     ) -> AsyncGenerator[Tuple[str, Any], None]:
         """
         Streams response from Gemini API using Server-Sent Events.
@@ -243,6 +281,9 @@ class GeminiProvider:
             recent_bot_messages=recent_bot_messages,
             rolling_summary=rolling_summary,
             session_memory=session_memory,
+            saved_memories=saved_memories,
+            turns_since_name_used=turns_since_name_used,
+            breathing_shown_recently=breathing_shown_recently,
         )
 
         # Build contents from last 20 turns + current message
@@ -271,9 +312,6 @@ class GeminiProvider:
         else:
             contents.append({"role": "user", "parts": [{"text": message.strip()}]})
 
-        target_model = self.get_model_name()
-        url = f"{self.base_url}/{target_model}:streamGenerateContent?key={self.api_key}&alt=sse"
-
         payload = {
             "systemInstruction": {
                 "parts": [{"text": system_instruction}]
@@ -284,125 +322,146 @@ class GeminiProvider:
                 "responseSchema": STRUCTURED_OUTPUT_SCHEMA,
                 "temperature": 0.7,
                 "maxOutputTokens": 600,
+                "thinkingConfig": {
+                    "thinkingLevel": "LOW"
+                }
             }
         }
 
-        raw_accumulated = ""
-        yielded_len = 0
-        reply_started = False
-        reply_finished = False
+        models_to_try = [self.get_model_name()] + [m for m in MODELS_CHAIN if m != self.get_model_name()]
+        stream_succeeded = False
 
-        try:
-            async with httpx.AsyncClient(timeout=25.0) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    if response.status_code != 200:
-                        err_body = await response.aread()
-                        logger.error("Gemini stream error %d: %s", response.status_code, err_body.decode(errors="ignore")[:300])
-                        yield ("error", "Connection hiccup, please try again.")
-                        yield ("token", "Connection hiccup, please try again.")
-                        yield ("meta", {
-                            "reply": "Connection hiccup, please try again.",
-                            "emotion": "calm",
-                            "suggest_tool": "none",
-                            "quick_replies": [],
-                            "risk_level": "none",
-                            "is_error": True,
-                        })
-                        return
+        for target_model in models_to_try:
+            url = f"{self.base_url}/{target_model}:streamGenerateContent?key={self.api_key}&alt=sse"
+            raw_accumulated = ""
+            yielded_len = 0
+            reply_started = False
+            reply_finished = False
 
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        chunk_text = line[5:].strip()
-                        if not chunk_text or chunk_text == "[DONE]":
-                            continue
-
-                        try:
-                            chunk_json = json.loads(chunk_text)
-                            candidates = chunk_json.get("candidates", [])
-                            if not candidates:
-                                continue
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            for p in parts:
-                                part_text = p.get("text", "")
-                                if not part_text:
-                                    continue
-                                raw_accumulated += part_text
-
-                                # Parse reply field streaming in real time
-                                if not reply_started:
-                                    m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
-                                    if m:
-                                        reply_started = True
-                                        content_after = raw_accumulated[m.end():]
-                                        end_m = re.search(r'(?<!\\)"', content_after)
-                                        if end_m:
-                                            reply_token = content_after[:end_m.start()]
-                                            reply_finished = True
-                                            if reply_token:
-                                                yield ("token", reply_token)
-                                        else:
-                                            if content_after:
-                                                yield ("token", content_after)
-                                                yielded_len = len(content_after)
-                                elif not reply_finished:
-                                    m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
-                                    if m:
-                                        content_after = raw_accumulated[m.end():]
-                                        end_m = re.search(r'(?<!\\)"', content_after)
-                                        if end_m:
-                                            full_reply = content_after[:end_m.start()]
-                                            new_token = full_reply[yielded_len:]
-                                            if new_token:
-                                                yield ("token", new_token)
-                                            reply_finished = True
-                                        else:
-                                            new_token = content_after[yielded_len:]
-                                            if new_token:
-                                                yield ("token", new_token)
-                                                yielded_len = len(content_after)
-                        except Exception as parse_err:
-                            logger.debug("Chunk JSON parse note: %s", parse_err)
-                            continue
-
-            # Parse finalized JSON payload
-            parsed_data: Dict[str, Any] = {}
             try:
-                # Find outermost JSON object
-                json_match = re.search(r'\{[\s\S]*\}', raw_accumulated)
-                if json_match:
-                    parsed_data = json.loads(json_match.group(0))
-            except Exception as final_parse_err:
-                logger.warning("Failed to parse final JSON from Gemini: %s", final_parse_err)
+                async with httpx.AsyncClient(timeout=25.0) as client:
+                    async with client.stream("POST", url, json=payload) as response:
+                        if response.status_code != 200:
+                            err_body = await response.aread()
+                            err_str = err_body.decode(errors="ignore")
+                            logger.warning(
+                                "Gemini model %s returned status %d: %s. Trying next fallback model...",
+                                target_model, response.status_code, err_str[:200]
+                            )
+                            # If thinkingConfig was rejected, remove it and retry this model once
+                            if "thinkingConfig" in payload.get("generationConfig", {}) and ("thinking" in err_str.lower() or response.status_code == 400):
+                                payload["generationConfig"].pop("thinkingConfig", None)
+                            continue
 
-            final_reply = parsed_data.get("reply")
-            if not final_reply and raw_accumulated:
-                # Fallback to regex extraction of reply
-                rep_match = re.search(r'"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', raw_accumulated)
-                if rep_match:
-                    final_reply = rep_match.group(1).encode('utf-8').decode('unicode_escape')
-                else:
-                    final_reply = raw_accumulated.strip()
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data:"):
+                                continue
+                            chunk_text = line[5:].strip()
+                            if not chunk_text or chunk_text == "[DONE]":
+                                continue
 
-            if not final_reply:
-                final_reply = "Connection hiccup, please try again."
+                            try:
+                                chunk_json = json.loads(chunk_text)
+                                candidates = chunk_json.get("candidates", [])
+                                if not candidates:
+                                    continue
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                for p in parts:
+                                    part_text = p.get("text", "")
+                                    if not part_text:
+                                        continue
+                                    raw_accumulated += part_text
 
-            final_emotion = parsed_data.get("emotion") if parsed_data.get("emotion") in ("calm", "empathetic", "encouraging", "concerned") else "calm"
-            final_tool = parsed_data.get("suggest_tool") if parsed_data.get("suggest_tool") in ("none", "breathing", "grounding", "music", "journaling") else "none"
-            final_quick = parsed_data.get("quick_replies") if isinstance(parsed_data.get("quick_replies"), list) else []
-            final_risk = parsed_data.get("risk_level") if parsed_data.get("risk_level") in ("none", "low", "medium", "high") else "none"
+                                    # Parse reply field streaming in real time
+                                    if not reply_started:
+                                        m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
+                                        if m:
+                                            reply_started = True
+                                            content_after = raw_accumulated[m.end():]
+                                            end_m = re.search(r'(?<!\\)"', content_after)
+                                            if end_m:
+                                                reply_token = content_after[:end_m.start()]
+                                                reply_finished = True
+                                                if reply_token:
+                                                    yield ("token", reply_token)
+                                            else:
+                                                if content_after:
+                                                    yield ("token", content_after)
+                                                    yielded_len = len(content_after)
+                                    elif not reply_finished:
+                                        m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
+                                        if m:
+                                            content_after = raw_accumulated[m.end():]
+                                            end_m = re.search(r'(?<!\\)"', content_after)
+                                            if end_m:
+                                                full_reply = content_after[:end_m.start()]
+                                                new_token = full_reply[yielded_len:]
+                                                if new_token:
+                                                    yield ("token", new_token)
+                                                reply_finished = True
+                                            else:
+                                                new_token = content_after[yielded_len:]
+                                                if new_token:
+                                                    yield ("token", new_token)
+                                                    yielded_len = len(content_after)
+                            except Exception as parse_err:
+                                logger.debug("Chunk JSON parse note: %s", parse_err)
+                                continue
 
-            yield ("meta", {
-                "reply": final_reply,
-                "emotion": final_emotion,
-                "suggest_tool": final_tool,
-                "quick_replies": final_quick[:3],
-                "risk_level": final_risk,
-                "is_error": False,
-            })
+                # Parse finalized JSON payload
+                parsed_data: Dict[str, Any] = {}
+                try:
+                    json_match = re.search(r'\{[\s\S]*\}', raw_accumulated)
+                    if json_match:
+                        parsed_data = json.loads(json_match.group(0))
+                except Exception as final_parse_err:
+                    logger.warning("Failed to parse final JSON from Gemini: %s", final_parse_err)
 
-        except Exception as e:
-            logger.error("Gemini stream connection error: %s", e)
+                final_reply = parsed_data.get("reply")
+                if not final_reply and raw_accumulated:
+                    rep_match = re.search(r'"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', raw_accumulated)
+                    if rep_match:
+                        try:
+                            final_reply = rep_match.group(1).encode('utf-8').decode('unicode_escape')
+                        except Exception:
+                            final_reply = rep_match.group(1)
+                    else:
+                        final_reply = raw_accumulated.strip()
+
+                if final_reply:
+                    final_emotion = parsed_data.get("emotion") if parsed_data.get("emotion") in ("calm", "empathetic", "encouraging", "concerned") else "calm"
+                    final_tool = parsed_data.get("suggest_tool") if parsed_data.get("suggest_tool") in ("none", "breathing", "grounding", "music", "journaling") else "none"
+                    final_quick = parsed_data.get("quick_replies") if isinstance(parsed_data.get("quick_replies"), list) else []
+                    final_risk = parsed_data.get("risk_level") if parsed_data.get("risk_level") in ("none", "low", "medium", "high") else "none"
+
+                    # Requirement 5: show breathing card only when suggested and not shown in the last 4 turns
+                    if breathing_shown_recently and final_tool == "breathing":
+                        final_tool = "none"
+
+                    # Requirement 5: do not use user's name in every message (max once every ~5 turns)
+                    if turns_since_name_used < 4 and user_name:
+                        for prefix in [f"{user_name}, ", f"{user_name}! ", f"{user_name}. "]:
+                            if final_reply.startswith(prefix):
+                                final_reply = final_reply[len(prefix):].strip()
+                                final_reply = final_reply[0].upper() + final_reply[1:] if final_reply else final_reply
+                                break
+
+                    yield ("meta", {
+                        "reply": final_reply,
+                        "emotion": final_emotion,
+                        "suggest_tool": final_tool,
+                        "quick_replies": final_quick[:3],
+                        "risk_level": final_risk,
+                        "is_error": False,
+                    })
+                    stream_succeeded = True
+                    break
+            except Exception as e:
+                logger.warning("Model %s stream error: %s. Trying fallback...", target_model, e)
+                continue
+
+        if not stream_succeeded:
+            logger.error("All Gemini streaming models exhausted or unavailable.")
             yield ("error", "Connection hiccup, please try again.")
             yield ("token", "Connection hiccup, please try again.")
             yield ("meta", {
