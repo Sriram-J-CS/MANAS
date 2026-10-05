@@ -188,15 +188,15 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
               Speaking Avatar Studio
             </h2>
             <p className="text-xs text-white/60 font-mono mt-0.5">
-              Step 1: Face Synthesis • Step 2: Voiceover Profile • Step 3: Hedra.ai Animation
+              Step 1: Face Synthesis • Step 2: Voiceover Profile • Step 3: Talking Head Motion Sync
             </p>
 
             {/* Stepper Indicator */}
             <div className="flex items-center gap-2 mt-4">
               {[
                 { num: 1, label: '1. Face Prompt' },
-                { num: 2, label: '2. ElevenLabs Voice' },
-                { num: 3, label: '3. Hedra.ai Sync' },
+                { num: 2, label: '2. Studio Voice' },
+                { num: 3, label: '3. Motion Sync' },
               ].map((s) => (
                 <button
                   key={s.num}
@@ -349,7 +349,7 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
               </motion.div>
             )}
 
-            {/* STEP 2: ElevenLabs Voice Profile & Voice Cloning */}
+            {/* STEP 2: Studio Voice Profile & Voice Cloning */}
             {currentStep === 2 && (
               <motion.div
                 initial={{ opacity: 0, x: 10 }}
@@ -358,7 +358,7 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
               >
                 <div>
                   <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-300 font-mono">
-                    Step 2: ElevenLabs Voice Profile
+                    Step 2: Studio Voice Profile
                   </h3>
                   <p className="text-xs text-white/60 font-sans mt-0.5">
                     Choose an existing profile or match your gender identity. Your companion speaks with
@@ -427,7 +427,7 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
               </motion.div>
             )}
 
-            {/* STEP 3: Hedra.ai Animation Stage */}
+            {/* STEP 3: Talking Head Animation Stage */}
             {currentStep === 3 && (
               <motion.div
                 initial={{ opacity: 0, x: 10 }}
@@ -436,7 +436,7 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
               >
                 <div>
                   <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-300 font-mono">
-                    Step 3: Hedra.ai Talking Head Synthesis
+                    Step 3: Talking Head Motion Synthesis
                   </h3>
                   <p className="text-xs text-white/60 font-sans mt-0.5">
                     Combine the avatar face with voiceover, hand gestures, and emotion to connect
@@ -557,7 +557,7 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
                 {isGenerating ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Hedra Synthesizing...</span>
+                    <span>Synthesizing Avatar...</span>
                   </>
                 ) : generationDone ? (
                   <>

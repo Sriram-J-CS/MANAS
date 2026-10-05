@@ -809,50 +809,6 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             </button>
           )}
 
-          {/* 3-Step Avatar Studio Trigger */}
-          <button
-            type="button"
-            onClick={() => setIsAvatarStudioOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-violet-400/40 bg-violet-500/10 hover:bg-violet-500/20 text-xs font-mono text-violet-700 dark:text-violet-300 font-bold transition-colors cursor-pointer shadow-xs"
-            title="3-Step Speaking Avatar Pipeline (ChatGPT + ElevenLabs + Hedra.ai)"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-            <span className="hidden sm:inline">Avatar Studio</span>
-          </button>
-
-          {/* Quick Customize Mascot Trigger */}
-          <button
-            type="button"
-            onClick={() => setIsCustomizerOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#0A0A0A]/15 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-xs font-mono text-[#0A0A0A] transition-colors cursor-pointer"
-            title="Customize Mascot"
-          >
-            <Sliders className="w-3.5 h-3.5 text-[#8B5CF6]" />
-            <span>Customize</span>
-          </button>
-
-          {/* Soundscapes Music Trigger */}
-          <button
-            type="button"
-            onClick={() => setIsMusicDrawerOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 text-xs font-mono text-[#8B5CF6] font-bold transition-colors cursor-pointer shadow-xs"
-            title="Therapeutic Soundscapes Player (12 Royalty-Free Tracks)"
-          >
-            <Disc3 className="w-3.5 h-3.5 animate-[spin_6s_linear_infinite]" />
-            <span className="hidden sm:inline">Music</span>
-          </button>
-
-          {/* Quick Outfits Trigger */}
-          <button
-            type="button"
-            onClick={() => setIsOutfitsOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 text-xs font-mono text-[#8B5CF6] font-bold transition-colors cursor-pointer shadow-xs"
-            title="Wardrobe Outfits"
-          >
-            <Shirt className="w-3.5 h-3.5" />
-            <span>Outfits</span>
-          </button>
-
           {/* 8 Indian Languages Selector */}
           <div className="relative">
             <button
@@ -924,7 +880,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                   }}
                   className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#8B5CF6] cursor-pointer"
                 >
-                  <Shirt className="w-3.5 h-3.5" /> Outfits &amp; Style
+                  <Shirt className="w-3.5 h-3.5" /> Outfits &amp; Wardrobe
                 </button>
                 <button
                   onClick={() => {
@@ -934,6 +890,24 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                   className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#0A0A0A] cursor-pointer"
                 >
                   <Sliders className="w-3.5 h-3.5 text-[#8B5CF6]" /> Customize Mascot
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMusicDrawerOpen(true);
+                    setIsMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#8B5CF6] cursor-pointer"
+                >
+                  <Disc3 className="w-3.5 h-3.5 text-[#8B5CF6]" /> Soundscapes &amp; Music
+                </button>
+                <button
+                  onClick={() => {
+                    setIsAvatarStudioOpen(true);
+                    setIsMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#8B5CF6] cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-violet-500" /> Avatar Studio
                 </button>
                 <button
                   onClick={() => {
@@ -1207,15 +1181,15 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
 
           {/* BOTTOM CHAT COMPOSER AREA */}
           <div className="p-3 sm:p-5 border-t border-[#0A0A0A]/10 bg-[#FFFFFF] space-y-2.5 shrink-0 z-10">
-            {/* Quick Contextual Response Chips from Live LLM (Requirement 4) */}
-            <div className="flex flex-wrap gap-1.5">
+            {/* Quick Contextual Response Chips from Live LLM (horizontal scroll above input bar) */}
+            <div className="flex items-center gap-1.5 overflow-x-auto py-1 scroll-smooth shrink-0 flex-nowrap whitespace-nowrap">
               {quickReplies.map((chip, idx) => (
                 <button
                   key={idx}
                   type="button"
                   disabled={isTyping}
                   onClick={() => handleSendMessage(chip)}
-                  className="px-2.5 py-1 rounded-full border border-[#0A0A0A]/15 bg-[#FDFBF7] text-[#0A0A0A] hover:bg-[#0A0A0A] hover:text-[#FFFFFF] disabled:opacity-50 disabled:cursor-not-allowed transition-all text-xs font-mono tracking-wide cursor-pointer"
+                  className="shrink-0 px-3 py-1.5 rounded-full border border-[#0A0A0A]/15 bg-[#FDFBF7] text-[#0A0A0A] hover:bg-[#0A0A0A] hover:text-[#FFFFFF] disabled:opacity-50 disabled:cursor-not-allowed transition-all text-xs font-mono tracking-wide cursor-pointer shadow-xs"
                 >
                   {chip}
                 </button>

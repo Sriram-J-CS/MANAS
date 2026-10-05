@@ -85,7 +85,7 @@ const baseConfig: Record<'en' | 'ta', SiteConfig> = {
       {
         id: "speech-pipeline",
         tag: "02 / SPEECH",
-        title: "Sarvam Multilingual Pipeline",
+        title: "Indic Multilingual Pipeline",
         line: "Natural Tamil, English and Tanglish speech models with barge-in support.",
         detail: "Streaming speech-to-text with on-screen editable transcripts and low-latency text-to-speech.",
         route: "#voice-mode",
@@ -153,7 +153,7 @@ const baseConfig: Record<'en' | 'ta', SiteConfig> = {
       members: [
         { name: "Longitudinal Mood Modeling", regNo: "01", role: "Baseline Drift Analysis" },
         { name: "Crisis Safety Guardrails", regNo: "02", role: "Tele-MANAS 14416 Protocol" },
-        { name: "Sarvam Multilingual Voice", regNo: "03", role: "Indic Low-Latency Speech" },
+        { name: "Indic Multilingual Voice", regNo: "03", role: "Indic Low-Latency Speech" },
         { name: "DPDP Privacy Architecture", regNo: "04", role: "Zero-Knowledge Encryption" },
         { name: "Real-Time 3D Mascot", regNo: "05", role: "Expressive Visual Empathy" },
       ],
@@ -163,7 +163,7 @@ const baseConfig: Record<'en' | 'ta', SiteConfig> = {
       fragments: [
         "REAL-TIME EMPATHY",
         "ZERO DIAGNOSIS BIAS",
-        "SARVAM INDIC VOICE",
+        "NEURAL INDIC VOICE",
         "TELE-MANAS 14416",
         "7-DAY MOOD BASELINE",
         "END-TO-END CONSENT",

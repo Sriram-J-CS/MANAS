@@ -201,7 +201,7 @@ export const FeatureCards: React.FC<FeatureCardsProps> = ({
                   <Mic className="w-4 h-4" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-[#101820]">Sarvam Saaras STT</p>
+                  <p className="text-xs font-bold text-[#101820]">Neural Indic STT</p>
                   <p className="text-[11px] text-[#5B6673]">Whisper-Class Tamil & Tanglish</p>
                 </div>
               </div>

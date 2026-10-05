@@ -194,9 +194,9 @@ const baseTranslations: Record<'en' | 'ta', TranslationContent> = {
         voice: {
           mono: "02 / VOICE",
           title: "Multilingual Speech Pipeline",
-          line: "Speak naturally in Tamil, English, or Tanglish with Sarvam speech models and responsive barge-in capability.",
+          line: "Speak naturally in Tamil, English, or Tanglish with neural speech models and responsive barge-in capability.",
           detail: "Includes streaming speech-to-text with on-screen editable transcripts and low-latency text-to-speech, prioritizing raw audio deletion for privacy.",
-          badge: "Sarvam STT / TTS",
+          badge: "Neural STT / TTS",
         },
         moodTwin: {
           mono: "03 / MOOD TWIN",
@@ -256,7 +256,7 @@ const baseTranslations: Record<'en' | 'ta', TranslationContent> = {
           bio: "Zero-latency crisis pre-screening halting generative text on safety trigger.",
         },
         {
-          name: "Sarvam Multilingual Voice",
+          name: "Indic Multilingual Voice",
           regNo: "03",
           role: "Indic Speech Pipeline",
           bio: "Barge-in capable Tamil, English, and Tanglish speech models with low latency.",
@@ -369,9 +369,9 @@ const baseTranslations: Record<'en' | 'ta', TranslationContent> = {
         voice: {
           mono: "02 / குரல்",
           title: "பன்மொழி குரல் கட்டமைப்பு",
-          line: "சர்வம் (Sarvam) மொழி மாதிரிகளுடன் தமிழ், ஆங்கிலம் அல்லது தங்கிலீஷில் இயல்பாகப் பேசுங்கள்.",
+          line: "நவீன மொழி மாதிரிகளுடன் தமிழ், ஆங்கிலம் அல்லது தங்கிலீஷில் இயல்பாகப் பேசுங்கள்.",
           detail: "திரையில் திருத்தக்கூடிய உரையுடன் உடனடி பேச்சு-உரை மாற்றம் மற்றும் குறைந்த தாமத உரை-பேச்சு ஒலிபரப்பு. தனியுரிமைக்காக குரல் பதிவுகள் உடனடியாக நீக்கப்படும்.",
-          badge: "சர்வம் STT / TTS",
+          badge: "நியூரல் STT / TTS",
         },
         moodTwin: {
           mono: "03 / மன இரட்டை",

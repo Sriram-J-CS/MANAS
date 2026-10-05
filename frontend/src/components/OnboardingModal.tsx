@@ -400,6 +400,43 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setStep(4);
   };
 
+  // Skip handler for each step
+  const handleSkipStep = (currentStep: number) => {
+    switch (currentStep) {
+      case 1:
+        // Skip language -> advance to name with default language
+        setStep(2);
+        break;
+      case 2:
+        // Skip name -> set friendly default fallback and proceed
+        if (!name.trim()) setName('Friend');
+        setNameError('');
+        setStep(3);
+        break;
+      case 3:
+        // Skip age -> set safe adult default 20 to avoid minor consent lock
+        if (!age || age < 18) setAge(20);
+        setAgeError('');
+        setStep(4);
+        break;
+      case 4:
+        // Skip contact & OTP -> proceed to avatar photo
+        setStep(5);
+        break;
+      case 5:
+        // Skip photo -> stop webcam and proceed to voice setup
+        stopCamera();
+        setStep(6);
+        break;
+      case 6:
+        // Skip voice -> finish onboarding with defaults
+        handleFinish();
+        break;
+      default:
+        break;
+    }
+  };
+
   // Step 4: Send OTP to Mobile Number
   const handleSendOtp = async () => {
     const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
@@ -641,16 +678,16 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         </div>
 
         {/* Main Step Body */}
-        <div className="p-6 flex-1 min-h-[340px] flex flex-col justify-center">
-          <AnimatePresence mode="wait">
+        <div className="p-6 flex-1 min-h-[340px] flex flex-col justify-center relative overflow-hidden">
+          <AnimatePresence mode="popLayout" initial={false}>
             {/* STEP 1: LANGUAGE (8 Indic Languages in Native Script) */}
             {step === 1 && (
               <motion.div
                 key="step1"
-                initial={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0.7, x: 12 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="flex flex-col gap-4 max-w-xl mx-auto w-full"
               >
                 <div>
@@ -698,10 +735,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             {step === 2 && (
               <motion.div
                 key="step2"
-                initial={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0.7, x: 12 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="flex flex-col gap-4 max-w-lg mx-auto w-full"
               >
                 <div>
@@ -747,10 +784,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             {step === 3 && (
               <motion.div
                 key="step3"
-                initial={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0.7, x: 12 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="flex flex-col gap-4 max-w-lg mx-auto w-full"
               >
                 <div>
@@ -827,10 +864,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             {step === 4 && (
               <motion.div
                 key="step4"
-                initial={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0.7, x: 12 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="flex flex-col gap-4 max-w-lg mx-auto w-full"
               >
                 <div>
@@ -999,10 +1036,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             {step === 5 && (
               <motion.div
                 key="step5"
-                initial={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0.7, x: 12 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="flex flex-col gap-4 max-w-lg mx-auto w-full items-center text-center"
               >
                 <div>
@@ -1083,10 +1120,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             {step === 6 && (
               <motion.div
                 key="step6"
-                initial={{ opacity: 0, x: 20 }}
+                initial={{ opacity: 0.7, x: 12 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.25 }}
+                exit={{ opacity: 0, x: -12 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className="flex flex-col gap-4 max-w-lg mx-auto w-full"
               >
                 <div>
@@ -1218,6 +1255,15 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Skip for now option available on every onboarding step */}
+            <button
+              type="button"
+              onClick={() => handleSkipStep(step)}
+              className="px-4 py-2.5 rounded-full text-xs font-mono font-medium text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60 hover:text-[#0A0A0A] dark:hover:text-[#FFFFFF] hover:bg-[#0A0A0A]/5 dark:hover:bg-[#FFFFFF]/5 transition-colors cursor-pointer"
+            >
+              Skip for now
+            </button>
+
             {step === 1 && (
               <button
                 type="button"
@@ -1257,7 +1303,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 onClick={() => setStep(5)}
                 className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
-                {emailVerified ? t.common.next : t.common.skip}
+                {t.common.next}
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
@@ -1271,7 +1317,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 }}
                 className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
-                {photoDataUrl ? t.common.next : t.common.skip}
+                {t.common.next}
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}

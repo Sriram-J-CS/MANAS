@@ -87,7 +87,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               01
             </div>
             <div>
-              <p className="text-xs font-bold text-[#101820]">Sarvam Indic</p>
+              <p className="text-xs font-bold text-[#101820]">Indic Voice</p>
               <p className="text-[11px] text-[#5B6673]">Tamil · English · Tanglish</p>
             </div>
           </div>

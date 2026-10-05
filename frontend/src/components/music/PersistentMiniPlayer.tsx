@@ -33,11 +33,13 @@ export const PersistentMiniPlayer: React.FC<PersistentMiniPlayerProps> = ({
 
   const { currentTrack, isPlaying, isDucked, userVolume, isMuted } = playerState;
 
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+
   return (
     <div
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className={`fixed bottom-4 left-4 z-40 max-w-sm transition-all duration-300 font-sans ${className}`}
+      className={`fixed bottom-24 left-4 z-40 max-w-sm transition-all duration-300 font-sans ${className}`}
     >
       <div className="flex items-center gap-3 px-3.5 py-2.5 bg-[#FFFFFF]/95 backdrop-blur-xl border border-[#0A0A0A]/12 rounded-2xl shadow-xl hover:shadow-2xl transition-all">
         {/* Album Art with Rotating Disc on Play */}
