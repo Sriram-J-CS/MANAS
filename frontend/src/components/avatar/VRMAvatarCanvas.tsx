@@ -52,9 +52,22 @@ function VRMModelInner({
   onError,
   onWaveEnd,
 }: VRMAvatarProps) {
-  const { scene } = useThree();
+  const { scene, camera } = useThree();
   const vrmRef = useRef<VRM | null>(null);
   const lipSyncRef = useRef<VRMLipSync>(new VRMLipSync());
+
+  const headHeightRef = useRef<number>(1.35);
+
+  // Upper-body framing: aimed at head bone at head height, FOV ~30
+  useEffect(() => {
+    const headY = headHeightRef.current;
+    camera.position.set(0, headY - 0.02, 1.48);
+    camera.lookAt(0, headY - 0.02, 0);
+    if ('fov' in camera) {
+      (camera as THREE.PerspectiveCamera).fov = 30;
+      camera.updateProjectionMatrix();
+    }
+  }, [camera]);
 
   // Original materials cache for outfit swapping and clean resets
   const originalMaterialsRef = useRef<Map<string, THREE.Material>>(new Map());
@@ -124,6 +137,11 @@ function VRMModelInner({
     targetExprWeights.current = t;
   }, [emotion]);
 
+  const onLoadedRef = useRef(onLoaded);
+  onLoadedRef.current = onLoaded;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
   // Primary model loader
   useEffect(() => {
     let isDisposed = false;
@@ -134,16 +152,20 @@ function VRMModelInner({
     const fallbackPath = '/avatars/mental%20health%20chatbot%203d%20avtar.vrm';
 
     const loadModel = (url: string, isFallback = false) => {
+      console.log('[VRMAvatar] loadModel start:', url);
       loader.load(
         url,
         (gltf) => {
+          console.log('[VRMAvatar] gltf received for:', url);
           if (isDisposed) return;
           const vrm = gltf.userData.vrm as VRM;
+          console.log('[VRMAvatar] vrm instance exists:', !!vrm, 'metaVersion:', vrm?.meta?.metaVersion);
           if (!vrm) {
+            console.warn('[VRMAvatar] Not a valid VRM, trying fallback...');
             if (!isFallback) {
               loadModel(fallbackPath, true);
             } else {
-              onError?.(new Error('Loaded asset is not a valid VRM.'));
+              onErrorRef.current?.(new Error('Loaded asset is not a valid VRM.'));
             }
             return;
           }
@@ -152,13 +174,29 @@ function VRMModelInner({
             VRMUtils.removeUnnecessaryVertices(gltf.scene);
           } catch (_) {}
 
-          // VRM naturally faces -Z; rotate 180 degrees to face camera
-          vrm.scene.rotation.y = Math.PI;
+          // 1. Model orientation check:
+          // If VRM is v0.x, call VRMUtils.rotateVRM0(vrm).
+          // Else rotate the scene by Math.PI if it faces away from the camera (+Z).
+          if (vrm.meta?.metaVersion === '0') {
+            VRMUtils.rotateVRM0(vrm);
+          } else {
+            vrm.scene.updateMatrixWorld(true);
+            const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+            if (headNode) {
+              const headQuat = new THREE.Quaternion();
+              headNode.getWorldQuaternion(headQuat);
+              const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(headQuat);
+              if (forward.z < 0) {
+                vrm.scene.rotation.y += Math.PI;
+              }
+            }
+          }
 
           // Auto-calculate bounds and center the avatar
           const box = new THREE.Box3().setFromObject(vrm.scene);
           const size = box.getSize(new THREE.Vector3());
-          const targetHeight = 2.65;
+          // Standard human avatar height (1.55m) for perfect portrait chest-up framing
+          const targetHeight = 1.55;
           if (size.y > 0) {
             vrm.scene.scale.setScalar(targetHeight / size.y);
           }
@@ -168,6 +206,22 @@ function VRMModelInner({
           vrm.scene.position.x -= scaledCenter.x;
           vrm.scene.position.y -= scaledBox.min.y;
           vrm.scene.position.z -= scaledCenter.z;
+
+          vrm.scene.updateMatrixWorld(true);
+
+          // 2. Camera upper-body framing aimed at head bone
+          const headBone = vrm.humanoid?.getNormalizedBoneNode('head');
+          if (headBone) {
+            const headPos = new THREE.Vector3();
+            headBone.getWorldPosition(headPos);
+            headHeightRef.current = headPos.y;
+            camera.position.set(0, headPos.y - 0.02, 1.48);
+            camera.lookAt(0, headPos.y - 0.02, 0);
+            if ('fov' in camera) {
+              (camera as THREE.PerspectiveCamera).fov = 30;
+              camera.updateProjectionMatrix();
+            }
+          }
 
           // Enable shadows and cache original materials
           originalMaterialsRef.current.clear();
@@ -195,15 +249,17 @@ function VRMModelInner({
 
           vrmRef.current = vrm;
           scene.add(vrm.scene);
-          onLoaded?.();
+          console.log('[VRMAvatar] Model added to scene successfully!');
+          onLoadedRef.current?.();
         },
         undefined,
         (err) => {
+          console.error('[VRMAvatar] loadModel error:', err, 'url:', url);
           if (!isFallback) {
             loadModel(fallbackPath, true);
           } else {
             console.error('Failed to load VRM model:', err);
-            onError?.(err);
+            onErrorRef.current?.(err);
           }
         }
       );
@@ -218,21 +274,28 @@ function VRMModelInner({
         vrmRef.current = null;
       }
     };
-  }, [gender, scene, onLoaded, onError]);
+  }, [gender, scene]);
 
   // Handle outfit material swapper
   useEffect(() => {
     const vrm = vrmRef.current;
     if (!vrm) return;
 
-    if (gesture === 'base' || outfit === 'base') {
+    if (gesture === 'base' || outfit === 'base' || outfit === 'yellow_tshirt') {
       // Restore pristine base materials
       vrm.scene.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
           const mesh = obj as THREE.Mesh;
-          const orig = originalMaterialsRef.current.get(mesh.uuid);
-          if (orig) {
-            mesh.material = orig.clone();
+          if (Array.isArray(mesh.material)) {
+            mesh.material = mesh.material.map((_, idx) => {
+              const orig = originalMaterialsRef.current.get(`${mesh.uuid}_${idx}`);
+              return orig ? orig.clone() : mesh.material[idx];
+            });
+          } else if (mesh.material) {
+            const orig = originalMaterialsRef.current.get(mesh.uuid);
+            if (orig) {
+              mesh.material = orig.clone();
+            }
           }
         }
       });
@@ -242,31 +305,56 @@ function VRMModelInner({
     const theme = OUTFIT_COLOR_THEMES[outfit];
     if (!theme) return;
 
-    // Apply themed clothing material tint to clothing meshes while preserving face/skin/eyes
+    // Apply themed clothing material tint to clothing meshes & materials while preserving face/skin/eyes/hair
     vrm.scene.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
-        const name = (mesh.name || '').toLowerCase();
-        const isClothing =
-          name.includes('top') ||
-          name.includes('cloth') ||
-          name.includes('bottom') ||
-          name.includes('hoodie') ||
-          name.includes('shirt') ||
-          name.includes('pant') ||
-          name.includes('dress') ||
-          name.includes('jacket') ||
-          name.includes('outfit');
+        const meshName = (mesh.name || '').toLowerCase();
 
-        if (isClothing && mesh.material) {
-          const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
-          if ('color' in mat) {
-            mat.color.setHex(theme.main);
+        const updateMaterial = (mat: any, origKey?: string) => {
+          if (!mat) return mat;
+          const matName = (mat.name || '').toLowerCase();
+          const isClothing =
+            matName.includes('cloth') ||
+            matName.includes('top') ||
+            matName.includes('bottom') ||
+            matName.includes('hoodie') ||
+            matName.includes('shirt') ||
+            matName.includes('pant') ||
+            matName.includes('dress') ||
+            matName.includes('jacket') ||
+            matName.includes('outfit') ||
+            meshName.includes('cloth');
+
+          const isExcluded =
+            matName.includes('skin') ||
+            matName.includes('face') ||
+            matName.includes('eye') ||
+            matName.includes('hair') ||
+            meshName.includes('face') ||
+            meshName.includes('hair');
+
+          if (isClothing && !isExcluded) {
+            const orig = origKey ? originalMaterialsRef.current.get(origKey) : null;
+            const newMat = (orig ? orig.clone() : mat.clone());
+            if ('color' in newMat && newMat.color?.setHex) {
+              newMat.color.setHex(theme.main);
+            }
+            if ('shadeColorFactor' in newMat && newMat.shadeColorFactor?.setHex) {
+              newMat.shadeColorFactor.setHex(theme.accent);
+            }
+            if ('roughness' in newMat) {
+              newMat.roughness = theme.roughness;
+            }
+            return newMat;
           }
-          if ('roughness' in mat) {
-            mat.roughness = theme.roughness;
-          }
-          mesh.material = mat;
+          return mat;
+        };
+
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map((mat, idx) => updateMaterial(mat, `${mesh.uuid}_${idx}`));
+        } else if (mesh.material) {
+          mesh.material = updateMaterial(mesh.material, mesh.uuid);
         }
       }
     });
@@ -282,26 +370,40 @@ function VRMModelInner({
     // Update VRM springs, physics, and constraints
     vrm.update(delta);
 
-    // 1. Procedural Humanoid Bone Animation (Idle, Listening, Thinking, Speaking, Wave)
+    // 1. Procedural Humanoid Bone Animation (Idle, Breathing, Weight Shift, Arm Rig, Wave, Expressions)
     const humanoid = vrm.humanoid;
     if (humanoid) {
       const head = humanoid.getNormalizedBoneNode('head');
       const neck = humanoid.getNormalizedBoneNode('neck');
       const chest = humanoid.getNormalizedBoneNode('chest');
       const spine = humanoid.getNormalizedBoneNode('spine');
+      const hips = humanoid.getNormalizedBoneNode('hips');
+      const leftUpperArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+      const leftLowerArm = humanoid.getNormalizedBoneNode('leftLowerArm');
+      const leftHand = humanoid.getNormalizedBoneNode('leftHand');
       const rightUpperArm = humanoid.getNormalizedBoneNode('rightUpperArm');
       const rightLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
       const rightHand = humanoid.getNormalizedBoneNode('rightHand');
 
+      // Small breathing motion & weight shift
+      const breath = Math.sin(time * 1.5);
+      const sway = Math.sin(time * 0.7);
+      const swayCos = Math.cos(time * 0.5);
+
       // Natural breathing on chest
       if (chest) {
-        chest.rotation.x = Math.sin(time * 1.5) * 0.022;
+        chest.rotation.x = breath * 0.022;
       }
 
-      // Gentle spine sway
+      // Small weight shift and breathing on spine & hips
       if (spine) {
-        spine.rotation.z = Math.sin(time * 0.75) * 0.012;
-        spine.rotation.y = Math.sin(time * 0.5) * 0.015;
+        spine.rotation.z = sway * 0.012;
+        spine.rotation.y = swayCos * 0.015;
+        spine.rotation.x = breath * 0.008;
+      }
+      if (hips) {
+        hips.rotation.z = sway * 0.006;
+        hips.position.x = sway * 0.004;
       }
 
       // Natural Head Gaze Tracking & Microsaccades
@@ -340,7 +442,24 @@ function VRMModelInner({
         neck.rotation.y = head ? head.rotation.y * 0.35 : 0;
       }
 
-      // Procedural Wave Animation (Right Arm)
+      // Natural Idle Pose:
+      // Left Arm: rotate upperArm ~70 deg down (z ~ -1.2 rad), slight elbow bend, relaxed hand
+      if (leftUpperArm) {
+        leftUpperArm.rotation.z = -1.22 + breath * 0.008;
+        leftUpperArm.rotation.x = 0.08 + breath * 0.01;
+        leftUpperArm.rotation.y = 0.05;
+      }
+      if (leftLowerArm) {
+        leftLowerArm.rotation.y = -0.32;
+        leftLowerArm.rotation.z = -0.06;
+      }
+      if (leftHand) {
+        leftHand.rotation.z = -0.06;
+        leftHand.rotation.x = 0.06;
+        leftHand.rotation.y = -0.04;
+      }
+
+      // Procedural Wave Animation (Right Arm) or Natural Idle Pose
       if (isWavingRef.current) {
         waveTimeRef.current += delta;
         const progress = waveTimeRef.current / waveDuration;
@@ -348,11 +467,13 @@ function VRMModelInner({
         if (progress < 1.0) {
           const envelope = Math.sin(progress * Math.PI); // Smooth in and out
           if (rightUpperArm) {
-            rightUpperArm.rotation.z = THREE.MathUtils.lerp(0, -1.45, envelope);
-            rightUpperArm.rotation.x = THREE.MathUtils.lerp(0, 0.28, envelope);
+            rightUpperArm.rotation.z = THREE.MathUtils.lerp(1.22, -1.45, envelope);
+            rightUpperArm.rotation.x = THREE.MathUtils.lerp(0.08, 0.28, envelope);
+            rightUpperArm.rotation.y = THREE.MathUtils.lerp(-0.05, 0, envelope);
           }
           if (rightLowerArm) {
-            rightLowerArm.rotation.y = THREE.MathUtils.lerp(0, 1.25, envelope);
+            rightLowerArm.rotation.y = THREE.MathUtils.lerp(0.32, 1.25, envelope);
+            rightLowerArm.rotation.z = THREE.MathUtils.lerp(0.06, 0, envelope);
           }
           if (rightHand) {
             // Fast hand oscillation
@@ -364,16 +485,20 @@ function VRMModelInner({
           onWaveEnd?.();
         }
       } else {
-        // Return arms smoothly to rest
-        if (rightUpperArm && rightUpperArm.rotation.z < -0.05) {
-          rightUpperArm.rotation.z = THREE.MathUtils.lerp(rightUpperArm.rotation.z, 0, delta * 6);
-          rightUpperArm.rotation.x = THREE.MathUtils.lerp(rightUpperArm.rotation.x, 0, delta * 6);
+        // Right Arm Idle Pose: rotate upperArm ~70 deg down (z ~ +1.2 rad), slight elbow bend, relaxed hand
+        if (rightUpperArm) {
+          rightUpperArm.rotation.z = 1.22 - breath * 0.008;
+          rightUpperArm.rotation.x = 0.08 + breath * 0.01;
+          rightUpperArm.rotation.y = -0.05;
         }
-        if (rightLowerArm && rightLowerArm.rotation.y > 0.05) {
-          rightLowerArm.rotation.y = THREE.MathUtils.lerp(rightLowerArm.rotation.y, 0, delta * 6);
+        if (rightLowerArm) {
+          rightLowerArm.rotation.y = 0.32;
+          rightLowerArm.rotation.z = 0.06;
         }
-        if (rightHand && Math.abs(rightHand.rotation.z) > 0.02) {
-          rightHand.rotation.z = THREE.MathUtils.lerp(rightHand.rotation.z, 0, delta * 6);
+        if (rightHand) {
+          rightHand.rotation.z = 0.06;
+          rightHand.rotation.x = 0.06;
+          rightHand.rotation.y = 0.04;
         }
       }
     }
@@ -465,7 +590,7 @@ export const VRMAvatarCanvas: React.FC<VRMAvatarProps> = (props) => {
       aria-label="3D AI Companion Avatar Canvas"
     >
       <Canvas
-        camera={{ position: [0, 1.35, 2.9], fov: 28 }}
+        camera={{ position: [0, 1.33, 1.48], fov: 30 }}
         dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 2)]}
         frameloop={isTabVisible ? 'always' : 'never'}
         gl={{
@@ -484,9 +609,9 @@ export const VRMAvatarCanvas: React.FC<VRMAvatarProps> = (props) => {
         {/* Studio Lighting */}
         <hemisphereLight args={['#FFFFFF', '#D8D0C4', 1.8]} />
 
-        {/* Warm Key Light with soft shadow */}
+        {/* Warm Key Light directly illuminating face and shoulders */}
         <directionalLight
-          position={[1.5, 3.5, 4]}
+          position={[1.2, 2.5, 2.8]}
           intensity={2.2}
           castShadow
           shadow-mapSize-width={1024}
