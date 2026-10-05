@@ -274,12 +274,18 @@ export async function clearChatHistoryRemote(userId: string): Promise<boolean> {
 /**
  * Session memory: stores a short summary (mood themes, what helped) in DB.
  */
-export async function saveSessionSummaryRemote(userId: string, messages?: any[]): Promise<any> {
+export async function saveSessionSummaryRemote(
+  userId: string,
+  summaryData?: { mood_themes?: string; what_helped?: string; summary?: string; messages?: any[] } | any[]
+): Promise<any> {
   try {
+    const payload = Array.isArray(summaryData)
+      ? { user_id: userId, messages: summaryData }
+      : { user_id: userId, ...(summaryData || {}) };
     const res = await fetch('/api/session/summary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId, messages }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) return null;
     return await res.json();

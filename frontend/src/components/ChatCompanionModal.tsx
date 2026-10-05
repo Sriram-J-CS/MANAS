@@ -1121,6 +1121,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               }
               isSpeaking={isAvatarSpeaking}
               isUserTyping={isListening || isTyping}
+              isThinking={isThinking}
               audioEnergy={audioEnergy}
               prefer3D={true}
             />

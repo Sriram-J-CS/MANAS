@@ -117,20 +117,31 @@ export const AvatarStudioModal: React.FC<AvatarStudioModalProps> = ({
 
       setGenerationDone(true);
 
-      // Apply to active companion stage
+      // Requirement 6: Photo avatar step routes to the default 3D model
       onApplyAvatar({
-        avatarUrl: data.active_avatar_url,
-        avatarType: data.avatar_mode === 'custom_face' ? 'custom' : selectedGender,
-        isCustomAvatar: data.avatar_mode === 'custom_face',
-        voiceGender: data.voice_gender,
-        voicePitch: data.voice_pitch,
+        avatarUrl: undefined,
+        avatarType: selectedGender,
+        isCustomAvatar: false,
+        voiceGender: selectedGender,
+        voicePitch: data?.voice_pitch || (selectedGender === 'girl' ? 1.15 : 0.9),
       });
 
       setTimeout(() => {
         onClose();
-      }, 1400);
+      }, 1200);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error executing pipeline.');
+      // Graceful fallback to default model if remote pipeline is unreachable
+      setGenerationDone(true);
+      onApplyAvatar({
+        avatarUrl: undefined,
+        avatarType: selectedGender,
+        isCustomAvatar: false,
+        voiceGender: selectedGender,
+        voicePitch: selectedGender === 'girl' ? 1.15 : 0.9,
+      });
+      setTimeout(() => {
+        onClose();
+      }, 1200);
     } finally {
       setIsGenerating(false);
     }

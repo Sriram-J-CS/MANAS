@@ -163,6 +163,14 @@ class SpeechEngine {
     return this.isSpeaking || this.currentUtterance !== null || this.currentAudioElement !== null;
   }
 
+  public getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode;
+  }
+
+  public getAudioElement(): HTMLAudioElement | null {
+    return this.currentAudioElement;
+  }
+
   /**
    * Preprocesses text: removes markdown & emojis, replaces helpline numbers digit by digit.
    */
