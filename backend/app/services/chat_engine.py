@@ -1290,162 +1290,7 @@ def _normalize_llm(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-# ===========================================================================
-# 6. LOCAL FALLBACK
-# ===========================================================================
-_FALLBACK: Dict[str, Dict[str, List[str]]] = {
-    "en": {
-        "exam": [
-            "Exam pressure can make your mind feel completely blank, but one test never defines who you are. Let's steady your breathing together: breathe in gently through your nose, and slowly release it.",
-            "When study deadlines pile up, our mind naturally goes into survival freeze. Put your materials aside for sixty seconds, place both feet firmly on the floor, and take a quiet breath with me.",
-            "Academic anxiety can feel like an impossible weight. You've walked through hard days before; let's take a sip of water and take this one breath at a time.",
-        ],
-        "lonely": [
-            "Feeling lonely can be very heavy, and I'm really glad you reached out and told me. How does your chest feel right now as you sit with this?",
-            "Isolation often tricks us into feeling invisible or disconnected. You matter deeply, and I'm right here listening without rushing you.",
-            "Even in the quietest moments, you don't have to carry this alone. Let's take a slow breath together and stay present in this space.",
-        ],
-        "sleep": [
-            "Not being able to sleep magnifies every single worry. Tonight, try setting your screens away and jotting your thoughts on paper so your mind can rest.",
-            "When tossing and turning makes you anxious, sitting up in gentle light to rest your eyes can help break the cycle. There is no rush to force sleep.",
-            "Exhaustion makes everything harder to handle. Soften your shoulders right now, unclench your jaw, and let out a long, slow exhale.",
-        ],
-        "anxious": [
-            "Anxiety signals danger even when you are physically safe, but this rush of feeling will pass. Breathe in gently with me, and let your out-breath be twice as long.",
-            "I hear the worry in your words. Let's ground right into this moment: notice the weight of your feet on the floor and take three steady breaths.",
-            "You are safe right here in this moment. Place a hand on your chest, feel your heartbeat, and let's slow things down together.",
-        ],
-        "default": [
-            "Thank you for sharing that with me. What is feeling like the heaviest part of this right now?",
-            "I'm listening carefully to what you're saying. Take your time—what thoughts are running through your mind?",
-            "When things feel tangled, putting them into words takes courage. What do you feel you need most in this moment?",
-            "I'm right here with you. Take a steady breath, and tell me whatever you feel comfortable sharing.",
-        ],
-    },
-    "ta": {
-        "exam": [
-            "தேர்வு அழுத்தம் மனதை வெறுமையாக்குவது இயல்பு, ஆனால் ஒரு தேர்வு உங்கள் மதிப்பை தீர்மானிக்காது. என்னுடன் சேர்ந்து ஒரு முறை ஆழமாக மூச்சை உள்ளிழுத்து மெதுவாக வெளிவிடுங்கள்.",
-            "தேர்வு குறித்த பயம் வரும்போது மனம் உறைந்து போவது இயற்கை. பாடப்புத்தகங்களை ஒரு நிமிடம் ஓரமாக வைத்துவிட்டு, கண்களை மூடி ஆழமாக மூச்சு விடுங்கள்.",
-        ],
-        "lonely": [
-            "தனிமை மிகவும் பாரமானது, அதை என்னிடம் பகிர்ந்ததற்கு நன்றி. இப்போது நீங்கள் தனியாக இல்லை; நான் உங்களுடன் இருக்கிறேன்.",
-            "யாரும் நம்மைப் புரிந்து கொள்ளவில்லை என்று தோன்றும் போது தனிமை இன்னும் கூடும். உங்கள் மனதை ஆசுவாசப்படுத்திக் கொள்ளுங்கள்.",
-        ],
-        "sleep": [
-            "தூக்கம் வராத போது எல்லாக் கவலைகளும் பெரிதாகத் தெரியும். படுக்கையில் புரள்வதை விட, எழுந்து அமர்ந்து கண்களை மூடி சில நிமிடங்கள் அமைதியாக இருங்கள்.",
-            "தூக்கமின்மை சோர்வை அதிகரிக்கும். உங்கள் தோள்களைத் தளர்த்தி, மெதுவாக மூச்சை வெளிவிடுங்கள்.",
-        ],
-        "anxious": [
-            "பதட்டம் வரும்போது உடல் பயப்படுகிறது, ஆனால் இந்த உணர்வு விரைவில் மாறும். என்னுடன் சேர்ந்து மெதுவாக மூச்சை உள்ளிழுத்து, நீண்ட மூச்சாக வெளிவிடுங்கள்.",
-            "நீங்கள் இப்போது பாதுகாப்பாக இருக்கிறீர்கள். உங்கள் கால்கள் தரையில் படுவதை உணர்ந்து, அமைதியாக இருங்கள்.",
-        ],
-        "default": [
-            "இதை என்னிடம் பகிர்ந்ததற்கு நன்றி. இப்போது உங்கள் மனதில் எது அதிக பாரமாக இருக்கிறது?",
-            "நான் உங்களை முழு கவனத்துடன் கேட்கிறேன். உங்கள் மனதில் உள்ளதை தயங்காமல் சொல்லுங்கள்.",
-        ],
-    },
-    "hi": {
-        "exam": [
-            "परीक्षा का दबाव मन को सुन्न कर देता है, लेकिन कोई भी परीक्षा आपकी पूरी पहचान नहीं है। मेरे साथ धीरे से सांस अंदर लें और बाहर छोड़ें।",
-            "जब पढ़ाई का तनाव बहुत बढ़ जाए, तो किताबों को एक मिनट के लिए परे रखें और शांति से दो घूंट पानी पिएं।",
-        ],
-        "lonely": [
-            "अकेलापन बहुत भारी महसूस कराता है, और मुझे खुशी है कि आपने इसे साझा किया। मैं बिना किसी फैसले के आपकी बात सुन रहा हूँ।",
-            "जब ऐसा लगे कि कोई नहीं समझ रहा, तो भी आप अकेले नहीं हैं। मैं यहीं आपके साथ हूँ।",
-        ],
-        "sleep": [
-            "नींद न आने से सब कुछ बड़ा लगने लगता है। बिस्तर पर करवटें बदलने के बजाय उठकर धीमी रोशनी में बैठें और मन को शांत होने दें।",
-            "नींद की कमी से बेचैनी बढ़ जाती है। अपनी पलकों को आराम दें, कंधों को ढीला छोड़ें और लंबी सांस बाहर निकालें।",
-        ],
-        "anxious": [
-            "घबराहट में शरीर खतरा समझ लेता है, पर यह गुज़र जाएगी। मेरे साथ धीरे से सांस अंदर लें और आराम से बाहर छोड़ें।",
-            "घबराने की कोई बात नहीं है, आप बिल्कुल सुरक्षित हैं। दिल पर हाथ रखें और मेरे साथ शांत होकर सांस लें।",
-        ],
-        "default": [
-            "यह बताने के लिए शुक्रिया। अभी सबसे ज़्यादा किस बात का बोझ महसूस हो रहा है?",
-            "मैं आपकी बात बहुत ध्यान से सुन रहा हूँ। बेझिझक बताइए, मन में क्या चल रहा है?",
-        ],
-    },
-    "te": {
-        "exam": [
-            "పరీక్షల ఒత్తిడి వల్ల మనసు స్తంభించిపోవడం సహజం, కానీ ఒక్క పరీక్ష మీ విలువను నిర్ణయించదు. నాతో పాటు ఒకసారి ప్రశాంతంగా శ్వాస తీసుకోండి.",
-        ],
-        "default": [
-            "మీ మనసులోని మాటను నాతో పంచుకున్నందుకు ధన్యవాదాలు. ఇప్పుడు మీకు ఏ విషయం ఎక్కువ భారంగా అనిపిస్తోంది?",
-        ],
-    },
-    "kn": {
-        "exam": [
-            "ಪರೀಕ್ಷೆಯ ಒತ್ತಡದಿಂದ ಮನಸ್ಸು ಖಾಲಿಯಾದಂತೆ ಅನ್ನಿಸುವುದು ಸಹಜ, ಆದರೆ ಒಂದೇ ಪರೀಕ್ಷೆ ನಿಮ್ಮ ಭವಿಷ್ಯವನ್ನು ನಿರ್ಧರಿಸುವುದಿಲ್ಲ. ನನ್ನೊಂದಿಗೆ ನಿಧಾನವಾಗಿ ಉಸಿರಾಡಿ.",
-        ],
-        "default": [
-            "ಇದನ್ನು ನನ್ನೊಂದಿಗೆ ಹಂಚಿಕೊಂಡಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದಗಳು. ಈಗ ನಿಮ್ಮ ಮನಸ್ಸಿಗೆ ಯಾವುದು ಹೆಚ್ಚು ಭಾರವೆನಿಸುತ್ತಿದೆ?",
-        ],
-    },
-    "ml": {
-        "exam": [
-            "പരീക്ഷാ പേടി കൊണ്ട് മനസ്സ് ശൂന്യമാകുന്നത് സ്വാഭാവികമാണ്, എന്നാൽ ഒരു പരീക്ഷയും നിങ്ങളുടെ മൂല്യം നിർണ്ണയിക്കുന്നില്ല. എന്നോടൊപ്പം ശാന്തമായി ശ്വാസമെടുക്കൂ.",
-        ],
-        "default": [
-            "ഇത് തുറന്നുപറഞ്ഞതിന് നന്ദി. ഇപ്പോൾ നിങ്ങളുടെ മനസ്സിന് ഏറ്റവും ഭാരമായി തോന്നുന്നത് എന്താണ്?",
-        ],
-    },
-}
-
-
-def generate_local_empathetic_reply(
-    user_name: str,
-    user_message: str,
-    language: str,
-    tone: str,
-    reasons: List[str],
-    is_minor: bool,
-    strategy_turn: int,
-    emotion: Optional[str] = None,
-    recent_bot: Optional[List[str]] = None,
-    strategy_used: str = "reflect feelings",
-) -> Dict[str, Any]:
-    lower = (user_message or "").lower()
-    L = language if language in _FALLBACK else "en"
-    if re.search(r"exam|test|marks|grades|study|college|தேர்வு|படி|परीक्षा|पढ़ाई|పరీక్ష|ಪರೀಕ್ಷೆ|പരീക്ഷ", lower):
-        topic, exercise = "exam", "breathing_4_7_8"
-    elif re.search(r"lonely|alone|nobody|தனிமை|अकेला|ఒంటరి|ಏಕಾಂಗಿ|ഒറ്റപ്പെടൽ", lower):
-        topic, exercise = "lonely", "none"
-    elif re.search(r"sleep|insomnia|தூக்கம்|नींद|నిద్ర|ನಿದ್ರೆ|ഉറക്കം", lower):
-        topic, exercise = "sleep", "none"
-    elif emotion in ("anxiety", "stressed") or re.search(r"panic|anxious|பயம்|ghabrahat|घबराहट|భయం|ಆತಂಕ|പേടി", lower):
-        topic, exercise = "anxious", "breathing_4_7_8"
-    else:
-        topic, exercise = "default", "none"
-
-    options = _FALLBACK[L].get(topic, _FALLBACK[L].get("default", _FALLBACK["en"]["default"]))
-    chosen = options[strategy_turn % len(options)]
-
-    # Anti-repetition check
-    if recent_bot:
-        last_bot = recent_bot[0]
-        sorted_opts = sorted(options, key=lambda opt: calculate_ngram_similarity(opt, last_bot))
-        if calculate_ngram_similarity(chosen, last_bot) > 0.4:
-            chosen = sorted_opts[0]
-            if calculate_ngram_similarity(chosen, last_bot) > 0.4:
-                chosen += f" Take your time, {user_name or 'friend'}; I am holding this space for you."
-
-    body = chosen
-    if is_minor and topic == "default" and L == "en":
-        body += " If things ever feel overwhelming, a trusted adult or school counsellor can help too."
-
-    return {
-        "reply": body,
-        "text": body,
-        "emotion": "concerned" if topic != "default" else "neutral",
-        "suggested_exercise": exercise,
-        "risk": "none",
-        "stress_level": _BASE_STRESS.get(emotion or "neutral", 2),
-        "detected_emotion": emotion or "neutral",
-        "gesture": "breathe" if exercise == "breathing_4_7_8" else ("nod" if strategy_turn % 2 == 0 else "listening"),
-        "strategy_used": strategy_used,
-    }
-
+# Local scripted fallbacks removed in favor of live LLM generation with connection hiccup handling.
 
 # ===========================================================================
 # 7. DATABASE HELPERS
@@ -1728,11 +1573,20 @@ async def process_chat_message(
         )
 
     if llm is None:
-        result = generate_local_empathetic_reply(
-            user_name, message, lang, tone, reasons, minor, turn_count,
-            emotion=emo["emotion"], recent_bot=recent_bot, strategy_used=chosen_strategy
-        )
+        result = {
+            "reply": "Connection hiccup, please try again.",
+            "text": "Connection hiccup, please try again.",
+            "emotion": "calm",
+            "suggested_exercise": "none",
+            "risk": "none",
+            "stress_level": 2,
+            "detected_emotion": "neutral",
+            "gesture": "nod",
+            "strategy_used": chosen_strategy,
+            "is_error": True,
+        }
         final_risk = rule_risk
+
     else:
         result = llm
         final_risk = _max_risk(rule_risk, llm["risk"])

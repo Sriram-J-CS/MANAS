@@ -45,12 +45,13 @@ export async function sendChatMessage(
     console.warn('Chat request failed, using client fallback:', err);
   }
 
-  // Graceful fallback
+  // Friendly connection hiccup message on failure — never canned therapy reply
   return {
-    display_text: 'I hear you, my friend. Let us take a gentle breath together; I am right here by your side.',
-    speech_text: 'I hear you, my friend. Let us take a gentle breath together; I am right here by your side.',
+    display_text: 'Connection hiccup, please try again.',
+    speech_text: 'Connection hiccup, please try again.',
     language,
-    emotion: 'empathetic',
+    emotion: 'calm',
     safety_flag: false
   };
+
 }

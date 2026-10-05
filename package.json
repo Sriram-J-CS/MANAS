@@ -11,5 +11,9 @@
     "test": "python -m pytest tests/ backend/tests/",
     "test:crisis": "python tests/test_crisis.py",
     "test:prod": "python tests/test_emoticare_production.py"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
+    "three": "^0.186.1"
   }
 }

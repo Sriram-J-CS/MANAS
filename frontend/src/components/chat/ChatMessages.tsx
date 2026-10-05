@@ -169,11 +169,41 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
     );
   };
 
+  // Helper to enforce requirement: Show breathing/grounding card ONLY when suggest_tool is set
+  // and it hasn't been shown in the last 4 turns.
+  const shouldShowToolCard = (msgIndex: number, toolName: 'breathing' | 'grounding'): boolean => {
+    const currentMsg = messages[msgIndex];
+    if (currentMsg.sender !== 'mascot') return false;
+    const matchTool = currentMsg.suggest_tool === toolName ||
+      (toolName === 'breathing' && currentMsg.suggested_exercise === 'breathing_4_7_8') ||
+      (toolName === 'grounding' && currentMsg.suggested_exercise === 'grounding_54321');
+    if (!matchTool) return false;
+
+    // Check last 4 bot messages before this one
+    let priorBotTurns = 0;
+    for (let j = msgIndex - 1; j >= 0; j--) {
+      const prior = messages[j];
+      if (prior.sender === 'mascot') {
+        priorBotTurns++;
+        const hadThisTool = prior.suggest_tool === toolName ||
+          (toolName === 'breathing' && prior.suggested_exercise === 'breathing_4_7_8') ||
+          (toolName === 'grounding' && prior.suggested_exercise === 'grounding_54321');
+        if (hadThisTool) {
+          return false;
+        }
+        if (priorBotTurns >= 4) break;
+      }
+    }
+    return true;
+  };
+
   return (
     <div className={`space-y-4 font-sans select-text ${className}`}>
-      {messages.map((m) => {
+      {messages.map((m, index) => {
         const isBot = m.sender === 'mascot';
         const isHighRisk = m.isHighRisk || m.crisis || m.risk_level === 'high';
+        const showBreathing = shouldShowToolCard(index, 'breathing');
+        const showGrounding = shouldShowToolCard(index, 'grounding');
 
         return (
           <div
@@ -225,7 +255,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                     /* Error State with Retry Button */
                     <div className="space-y-2 py-1">
                       <p className="text-xs text-rose-700 font-mono">
-                        {m.text || 'Unable to reach the mental health companion. Please check your connection and retry.'}
+                        {m.text || 'Connection hiccup, please try again.'}
                       </p>
                       {onRetry && (
                         <button
@@ -261,8 +291,8 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                     </div>
                   )}
 
-                  {/* Embedded Exercise Card: 4-7-8 Breathing */}
-                  {m.suggested_exercise === 'breathing_4_7_8' && (
+                  {/* Embedded Exercise Card: 4-7-8 Breathing (shown only when suggest_tool is set & not shown in last 4 turns) */}
+                  {showBreathing && (
                     <div className="p-3 rounded-xl bg-cyan-50/80 border border-cyan-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-lg bg-cyan-500/15 border border-cyan-500/25 flex items-center justify-center shrink-0">
@@ -289,8 +319,8 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                     </div>
                   )}
 
-                  {/* Embedded Exercise Card: 5-4-3-2-1 Sensory Grounding */}
-                  {m.suggested_exercise === 'grounding_54321' && (
+                  {/* Embedded Exercise Card: 5-4-3-2-1 Sensory Grounding (shown only when suggest_tool is set & not shown in last 4 turns) */}
+                  {showGrounding && (
                     <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center shrink-0">
@@ -316,6 +346,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                       )}
                     </div>
                   )}
+
 
                   {/* Embedded Emergency Helplines */}
                   {(isHighRisk || (m.helplines && m.helplines.length > 0)) && (

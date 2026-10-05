@@ -12,8 +12,12 @@ export interface StructuredAIResponse {
   stress_level?: number;
   helplines?: Array<{ name: string; number: string; alt?: string }>;
   suggested_exercise?: string;
+  suggest_tool?: 'none' | 'breathing' | 'grounding' | 'music' | 'journaling';
+  quick_replies?: string[];
+  risk_level?: 'none' | 'low' | 'medium' | 'high';
   isHighRisk?: boolean;
   crisis?: boolean;
+  isError?: boolean;
   segments?: any[];
 }
 
@@ -30,103 +34,14 @@ export interface SendMessageOptions {
 
 /**
  * Clean AI Service layer interfacing with backend /api/chat.
- * Flow: User Message -> Chat API -> Structured Emotion & Animation -> Frontend Mascot Controller
  */
 export async function sendChatMessage(options: SendMessageOptions): Promise<StructuredAIResponse> {
-  const {
-    message,
-    userName = 'Friend',
-    language = 'en',
-    personality = 'friendly',
-    role = 'student',
-    stylePref = 'reflective',
-    age = 20,
-    typing_cps,
-  } = options;
-
-  // Map personality into prompt tone
-  const toneMap: Record<MascotPersonality, string> = {
-    friendly: 'gentle',
-    calm: 'gentle',
-    encouraging: 'motivating',
-    playful: 'motivating',
-    professional: 'straight-talking',
-  };
-
-  try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = typeof window !== 'undefined' ? localStorage.getItem('manas_access_token') : null;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        message,
-        user_name: userName,
-        user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || undefined : undefined,
-        language,
-        tone: toneMap[personality] || 'gentle',
-        persona: `mascot_${personality}`,
-        role,
-        style_pref: stylePref,
-        age,
-        typing_cps,
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Chat API responded with status ${res.status}`);
-    }
-
-    const data = await res.json();
-    const rawReply = data.reply || data.text || "I'm right here beside you. Tell me what's on your mind.";
-    const detectedEmotion = normalizeEmotion(data.emotion || data.expression || data.detected_emotion);
-
-    let animation: 'gentle' | 'talking' | 'nod' | 'listening' | 'excited' | 'waving' = 'talking';
-    if (detectedEmotion === 'excited') animation = 'excited';
-    else if (detectedEmotion === 'encouraging') animation = 'nod';
-    else if (detectedEmotion === 'calm') animation = 'gentle';
-
-    return {
-      message: rawReply,
-      emotion: detectedEmotion,
-      animation,
-      voice: true,
-      spoken_text: data.spoken_text || rawReply,
-      state_label: data.state_label || 'Mindful & Present',
-      stress_level: typeof data.stress_level === 'number' ? data.stress_level : undefined,
-      helplines: data.helplines || [],
-      suggested_exercise: data.suggested_exercise || 'none',
-      isHighRisk: Boolean(data.is_high_risk || data.crisis),
-      crisis: Boolean(data.crisis),
-    };
-  } catch (err) {
-    console.warn('AI Chat API fallback triggered:', err);
-    // Friendly fallback response preserving MANAS wellness tone
-    return {
-      message: "I hear you, and I'm right here beside you. Even when things feel tangled or heavy, take a gentle breath with me. Let's take it one moment at a time.",
-      emotion: 'empathetic',
-      animation: 'gentle',
-      voice: true,
-      spoken_text: "I hear you, and I'm right here beside you. Even when things feel tangled or heavy, take a gentle breath with me. Let's take it one moment at a time.",
-      state_label: 'Gentle Support',
-      stress_level: undefined,
-      helplines: [],
-      suggested_exercise: 'breathing_4_7_8',
-      isHighRisk: false,
-      crisis: false,
-    };
-  }
+  return await streamChatMessage(options);
 }
 
 export async function sendChatFeedback(options: {
   messageId: string;
-  /** 1 = thumbs up, -1 = thumbs down; or legacy string values */
   rating: 'thumbs_up' | 'thumbs_down' | 'not_understood' | 1 | -1;
-  /** 0 = didn't feel understood, 1 = felt understood (default) */
   feltUnderstood?: 0 | 1;
   userConsent: boolean | 0 | 1;
   userMessage?: string;
@@ -135,7 +50,6 @@ export async function sendChatFeedback(options: {
   notes?: string;
 }): Promise<boolean> {
   try {
-    // Normalize rating to the API-expected string format
     let normalizedRating: string = 'thumbs_up';
     if (options.rating === 1 || options.rating === 'thumbs_up') {
       normalizedRating = 'thumbs_up';
@@ -177,8 +91,8 @@ export async function sendChatFeedback(options: {
 }
 
 /**
- * Streams chat response token-by-token from /api/chat/stream.
- * Falls back to sendChatMessage if streaming encounters an error.
+ * Streams chat response token-by-token from POST /api/chat.
+ * Emits live tokens for sentence-by-sentence TTS and real-time typewriter effect.
  */
 export async function streamChatMessage(
   options: SendMessageOptions & {
@@ -213,7 +127,7 @@ export async function streamChatMessage(
       streamHeaders['Authorization'] = `Bearer ${streamToken}`;
     }
 
-    const res = await fetch('/api/chat/stream', {
+    const res = await fetch('/api/chat', {
       method: 'POST',
       headers: streamHeaders,
       body: JSON.stringify({
@@ -231,8 +145,7 @@ export async function streamChatMessage(
     });
 
     if (!res.ok || !res.body) {
-      // Fallback to standard endpoint
-      return await sendChatMessage(options);
+      throw new Error(`Chat API error status ${res.status}`);
     }
 
     const reader = res.body.getReader();
@@ -263,14 +176,18 @@ export async function streamChatMessage(
             onMeta?.({
               id: payload.id,
               emotion: detectedEmotion,
-              animation: payload.gesture || 'nod',
+              animation: payload.gesture || (detectedEmotion === 'excited' ? 'excited' : detectedEmotion === 'calm' ? 'gentle' : 'nod'),
               state_label: payload.state_label,
               stress_level: payload.stress_level,
               suggested_exercise: payload.suggested_exercise,
+              suggest_tool: payload.suggest_tool,
+              quick_replies: payload.quick_replies,
+              risk_level: payload.risk_level,
               helplines: payload.helplines,
-              isHighRisk: Boolean(payload.is_high_risk || payload.crisis),
-              crisis: Boolean(payload.crisis),
-              spoken_text: payload.spoken_text,
+              isHighRisk: Boolean(payload.is_high_risk || payload.crisis || payload.risk_level === 'high'),
+              crisis: Boolean(payload.crisis || payload.risk_level === 'high'),
+              spoken_text: payload.spoken_text || payload.reply,
+              isError: Boolean(payload.is_error),
             });
           } else if (event === 'token') {
             if (payload.token) {
@@ -283,22 +200,44 @@ export async function streamChatMessage(
     }
 
     const finalEmotion = normalizeEmotion(metaData.emotion || metaData.expression || 'calm');
+    const finalReply = accumulatedText || metaData.reply || 'Connection hiccup, please try again.';
+
     return {
-      message: accumulatedText || metaData.reply || "I'm right here beside you. Tell me what's on your mind.",
+      message: finalReply,
       emotion: finalEmotion,
       animation: metaData.gesture || 'nod',
       voice: true,
-      spoken_text: metaData.spoken_text || accumulatedText,
-      state_label: metaData.state_label || 'Attuned & Present',
+      spoken_text: metaData.spoken_text || finalReply,
+      state_label: metaData.state_label || 'Mindful & Present',
       stress_level: metaData.stress_level ?? 4,
       helplines: metaData.helplines || [],
       suggested_exercise: metaData.suggested_exercise || 'none',
-      isHighRisk: Boolean(metaData.is_high_risk || metaData.crisis),
-      crisis: Boolean(metaData.crisis),
+      suggest_tool: metaData.suggest_tool || 'none',
+      quick_replies: metaData.quick_replies || [],
+      risk_level: metaData.risk_level || 'none',
+      isHighRisk: Boolean(metaData.is_high_risk || metaData.crisis || metaData.risk_level === 'high'),
+      crisis: Boolean(metaData.crisis || metaData.risk_level === 'high'),
+      isError: Boolean(metaData.is_error),
     };
   } catch (err) {
-    console.warn('Streaming failed, falling back to standard chat:', err);
-    return await sendChatMessage(options);
+    console.warn('AI Chat API error, friendly connection hiccup fallback:', err);
+    return {
+      message: 'Connection hiccup, please try again.',
+      emotion: 'calm',
+      animation: 'gentle',
+      voice: false,
+      spoken_text: 'Connection hiccup, please try again.',
+      state_label: 'Connection Error',
+      stress_level: undefined,
+      helplines: [],
+      suggested_exercise: 'none',
+      suggest_tool: 'none',
+      quick_replies: [],
+      risk_level: 'none',
+      isHighRisk: false,
+      crisis: false,
+      isError: true,
+    };
   }
 }
 
@@ -328,6 +267,54 @@ export async function clearChatHistoryRemote(userId: string): Promise<boolean> {
     return res.ok;
   } catch (err) {
     console.warn('Failed to clear remote chat history:', err);
+    return false;
+  }
+}
+
+/**
+ * Session memory: stores a short summary (mood themes, what helped) in DB.
+ */
+export async function saveSessionSummaryRemote(userId: string, messages?: any[]): Promise<any> {
+  try {
+    const res = await fetch('/api/session/summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, messages }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    console.warn('Failed to save session summary to DB:', err);
+    return null;
+  }
+}
+
+/**
+ * Session memory: loads latest session summary from DB.
+ */
+export async function fetchSessionSummaryRemote(userId: string): Promise<{ mood_themes?: string; what_helped?: string; summary?: string } | null> {
+  try {
+    const res = await fetch(`/api/session/summary/${encodeURIComponent(userId)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.summary || null;
+  } catch (err) {
+    console.warn('Failed to fetch session summary from DB:', err);
+    return null;
+  }
+}
+
+/**
+ * Session memory: deletes stored session summary from DB.
+ */
+export async function deleteSessionSummaryRemote(userId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/session/summary/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Failed to delete session summary from DB:', err);
     return false;
   }
 }

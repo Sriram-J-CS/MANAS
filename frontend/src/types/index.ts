@@ -52,6 +52,8 @@ export interface ChatMessage {
   helplines?: HelplineCard[];
   state_label?: string;
   suggested_exercise?: 'breathing_4_7_8' | 'grounding_54321' | 'telemanas_hotline' | 'none' | string;
+  suggest_tool?: 'none' | 'breathing' | 'grounding' | 'music' | 'journaling';
+  quick_replies?: string[];
   gesture?: string;
   spoken_text?: string;
   emotion?: string;
@@ -60,3 +62,4 @@ export interface ChatMessage {
   isError?: boolean;
   retryText?: string;
 }
+

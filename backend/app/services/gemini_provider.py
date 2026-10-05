@@ -1,13 +1,15 @@
 """
-gemini_provider.py - Production-Grade Google Gemini Provider for EmotiCare AI / MANAS
-──────────────────────────────────────────────────────────────────────────────────
-Centralized provider abstraction handling:
-1. Environment-driven configuration (GEMINI_MODEL, GEMINI_API_KEY).
-2. Official model fallback chain (gemini-1.5-flash -> gemini-2.0-flash -> gemini-1.5-pro).
-3. Structured context separation (system instructions, persona, language, history, memory, twin).
-4. Synchronous & asynchronous generate(), stream(), and health_check().
-5. Zero client-side API key leakage.
-6. Robust failure handling (timeouts, quota, safety blocks, malformed payloads).
+gemini_provider.py - Live Gemini LLM Provider for MANAS
+───────────────────────────────────────────────────────
+Handles:
+1. Server-side API key management (GEMINI_API_KEY, AI_PROVIDER_API_KEY).
+2. Model resolution from env (GEMINI_MODEL, default gemini-flash-latest).
+3. System prompt construction with user profile, anti-repetition of last 5 bot turns,
+   rolling summary of older turns, and past session memory.
+4. Token-by-token streaming with structured output JSON schema:
+   { reply, emotion, suggest_tool, quick_replies, risk_level }.
+5. Friendly error handling: "Connection hiccup, please try again." (no canned therapy text).
+6. Session memory summarization (mood themes, what helped).
 """
 
 import os
@@ -15,24 +17,135 @@ import re
 import json
 import logging
 import asyncio
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, Optional, AsyncGenerator, Tuple
 import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger("manas.gemini_provider")
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "gemini-3.8-flash",
     "gemini-flash-latest",
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
     "gemini-pro-latest"
 ]
-# Deduplicate preserving order
 MODELS_CHAIN = list(dict.fromkeys(FALLBACK_MODELS))
+
+STRUCTURED_OUTPUT_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "reply": {
+            "type": "STRING",
+            "description": "Conversational reply in 2-4 short sentences, reflecting user's exact words and feelings, natural spoken style (code-mixing allowed)."
+        },
+        "emotion": {
+            "type": "STRING",
+            "enum": ["calm", "empathetic", "encouraging", "concerned"]
+        },
+        "suggest_tool": {
+            "type": "STRING",
+            "enum": ["none", "breathing", "grounding", "music", "journaling"]
+        },
+        "quick_replies": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+            "description": "Exactly 3 concise, natural follow-up options for the user to tap."
+        },
+        "risk_level": {
+            "type": "STRING",
+            "enum": ["none", "low", "medium", "high"]
+        }
+    },
+    "required": ["reply", "emotion", "suggest_tool", "quick_replies", "risk_level"]
+}
+
+
+def build_companion_system_prompt(
+    user_name: str = "Friend",
+    age: int = 20,
+    language: str = "en",
+    companion_tone: str = "gentle",
+    recent_bot_messages: Optional[List[str]] = None,
+    rolling_summary: str = "",
+    session_memory: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    System prompt adhering strictly to clinical safety and conversational guidelines:
+    - Warm, friendly companion, NOT a therapist.
+    - Never diagnose or prescribe.
+    - Reflect user's exact words and feelings.
+    - Reply in user's chosen language in natural spoken style (code-mix allowed).
+    - 2-4 short sentences.
+    - Ask at most ONE gentle open question.
+    - Vary openers and structure every turn.
+    - Never repeat a phrase used in the last 5 bot messages.
+    - No stock lines like "I'm right here beside you" unless it genuinely fits.
+    """
+    lang_map = {
+        "ta": "Tamil",
+        "hi": "Hindi",
+        "te": "Telugu",
+        "kn": "Kannada",
+        "ml": "Malayalam",
+        "bn": "Bengali",
+        "mr": "Marathi",
+        "en": "English",
+    }
+    lang_label = lang_map.get(language, language)
+
+    anti_repetition_prompt = ""
+    if recent_bot_messages:
+        cleaned_recent = [m.strip() for m in recent_bot_messages[-5:] if m.strip()]
+        if cleaned_recent:
+            recent_bullets = "\n".join(f"- \"{m}\"" for m in cleaned_recent)
+            anti_repetition_prompt = (
+                f"\nANTI-REPETITION (STRICT MANDATE):\n"
+                f"Never repeat any phrase, opening line, or sentence structure used in your recent bot messages below:\n"
+                f"{recent_bullets}\n"
+            )
+
+    memory_prompt = ""
+    if session_memory:
+        themes = session_memory.get("mood_themes", "")
+        helped = session_memory.get("what_helped", "")
+        summary = session_memory.get("summary", "")
+        memory_prompt = (
+            f"\nPREVIOUS SESSION MEMORY (RECALL GENTLY IF RELEVANT):\n"
+            f"- Past Themes: {themes}\n"
+            f"- What Helped: {helped}\n"
+            f"- Summary: {summary}\n"
+        )
+
+    rolling_prompt = ""
+    if rolling_summary:
+        rolling_prompt = f"\nSUMMARY OF OLDER CONVERSATION TURNS:\n{rolling_summary}\n"
+
+    return f"""You are MANAS, a warm, friendly emotional wellness companion.
+You are a supportive friend, NOT a therapist.
+
+STRICT CLINICAL BOUNDARIES:
+- Never diagnose any medical or mental health condition.
+- Never prescribe medications, dosages, or medical treatments.
+
+CONVERSATIONAL GUIDELINES:
+1. REFLECTION: Reflect the user's exact words and feelings so they feel deeply understood.
+2. LANGUAGE & NATURAL SPOKEN STYLE: Reply in the user's chosen language ({lang_label}) in natural spoken style. Code-mixing (like Tanglish or Hinglish) is completely allowed if that feels natural and conversational.
+3. CONCISENESS: Exactly 2 to 4 short sentences. Do not write long paragraphs or lists.
+4. INQUIRY: Ask at most ONE gentle open question to invite the user to share further.
+5. VARIETY & OPENERS: Vary your openers and sentence structure every single turn.
+6. NO STOCK LINES: Absolutely NO stock lines (e.g. "I'm right here beside you", "Take a deep breath with me") unless it specifically and genuinely fits their exact context.
+{anti_repetition_prompt}{memory_prompt}{rolling_prompt}
+USER PROFILE:
+- Preferred Name: {user_name}
+- Age: {age}
+- Language: {lang_label} ({language})
+- Companion Tone: {companion_tone}
+
+You must return a valid JSON object matching the requested schema.
+"""
 
 
 class GeminiProvider:
@@ -46,307 +159,330 @@ class GeminiProvider:
         """Returns True if a valid API key is present."""
         return bool(self.api_key and len(self.api_key.strip()) > 15)
 
+    def get_model_name(self) -> str:
+        """Resolves model name from environment or fallback."""
+        return os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+
     async def health_check(self) -> Dict[str, Any]:
-        """
-        Server-side health check verifying API connectivity and model availability.
-        Never exposes the actual API key.
-        """
+        """Server-side health check verifying API connectivity and model availability."""
         if not self.is_configured():
             return {
                 "status": "unconfigured",
                 "provider": "google_gemini",
                 "message": "Gemini API key is not configured in environment.",
-                "model": DEFAULT_MODEL
+                "model": self.get_model_name()
             }
 
-        last_err = None
-        for m in MODELS_CHAIN:
-            url = f"{self.base_url}/{m}:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [{"parts": [{"text": "ping"}]}],
-                "generationConfig": {"maxOutputTokens": 5}
-            }
-
-            try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        return {
-                            "status": "healthy",
-                            "provider": "google_gemini",
-                            "model": m,
-                            "latency_ms": round(res.elapsed.total_seconds() * 1000)
-                        }
-                    elif res.status_code == 429:
-                        last_err = "rate_limited"
-                    else:
-                        last_err = f"http_{res.status_code}"
-            except Exception as e:
-                last_err = str(e)
-                continue
-
-        return {
-            "status": "rate_limited" if last_err == "rate_limited" else "degraded",
-            "provider": "google_gemini",
-            "active_fallback": "dynamic_local_engine",
-            "last_signal": last_err
-        }
-
-    def build_structured_prompt(
-        self,
-        message: str,
-        user_name: str = "Friend",
-        language: str = "en",
-        role: str = "student",
-        style_pref: str = "reflective",
-        history: Optional[List[Dict[str, str]]] = None,
-        memories: Optional[List[str]] = None,
-        twin_context: Optional[Dict[str, Any]] = None,
-        typing_cps: float = 0.0,
-    ) -> str:
-        """
-        Constructs clean, structured context without massive generic prompt clutter.
-        Separates:
-        - SYSTEM INSTRUCTIONS (Companion persona, tone, rules, non-clinical)
-        - RELEVANT USER CONTEXT (Name, role, language)
-        - PERMITTED MEMORIES & DIGITAL TWIN BASELINE
-        - CONVERSATION HISTORY (Recent turns only)
-        - CURRENT MESSAGE
-        """
-        # Typing cadence context
-        cadence_str = "normal pace"
-        if typing_cps > 32.0:
-            cadence_str = "fast cadence (>30 cps) - thoughts racing, possible anxiety, speak gently with steady grounding"
-        elif 0.0 < typing_cps < 12.0:
-            cadence_str = "slow cadence (<12 cps) - vulnerable, fatigue or hesitation, acknowledge effort gently"
-
-        lang_map = {
-            "ta": "Tamil (தமிழ்)",
-            "hi": "Hindi (हिंदी)",
-            "te": "Telugu (తెలుగు)",
-            "kn": "Kannada (ಕನ್ನಡ)",
-            "ml": "Malayalam (മലയാളം)",
-            "bn": "Bengali (বাংলা)",
-            "mr": "Marathi (मराठी)",
-            "en": "English",
-        }
-        chosen_lang_label = lang_map.get(language, language)
-
-        system_block = (
-            "You are MANAS, a personal emotional wellness companion and digital mental twin.\n"
-            "You speak as the user's calm, wise, caring inner reflection.\n"
-            "\n"
-            "COMMUNICATION RULES:\n"
-            "1. Be natural, thoughtful, human, and grounded. Never sound like a generic customer bot or ChatGPT.\n"
-            "2. Never use generic AI clichés ('As an AI...', 'I am an AI assistant...', 'I am here for you' in every reply).\n"
-            "3. Address their specific situation directly. If they ask for study/sleep/relationship guidance, give concrete practical thoughts.\n"
-            "4. NON-CLINICAL GUARANTEE: Never diagnose illnesses, never prescribe medications, never encourage self-harm.\n"
-            f"5. CHOSEN LANGUAGE MANDATE: The user has selected {chosen_lang_label} ({language}). "
-            f"You MUST answer ALL questions and generate both 'reply' and 'spoken_text' 100% in {chosen_lang_label} using proper authentic native script. "
-            "Even if the user writes in English or Romanized characters, you MUST reply entirely in their chosen language.\n"
-            "6. Keep replies focused: 2 to 4 supportive, clear sentences."
-        )
-
-        context_parts = [system_block, f"\nUSER IDENTITY:\n- Name: {user_name}\n- Selected Language: {chosen_lang_label} ({language})\n- Tone: {style_pref}\n- Typing Cadence: {cadence_str}"]
-
-        if memories:
-            mem_lines = "\n".join(f"- {m}" for m in memories[:5])
-            context_parts.append(f"\nRELEVANT PERSONAL MEMORIES (User-Authorized):\n{mem_lines}")
-
-        if twin_context:
-            mood_b = twin_context.get("mood_baseline", "Establishing")
-            trend = twin_context.get("trend", "stable")
-            context_parts.append(f"\nDIGITAL TWIN BASELINE:\n- Mood Baseline: {mood_b}\n- Trend: {trend}")
-
-        if history:
-            hist_parts = []
-            for h in history[-6:]:  # Last 6 messages max for tight, relevant short-term context
-                sender = h.get("sender", "user")
-                text = h.get("text", "")
-                if text:
-                    hist_parts.append(f"{sender.capitalize()}: {text}")
-            if hist_parts:
-                context_parts.append("\nRECENT CONVERSATION:\n" + "\n".join(hist_parts))
-
-        context_parts.append(f"\nCURRENT MESSAGE:\nUser: {message}")
-        context_parts.append(
-            "\nRESPONSE FORMAT:\n"
-            "Return a valid JSON object ONLY:\n"
-            "{\n"
-            '  "reply": "Conversational reply (2-4 gentle, clear sentences)",\n'
-            '  "spoken_text": "Clean version for TTS voice synthesis (no emojis or symbols)",\n'
-            '  "emotion": "calm" | "concerned" | "happy" | "sad" | "supportive" | "thoughtful",\n'
-            '  "gesture": "nod" | "breathe" | "listening" | "encourage",\n'
-            '  "expression": "neutral" | "happy" | "concerned" | "calm"\n'
-            "}"
-        )
-
-        return "\n".join(context_parts)
-
-    async def generate(
-        self,
-        message: str,
-        user_name: str = "Friend",
-        language: str = "en",
-        role: str = "student",
-        style_pref: str = "reflective",
-        history: Optional[List[Dict[str, str]]] = None,
-        memories: Optional[List[str]] = None,
-        twin_context: Optional[Dict[str, Any]] = None,
-        typing_cps: float = 0.0,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Executes generation against Gemini with fallback across candidate models.
-        Returns parsed JSON response or None if all models fail.
-        """
-        if not self.is_configured():
-            return None
-
-        prompt = self.build_structured_prompt(
-            message=message,
-            user_name=user_name,
-            language=language,
-            role=role,
-            style_pref=style_pref,
-            history=history,
-            memories=memories,
-            twin_context=twin_context,
-            typing_cps=typing_cps,
-        )
-
+        target_model = self.get_model_name()
+        url = f"{self.base_url}/{target_model}:generateContent?key={self.api_key}"
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.65,
-                "maxOutputTokens": 450,
-            }
+            "contents": [{"parts": [{"text": "ping"}]}],
+            "generationConfig": {"maxOutputTokens": 5}
         }
 
-        for model_name in MODELS_CHAIN:
-            url = f"{self.base_url}/{model_name}:generateContent?key={self.api_key}"
-            try:
-                async with httpx.AsyncClient(timeout=9.0) as client:
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        data = res.json()
-                        candidates = data.get("candidates", [])
-                        if not candidates:
-                            continue
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    return {
+                        "status": "healthy",
+                        "provider": "google_gemini",
+                        "model": target_model,
+                        "latency_ms": round(res.elapsed.total_seconds() * 1000)
+                    }
+                return {
+                    "status": "degraded" if res.status_code != 429 else "rate_limited",
+                    "provider": "google_gemini",
+                    "model": target_model,
+                    "code": res.status_code
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "provider": "google_gemini",
+                "message": str(e)
+            }
 
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        raw_text = ""
-                        for p in parts:
-                            if "text" in p and p["text"]:
-                                raw_text = p["text"].strip()
-                                break
-
-                        if not raw_text:
-                            continue
-
-                        # Extract JSON
-                        parsed = None
-                        match = re.search(r"\{[\s\S]*\}", raw_text)
-                        if match:
-                            try:
-                                parsed = json.loads(match.group(0), strict=False)
-                            except Exception:
-                                pass
-
-                        if parsed and isinstance(parsed, dict) and parsed.get("reply"):
-                            reply = parsed["reply"].strip()
-                            spoken = parsed.get("spoken_text") or reply
-                            emotion = parsed.get("emotion", "calm")
-                            gesture = parsed.get("gesture", "nod")
-                            expression = parsed.get("expression", "calm")
-
-                            return {
-                                "reply": reply,
-                                "spoken_text": spoken,
-                                "emotion": emotion,
-                                "gesture": gesture,
-                                "expression": expression,
-                                "provider": "google_gemini",
-                                "model": model_name
-                            }
-                        elif raw_text:
-                            # Clean markdown if JSON parser missed
-                            clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip(), flags=re.IGNORECASE)
-                            return {
-                                "reply": clean_text,
-                                "spoken_text": clean_text,
-                                "emotion": "calm",
-                                "gesture": "nod",
-                                "expression": "calm",
-                                "provider": "google_gemini",
-                                "model": model_name
-                            }
-            except Exception as e:
-                logger.warning("Gemini attempt on %s failed: %s", model_name, e)
-                continue
-
-        return None
-
-    async def stream(
+    async def stream_chat(
         self,
         message: str,
         user_name: str = "Friend",
+        age: int = 20,
         language: str = "en",
-        role: str = "student",
-        style_pref: str = "reflective",
-        history: Optional[List[Dict[str, str]]] = None,
-        memories: Optional[List[str]] = None,
-        twin_context: Optional[Dict[str, Any]] = None,
-        typing_cps: float = 0.0,
-    ) -> AsyncGenerator[str, None]:
+        companion_tone: str = "gentle",
+        history_turns: Optional[List[Dict[str, str]]] = None,
+        rolling_summary: str = "",
+        session_memory: Optional[Dict[str, Any]] = None,
+        recent_bot_messages: Optional[List[str]] = None,
+    ) -> AsyncGenerator[Tuple[str, Any], None]:
         """
-        Streams response tokens/chunks from Gemini via Server-Sent Events stream endpoint.
+        Streams response from Gemini API using Server-Sent Events.
+        Yields:
+          ("token", token_string) as reply tokens are parsed from stream
+          ("meta", structured_dict) containing { reply, emotion, suggest_tool, quick_replies, risk_level }
+          ("error", error_message) on API failure
         """
         if not self.is_configured():
-            yield "MANAS intelligence is currently in local offline mode."
+            logger.warning("Gemini API key is not configured")
+            yield ("token", "Connection hiccup, please try again.")
+            yield ("meta", {
+                "reply": "Connection hiccup, please try again.",
+                "emotion": "calm",
+                "suggest_tool": "none",
+                "quick_replies": [],
+                "risk_level": "none",
+                "is_error": True,
+            })
             return
 
-        prompt = self.build_structured_prompt(
-            message=message,
+        system_instruction = build_companion_system_prompt(
             user_name=user_name,
+            age=age,
             language=language,
-            role=role,
-            style_pref=style_pref,
-            history=history,
-            memories=memories,
-            twin_context=twin_context,
-            typing_cps=typing_cps,
+            companion_tone=companion_tone,
+            recent_bot_messages=recent_bot_messages,
+            rolling_summary=rolling_summary,
+            session_memory=session_memory,
         )
 
-        url = f"{self.base_url}/{DEFAULT_MODEL}:streamGenerateContent?key={self.api_key}&alt=sse"
+        # Build contents from last 20 turns + current message
+        contents: List[Dict[str, Any]] = []
+        if history_turns:
+            # Keep at most last 20 turns
+            trimmed = history_turns[-20:]
+            # Ensure proper alternating roles for Gemini
+            last_role = None
+            for turn in trimmed:
+                sender = turn.get("sender", "user")
+                role = "model" if sender == "mascot" else "user"
+                text = turn.get("text", "").strip()
+                if not text:
+                    continue
+                if role == last_role and contents:
+                    # Append text to previous turn if consecutive same role
+                    contents[-1]["parts"][0]["text"] += f"\n{text}"
+                else:
+                    contents.append({"role": role, "parts": [{"text": text}]})
+                    last_role = role
+
+        # Append current user message
+        if contents and contents[-1]["role"] == "user":
+            contents[-1]["parts"][0]["text"] += f"\n{message.strip()}"
+        else:
+            contents.append({"role": "user", "parts": [{"text": message.strip()}]})
+
+        target_model = self.get_model_name()
+        url = f"{self.base_url}/{target_model}:streamGenerateContent?key={self.api_key}&alt=sse"
+
+        payload = {
+            "systemInstruction": {
+                "parts": [{"text": system_instruction}]
+            },
+            "contents": contents,
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": STRUCTURED_OUTPUT_SCHEMA,
+                "temperature": 0.7,
+                "maxOutputTokens": 600,
+            }
+        }
+
+        raw_accumulated = ""
+        yielded_len = 0
+        reply_started = False
+        reply_finished = False
+
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    if response.status_code != 200:
+                        err_body = await response.aread()
+                        logger.error("Gemini stream error %d: %s", response.status_code, err_body.decode(errors="ignore")[:300])
+                        yield ("error", "Connection hiccup, please try again.")
+                        yield ("token", "Connection hiccup, please try again.")
+                        yield ("meta", {
+                            "reply": "Connection hiccup, please try again.",
+                            "emotion": "calm",
+                            "suggest_tool": "none",
+                            "quick_replies": [],
+                            "risk_level": "none",
+                            "is_error": True,
+                        })
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        chunk_text = line[5:].strip()
+                        if not chunk_text or chunk_text == "[DONE]":
+                            continue
+
+                        try:
+                            chunk_json = json.loads(chunk_text)
+                            candidates = chunk_json.get("candidates", [])
+                            if not candidates:
+                                continue
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            for p in parts:
+                                part_text = p.get("text", "")
+                                if not part_text:
+                                    continue
+                                raw_accumulated += part_text
+
+                                # Parse reply field streaming in real time
+                                if not reply_started:
+                                    m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
+                                    if m:
+                                        reply_started = True
+                                        content_after = raw_accumulated[m.end():]
+                                        end_m = re.search(r'(?<!\\)"', content_after)
+                                        if end_m:
+                                            reply_token = content_after[:end_m.start()]
+                                            reply_finished = True
+                                            if reply_token:
+                                                yield ("token", reply_token)
+                                        else:
+                                            if content_after:
+                                                yield ("token", content_after)
+                                                yielded_len = len(content_after)
+                                elif not reply_finished:
+                                    m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
+                                    if m:
+                                        content_after = raw_accumulated[m.end():]
+                                        end_m = re.search(r'(?<!\\)"', content_after)
+                                        if end_m:
+                                            full_reply = content_after[:end_m.start()]
+                                            new_token = full_reply[yielded_len:]
+                                            if new_token:
+                                                yield ("token", new_token)
+                                            reply_finished = True
+                                        else:
+                                            new_token = content_after[yielded_len:]
+                                            if new_token:
+                                                yield ("token", new_token)
+                                                yielded_len = len(content_after)
+                        except Exception as parse_err:
+                            logger.debug("Chunk JSON parse note: %s", parse_err)
+                            continue
+
+            # Parse finalized JSON payload
+            parsed_data: Dict[str, Any] = {}
+            try:
+                # Find outermost JSON object
+                json_match = re.search(r'\{[\s\S]*\}', raw_accumulated)
+                if json_match:
+                    parsed_data = json.loads(json_match.group(0))
+            except Exception as final_parse_err:
+                logger.warning("Failed to parse final JSON from Gemini: %s", final_parse_err)
+
+            final_reply = parsed_data.get("reply")
+            if not final_reply and raw_accumulated:
+                # Fallback to regex extraction of reply
+                rep_match = re.search(r'"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"', raw_accumulated)
+                if rep_match:
+                    final_reply = rep_match.group(1).encode('utf-8').decode('unicode_escape')
+                else:
+                    final_reply = raw_accumulated.strip()
+
+            if not final_reply:
+                final_reply = "Connection hiccup, please try again."
+
+            final_emotion = parsed_data.get("emotion") if parsed_data.get("emotion") in ("calm", "empathetic", "encouraging", "concerned") else "calm"
+            final_tool = parsed_data.get("suggest_tool") if parsed_data.get("suggest_tool") in ("none", "breathing", "grounding", "music", "journaling") else "none"
+            final_quick = parsed_data.get("quick_replies") if isinstance(parsed_data.get("quick_replies"), list) else []
+            final_risk = parsed_data.get("risk_level") if parsed_data.get("risk_level") in ("none", "low", "medium", "high") else "none"
+
+            yield ("meta", {
+                "reply": final_reply,
+                "emotion": final_emotion,
+                "suggest_tool": final_tool,
+                "quick_replies": final_quick[:3],
+                "risk_level": final_risk,
+                "is_error": False,
+            })
+
+        except Exception as e:
+            logger.error("Gemini stream connection error: %s", e)
+            yield ("error", "Connection hiccup, please try again.")
+            yield ("token", "Connection hiccup, please try again.")
+            yield ("meta", {
+                "reply": "Connection hiccup, please try again.",
+                "emotion": "calm",
+                "suggest_tool": "none",
+                "quick_replies": [],
+                "risk_level": "none",
+                "is_error": True,
+            })
+
+    async def summarize_session(self, messages: List[Dict[str, str]]) -> Dict[str, str]:
+        """
+        Generates a concise session summary (mood themes, what helped).
+        Called after each session to persist in DB for next time.
+        """
+        if not messages:
+            return {
+                "mood_themes": "General check-in",
+                "what_helped": "Conversational reflection",
+                "summary": "User completed a brief wellness check-in."
+            }
+
+        convo_lines = []
+        for m in messages[-20:]:
+            sender = m.get("sender", "user")
+            text = m.get("text", "")
+            if text:
+                convo_lines.append(f"{sender}: {text}")
+        convo_text = "\n".join(convo_lines)
+
+        prompt = (
+            "Analyze this brief supportive conversation and produce a JSON object with:\n"
+            "1. 'mood_themes': 2-5 words summarizing user's emotional themes (e.g. 'Exam stress, trouble sleeping')\n"
+            "2. 'what_helped': 2-5 words on what brought relief or tools discussed (e.g. '4-7-8 breathing, study pacing')\n"
+            "3. 'summary': 1-2 sentence gentle summary of the session\n\n"
+            f"Conversation:\n{convo_text}\n\n"
+            "Output JSON format ONLY:\n"
+            "{\"mood_themes\": \"...\", \"what_helped\": \"...\", \"summary\": \"...\"}"
+        )
+
+        if not self.is_configured():
+            return {
+                "mood_themes": "Emotional check-in",
+                "what_helped": "Mindful reflection",
+                "summary": "Completed a wellness check-in session."
+            }
+
+        target_model = self.get_model_name()
+        url = f"{self.base_url}/{target_model}:generateContent?key={self.api_key}"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "temperature": 0.65,
-                "maxOutputTokens": 450,
+                "responseMimeType": "application/json",
+                "temperature": 0.3,
+                "maxOutputTokens": 250
             }
         }
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            raw_chunk = line[6:].strip()
-                            if raw_chunk == "[DONE]":
-                                break
-                            try:
-                                chunk_json = json.loads(raw_chunk)
-                                candidates = chunk_json.get("candidates", [])
-                                if candidates:
-                                    parts = candidates[0].get("content", {}).get("parts", [])
-                                    for p in parts:
-                                        if "text" in p:
-                                            yield p["text"]
-                            except Exception:
-                                continue
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
+                    raw = parts[0].get("text", "")
+                    parsed = json.loads(raw)
+                    return {
+                        "mood_themes": str(parsed.get("mood_themes", "Wellness check-in")),
+                        "what_helped": str(parsed.get("what_helped", "Reflective conversation")),
+                        "summary": str(parsed.get("summary", "User completed a supportive conversation."))
+                    }
         except Exception as e:
-            logger.warning("Gemini stream error: %s", e)
-            yield " I am right here with you. Take a steady breath."
+            logger.warning("Session summarization failed: %s", e)
+
+        return {
+            "mood_themes": "Wellness check-in",
+            "what_helped": "Reflective conversation",
+            "summary": "User completed a supportive conversation."
+        }
 
 
 # Global singleton instance

@@ -17,11 +17,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .database import get_db, init_db
+from .database import (
+    get_db,
+    init_db,
+    save_session_summary,
+    get_latest_session_summary,
+    delete_user_session_summaries
+)
 from .safety.rules import check_safety
 from .safety.templates import get_crisis_response, get_medication_response
+from .services.gemini_provider import gemini
 from .services.chat_engine import process_chat_message, stream_tokens
 from .services.pipeline import run_chat_pipeline
+
 from .services.voice import (
     transcribe_audio_fallback,
     synthesize_speech_provider,
@@ -336,106 +344,171 @@ def get_admin_feedback(limit: int = 50, only_negative: bool = True, admin_id: st
     return {"stats": stats, "feedback": rows}
 
 @app.post("/api/chat")
+@app.post("/api/chat/stream")
 async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    """
+    Live streaming chat endpoint calling Gemini API (model name from env, key server-side only).
+    Sends: system prompt, user profile, last 20 turns, rolling summary of older turns.
+    Returns: Server-Sent Events (SSE) streaming tokens to the UI with structured output metadata.
+    Safety: Pre-approved crisis message on high risk detection; never improvises medical advice.
+    """
     uid = current_uid or req.user_id or "anonymous"
     user_msg_id = str(uuid.uuid4())
     bot_msg_id = str(uuid.uuid4())
 
-    conn = get_db()
-    cursor = conn.cursor()
+    # 1. SAFETY LAYER: Run classifier on incoming user message
+    safety_res = check_safety(req.message)
+    if safety_res.get("risk_level") == "high":
+        crisis_text = get_crisis_response(req.language)
+        helplines_data = [
+            {"name": "Tele-MANAS (24/7 Toll-Free)", "number": "14416", "alt": "1800 891 4416"},
+            {"name": "National Emergency", "number": "112"},
+            {"name": "KIRAN Helpline", "number": "1800-599-0019"}
+        ]
 
-    # 1. Save user message
-    cursor.execute("""
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO chat_messages (id, user_id, sender, text, language, typing_speed)
+            VALUES (?, ?, 'user', ?, ?, ?)
+        """, (user_msg_id, uid, req.message, req.language, req.typing_cps))
+        cur.execute("""
+            INSERT INTO chat_messages (
+                id, user_id, sender, text, language, emotion, risk_level, expression, helplines
+            ) VALUES (?, ?, 'mascot', ?, ?, 'concerned', 'high', 'concerned', ?)
+        """, (bot_msg_id, uid, crisis_text, req.language, json.dumps(helplines_data)))
+        conn.commit()
+        conn.close()
+
+        async def crisis_stream():
+            meta = {
+                "id": bot_msg_id,
+                "reply": crisis_text,
+                "emotion": "concerned",
+                "expression": "concerned",
+                "suggest_tool": "none",
+                "quick_replies": ["Call Tele-MANAS (14416)", "I need immediate help", "Stay with me"],
+                "risk_level": "high",
+                "is_high_risk": True,
+                "crisis": True,
+                "helplines": helplines_data,
+                "state_label": "Crisis Safety Active",
+                "gesture": "listening",
+                "spoken_text": crisis_text
+            }
+            yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+            words = crisis_text.split(" ")
+            for i in range(0, len(words), 3):
+                chunk = " ".join(words[i:i+3]) + (" " if i + 3 < len(words) else "")
+                yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
+                await asyncio.sleep(0.015)
+            yield "event: done\ndata: {}\n\n"
+
+        return StreamingResponse(crisis_stream(), media_type="text/event-stream")
+
+    # 2. Persist user message in DB
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
         INSERT INTO chat_messages (id, user_id, sender, text, language, typing_speed)
         VALUES (?, ?, 'user', ?, ?, ?)
     """, (user_msg_id, uid, req.message, req.language, req.typing_cps))
     conn.commit()
 
-    # 2. Retrieve recent bot replies and strategies for anti-repetition enforcement
-    cursor.execute("""
+    # 3. Retrieve prior turns (excluding the one just saved)
+    cur.execute("""
+        SELECT sender, text FROM chat_messages
+        WHERE user_id = ? AND id != ?
+        ORDER BY created_at ASC
+    """, (uid, user_msg_id))
+    prior_messages = [dict(r) for r in cur.fetchall()]
+
+    if len(prior_messages) > 20:
+        older = prior_messages[:-20]
+        last_20 = prior_messages[-20:]
+        summary_points = [f"{m['sender']}: {m['text'][:80]}" for m in older[-10:]]
+        rolling_summary = "Older conversation context:\n" + "\n".join(summary_points)
+    else:
+        last_20 = prior_messages
+        rolling_summary = ""
+
+    # Retrieve last 5 bot messages for anti-repetition enforcement
+    cur.execute("""
         SELECT text FROM chat_messages
         WHERE user_id = ? AND sender = 'mascot'
         ORDER BY created_at DESC LIMIT 5
     """, (uid,))
-    recent_bot_replies = [r["text"] for r in cursor.fetchall()]
-
-    cursor.execute("""
-        SELECT strategy FROM strategy_log
-        WHERE user_id = ?
-        ORDER BY created_at DESC LIMIT 5
-    """, (uid,))
-    recent_strategies = [r["strategy"] for r in cursor.fetchall()]
+    recent_bot_messages = [r["text"] for r in cur.fetchall()]
     conn.close()
 
-    # 3. Execute Multi-Stage Chat Pipeline (Stages 1-8)
-    pipeline_res = await run_chat_pipeline(
-        message=req.message,
-        user_id=uid,
-        user_name=req.user_name,
-        selected_language=req.language,
-        tone=req.tone,
-        is_minor=req.is_minor,
-        recent_bot_replies=recent_bot_replies,
-        recent_strategies=recent_strategies,
-        typing_cps=req.typing_cps
-    )
+    # Retrieve previous session memory summary if present
+    session_mem = get_latest_session_summary(uid)
 
-    reply = pipeline_res["reply"]
-    spoken_text = pipeline_res["spoken_text"]
-    emotion = pipeline_res["emotion"]
-    gesture = pipeline_res["gesture"]
-    risk_level = pipeline_res["risk_level"]
-    is_crisis = pipeline_res["is_crisis"]
-    state_label = pipeline_res["state_label"]
-    stress_lvl = pipeline_res["stress_level"]
-    helplines_list = pipeline_res["helplines"]
-    strategy_used = pipeline_res["strategy"]
-    exercise = pipeline_res["suggested_exercise"]
-    lang = pipeline_res["language"]
+    # 4. Stream response from Gemini API
+    async def live_stream():
+        accumulated_text = ""
+        final_meta = {}
 
-    # 4. Save Bot message into chat_messages
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO chat_messages (
-            id, user_id, sender, text, language, emotion, risk_level, expression,
-            strategy_used, state_label, stress_level, suggested_exercise, helplines
-        ) VALUES (?, ?, 'mascot', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        bot_msg_id, uid, reply, lang, emotion, risk_level, emotion,
-        strategy_used, state_label, stress_lvl, exercise, json.dumps(helplines_list)
-    ))
+        async for kind, payload in gemini.stream_chat(
+            message=req.message,
+            user_name=req.user_name,
+            age=req.age,
+            language=req.language,
+            companion_tone=req.tone,
+            history_turns=last_20,
+            rolling_summary=rolling_summary,
+            session_memory=session_mem,
+            recent_bot_messages=recent_bot_messages
+        ):
+            if kind == "token":
+                accumulated_text += payload
+                yield f"event: token\ndata: {json.dumps({'token': payload})}\n\n"
+            elif kind == "meta":
+                final_meta = payload
+                final_meta["id"] = bot_msg_id
+                if final_meta.get("risk_level") == "high":
+                    final_meta["is_high_risk"] = True
+                    final_meta["crisis"] = True
+                    final_meta["helplines"] = [
+                        {"name": "Tele-MANAS (24/7 Toll-Free)", "number": "14416", "alt": "1800 891 4416"},
+                        {"name": "National Emergency", "number": "112"},
+                        {"name": "KIRAN Helpline", "number": "1800-599-0019"}
+                    ]
+                yield f"event: meta\ndata: {json.dumps(final_meta)}\n\n"
 
-    # Record strategy into strategy_log for rotation
-    cursor.execute("""
-        INSERT INTO strategy_log (id, user_id, strategy) VALUES (?, ?, ?)
-    """, (str(uuid.uuid4()), uid, strategy_used))
+        # 5. Persist bot reply in DB
+        reply_to_store = final_meta.get("reply") or accumulated_text or "Connection hiccup, please try again."
+        emo_to_store = final_meta.get("emotion", "calm")
+        risk_to_store = final_meta.get("risk_level", "none")
+        tool_to_store = final_meta.get("suggest_tool", "none")
 
-    conn.commit()
-    conn.close()
+        exercise_to_store = "none"
+        if tool_to_store == "breathing":
+            exercise_to_store = "breathing_4_7_8"
+        elif tool_to_store == "grounding":
+            exercise_to_store = "grounding_54321"
 
-    return {
-        "id": bot_msg_id,
-        "reply": reply,
-        "text": reply,
-        "spoken_text": spoken_text,
-        "emotion": emotion,
-        "gesture": gesture,
-        "lang": lang,
-        "risk_level": risk_level,
-        "risk": risk_level,
-        "crisis": is_crisis,
-        "stress_level": stress_lvl,
-        "detected_emotion": pipeline_res["understanding"].get("primary_emotion", emotion),
-        "helplines": helplines_list,
-        "expression": emotion,
-        "state_label": state_label,
-        "is_high_risk": is_crisis,
-        "suggested_exercise": exercise,
-        "understanding": pipeline_res["understanding"],
-        "strategy": strategy_used,
-        "segments": pipeline_res["segments"]
-    }
+        try:
+            conn_b = get_db()
+            cur_b = conn_b.cursor()
+            cur_b.execute("""
+                INSERT INTO chat_messages (
+                    id, user_id, sender, text, language, emotion, risk_level, expression,
+                    suggested_exercise
+                ) VALUES (?, ?, 'mascot', ?, ?, ?, ?, ?, ?)
+            """, (
+                bot_msg_id, uid, reply_to_store, req.language, emo_to_store, risk_to_store, emo_to_store,
+                exercise_to_store
+            ))
+            conn_b.commit()
+            conn_b.close()
+        except Exception as e:
+            pass
+
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(live_stream(), media_type="text/event-stream")
+
 
 @app.get("/api/chat/history/{user_id}")
 def get_chat_history(user_id: str, limit: int = 100, current_uid: Optional[str] = Depends(get_current_user_id)):
@@ -513,47 +586,58 @@ def clear_chat_history(user_id: str, current_uid: Optional[str] = Depends(get_cu
     conn.close()
     return {"status": "success", "message": f"Chat history for user {effective_uid} cleared"}
 
-@app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
-    """
-    Token-by-token streaming endpoint for real-time typewriter experience.
-    Yields initial metadata event followed by token chunks and done event.
-    """
-    req.user_id = current_uid or req.user_id or "anonymous"
-    chat_res = await chat(req, current_uid=current_uid)
-    reply_text = chat_res["reply"]
-    
-    async def event_generator():
-        meta = {
-            "id": chat_res["id"],
-            "emotion": chat_res["emotion"],
-            "expression": chat_res["expression"],
-            "state_label": chat_res.get("state_label", "Attuned & Present"),
-            "risk_level": chat_res.get("risk_level", "none"),
-            "crisis": chat_res.get("crisis", False),
-            "stress_level": chat_res.get("stress_level"),
-            "detected_emotion": chat_res.get("detected_emotion"),
-            "helplines": chat_res.get("helplines", []),
-            "gesture": chat_res.get("gesture", "nod"),
-            "spoken_text": chat_res.get("spoken_text", ""),
-            "is_high_risk": chat_res.get("is_high_risk", False),
-            "suggested_exercise": chat_res.get("suggested_exercise", "none"),
-            "understanding": chat_res.get("understanding", {}),
-            "strategy": chat_res.get("strategy", ""),
-            "segments": chat_res.get("segments", [])
-        }
-        yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
-        
-        words = reply_text.split(" ")
-        for i in range(0, len(words), 3):
-            chunk = " ".join(words[i:i+3])
-            if i + 3 < len(words):
-                chunk += " "
-            yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
-            await asyncio.sleep(0.025)
-        yield "event: done\ndata: {}\n\n"
+class SessionSummaryRequest(BaseModel):
+    user_id: Optional[str] = None
+    messages: Optional[List[Dict[str, str]]] = None
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+@app.post("/api/session/summary")
+async def create_session_summary(req: SessionSummaryRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    """
+    Session memory: after each session, stores a short summary (mood themes, what helped) in DB.
+    """
+    uid = current_uid or req.user_id or "anonymous"
+    msgs = req.messages
+    if not msgs:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT sender, text FROM chat_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT 20", (uid,))
+        rows = cur.fetchall()
+        conn.close()
+        msgs = [{"sender": r["sender"], "text": r["text"]} for r in reversed(rows)]
+
+    summary_data = await gemini.summarize_session(msgs or [])
+    summary_id = save_session_summary(
+        user_id=uid,
+        mood_themes=summary_data.get("mood_themes", "Wellness check-in"),
+        what_helped=summary_data.get("what_helped", "Reflective conversation"),
+        summary=summary_data.get("summary", "User completed a supportive session.")
+    )
+    return {
+        "status": "success",
+        "summary_id": summary_id,
+        "mood_themes": summary_data.get("mood_themes"),
+        "what_helped": summary_data.get("what_helped"),
+        "summary": summary_data.get("summary")
+    }
+
+@app.get("/api/session/summary/{user_id}")
+def fetch_session_summary(user_id: str, current_uid: Optional[str] = Depends(get_current_user_id)):
+    """
+    Loads latest session memory next time the user connects.
+    """
+    uid = current_uid or user_id or "anonymous"
+    summary = get_latest_session_summary(uid)
+    return {"status": "success", "summary": summary}
+
+@app.delete("/api/session/summary/{user_id}")
+def clear_session_summary(user_id: str, current_uid: Optional[str] = Depends(get_current_user_id)):
+    """
+    Allows user to delete stored session memory.
+    """
+    uid = current_uid or user_id or "anonymous"
+    deleted_count = delete_user_session_summaries(uid)
+    return {"status": "success", "deleted_count": deleted_count, "message": "Session memory deleted successfully"}
+
 
 class AvatarStylizeRequest(BaseModel):
     image_base64: str

@@ -528,201 +528,7 @@ def retrieve_context(user_id: str, message: str, emotion: str) -> Dict[str, Any]
 # STAGE 6: GENERATION (Answers question asked, quotes detail, outputs segments)
 # ===========================================================================
 
-def _generate_deterministic_reply(
-    user_name: str,
-    message: str,
-    language: str,
-    tone: str,
-    understanding: Dict[str, Any],
-    strategy: str,
-    retrieval: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Robust local generation engine strictly obeying all clinical constraints:
-    - Answers the actual question asked.
-    - References specific user detail (person, word, event).
-    - NEVER tells the user to breathe in / hold breath when they want solutions.
-    - Produces structured segments [{spoken_text, text, emotion, gesture}].
-    """
-    clean_msg = message.strip()
-    nm = user_name if user_name and user_name != "Friend" else ""
-    salutation = f"{nm}, " if nm else ""
-    facts = understanding.get("key_facts", {})
-    topic = understanding.get("topic", "general")
-    unclear = understanding.get("unclear_aspects")
-
-    # Pick specific user detail to reference
-    specific_ref = None
-    if facts.get("events"):
-        specific_ref = facts["events"][0]
-    elif facts.get("people"):
-        specific_ref = facts["people"][0]
-    elif topic != "general" and topic in clean_msg.lower():
-        specific_ref = topic
-    else:
-        stopwords = {
-            "about", "really", "there", "their", "solution", "please", "could", "would",
-            "should", "answer", "doing", "getting", "feeling", "giving", "something"
-        }
-        words = [re.sub(r"[^\w]", "", w) for w in clean_msg.split() if len(w) > 3]
-        meaningful = [w for w in words if w.lower() not in stopwords]
-        if meaningful:
-            specific_ref = f'"{meaningful[0]}"'
-
-    # Language-pure reference mention (strictly no English injected into Indic text)
-    ref_mention = ""
-    if specific_ref:
-        if language == "en":
-            ref_mention = f" regarding {specific_ref}"
-        else:
-            # Do NOT inject English words or Latin characters into native Indic outputs
-            has_latin = bool(re.search(r"[a-zA-Z]", str(specific_ref)))
-            if not has_latin:
-                if language == "ta":
-                    ref_mention = f" - {specific_ref} குறித்து"
-                elif language == "hi":
-                    ref_mention = f" - {specific_ref} के संबंध में"
-                elif language == "te":
-                    ref_mention = f" - {specific_ref} గురించి"
-                elif language == "kn":
-                    ref_mention = f" - {specific_ref} ಕುರಿತು"
-                elif language == "ml":
-                    ref_mention = f" - {specific_ref} സംബന്ധിച്ച്"
-                elif language == "bn":
-                    ref_mention = f" - {specific_ref} সম্পর্কে"
-                elif language == "mr":
-                    ref_mention = f" - {specific_ref} बाबत"
-
-    # Strategy-specific structured responses
-    if strategy == "ask one clarifying question" or unclear:
-        if language == "ta":
-            text = f"{salutation}மனதில் பல விஷயங்கள் ஒரே நேரத்தில் ஓடும்போது எது அதிக பாரமாக இருக்கிறது என்று பிரித்துப் பார்ப்பதே கடினமாக இருக்கும். நீங்கள் சொன்ன அந்த உணர்வை நாம் ஒன்றாகப் புரிந்துகொள்ளலாம்—இப்போது உங்கள் மனதில் முதலாவதாக நிற்கும் விஷயம் எது?"
-            spoken = text
-        elif language == "hi":
-            text = f"{salutation}जब मन बहुत भारी होता है, तो समझ नहीं आता कि कहाँ से शुरुआत करें। मैं आपके साथ हूँ—क्या आप बता सकते हैं कि इस समय कौन सी एक बात आपको सबसे ज्यादा परेशान कर रही है?"
-            spoken = text
-        else:
-            text = f"{salutation}when things feel tangled and heavy, trying to carry it all at once can be overwhelming. Let's take it one thread at a time without any pressure—what is the single thought or situation that feels heaviest on your mind right now?"
-            spoken = text
-        emotion_tag = "validating"
-        gesture = "listening"
-
-    elif strategy == "small action step" or understanding.get("intent") == "wants solution":
-        # Solution mode: deliver clear, practical steps without breathing clichés
-        if topic == "sleep":
-            if language == "ta":
-                text = f"{salutation}தூக்கம் வராமல் தவிப்பது உடலையும் மனதையும் சோர்க்கும்{ref_mention}. இதற்கு முதல் நடைமுறை தீர்வு: படுக்கையைத் தூங்குவதற்கு மட்டுமே பயன்படுத்துங்கள். அடுத்த 20 நிமிடங்களுக்குள் தூக்கம் வரவில்லை என்றால், எழுந்து மங்கலான வெளிச்சத்தில் அமைதியான ஒன்றைச் செய்துவிட்டு, சோர்வு வந்ததும் மீண்டும் படுக்கைக்கு வாருங்கள்."
-                spoken = text
-            elif language == "hi":
-                text = f"{salutation}नींद न आना सच में परेशान कर देता है{ref_mention}। इसका एक व्यावहारिक समाधान यह है: अगर 20 मिनट तक नींद न आए, तो बिस्तर पर करवटें बदलने के बजाय उठें, धीमी रोशनी में बैठें या कोई किताब पढ़ें। जब थकान महसूस हो, तभी वापस बिस्तर पर जाएं।"
-                spoken = text
-            else:
-                text = f"{salutation}struggling to sleep drains both mental and physical energy{ref_mention}. Here is a practical solution: avoid staying in bed tossing and turning. If you are awake after 20 minutes, get out of bed into dim light and do something low-stimulation like reading or drinking warm water, then return only when sleepiness kicks in."
-                spoken = text
-        elif topic == "exam":
-            if language == "ta":
-                text = f"{salutation}தேர்வு குறித்த அழுத்தம் உங்கள் கவனத்தை சிதறடிக்கலாம்{ref_mention}. இப்போது முழு பாடத்தையும் யோசிக்காமல், அடுத்த 25 நிமிடங்களுக்கு ஒரே ஒரு குறிப்பிட்ட தலைப்பை மட்டும் தேர்வு செய்து படியுங்கள். சிறிய இலக்குகளே பெரிய நம்பிக்கையைத் தரும்."
-                spoken = text
-            elif language == "hi":
-                text = f"{salutation}परीक्षा की चिंता में पूरा सिलेबस एक साथ भारी लगता है{ref_mention}। सबसे कारगर तरीका है कि अगले 25 मिनट के लिए सिर्फ एक छोटा सा टॉपिक चुनें और बाकी सब किनारे रख दें। छोटे कदम ही आत्मविश्वास लाते हैं।"
-                spoken = text
-            else:
-                text = f"{salutation}facing pressure around your evaluations{ref_mention} is tough when everything demands attention at once. Here is your actionable step: do not tackle the whole syllabus right now. Choose exactly one specific sub-topic, set a timer for 25 minutes, and focus solely on that single piece."
-                spoken = text
-        elif topic == "work":
-            if language == "ta":
-                text = f"{salutation}வேலையின் சுமை அதிகமாக இருக்கும்போது{ref_mention}, எல்லாவற்றையும் ஒரே நேரத்தில் செய்ய முடியாது. உங்கள் பணிகளை 'இன்றே செய்ய வேண்டியவை' மற்றும் 'நாளை மாற்றக்கூடியவை' என இரண்டாகப் பிரித்து, முதல் ஒன்றில் மட்டும் கவனம் செலுத்துங்கள்."
-                spoken = text
-            elif language == "hi":
-                text = f"{salutation}काम का दबाव जब बढ़ जाता है{ref_mention}, तो स्पष्ट प्राथमिकता बनाना ज़रूरी है। आज के लिए सबसे महत्वपूर्ण 1 काम चुनें और बाकी को 'कल' की सूची में डाल दें। सीमाएं तय करना आपकी शक्ति है।"
-                spoken = text
-            else:
-                text = f"{salutation}when work demands pile up{ref_mention}, trying to solve everything at once creates paralysis. The solution is triage: write down the 3 most pressing tasks, star the single one that moves the needle today, and consciously defer the other two until tomorrow."
-                spoken = text
-        else:
-            if language == "ta":
-                text = f"{salutation}உங்கள் பிரச்சனைக்குத் தீர்வு காண{ref_mention}, முதல் படியாக உங்கள் கட்டுப்பாட்டில் உள்ள ஒரு சிறிய செயலை மட்டும் தேர்ந்தெடுப்போம். இப்போது நீங்கள் செய்யக்கூடிய மிக எளிய அடுத்த நடவடிக்கை என்ன?"
-                spoken = text
-            elif language == "hi":
-                text = f"{salutation}इस स्थिति का ठोस समाधान निकालने के लिए{ref_mention}, हमें सबसे पहले उस चीज़ पर ध्यान देना चाहिए जो आपके नियंत्रण में है। अगला एक छोटा कदम क्या हो सकता है?"
-                spoken = text
-            else:
-                text = f"{salutation}here is a practical way forward{ref_mention}: separate what is directly within your control from what is outside it. Focus your immediate energy on just the very next controllable step, rather than trying to fix the entire outcome today."
-                spoken = text
-        emotion_tag = "supportive"
-        gesture = "nod"
-
-    elif strategy == "reframe":
-        distortion = understanding.get("cognitive_distortions", ["none"])[0]
-        if distortion == "catastrophizing":
-            if language == "ta":
-                text = f"{salutation}மன அழுத்தம் அதிகரிக்கும் போது மிக மோசமான முடிவுகளைப் பற்றி பயப்படுவது மனித இயல்பு{ref_mention}. ஆனால் எல்லாம் தவறாகப் போய்விடும் என்ற எண்ணம் உண்மை அல்ல. நீங்கள் முன்பு இதுபோன்ற கடினமான சூழல்களைக் கையாண்ட ஒரு தருணத்தை நினைத்துப் பாருங்கள்."
-            elif language == "hi":
-                text = f"{salutation}तनाव बढ़ने पर सबसे बुरे परिणाम की कल्पना करना स्वाभाविक है{ref_mention}। लेकिन सब कुछ बिगड़ने का डर सच नहीं होता। क्या आपको याद है कि आपने पहले भी ऐसे कठिन समय का सामना कैसे किया था?"
-            else:
-                text = f"{salutation}it is natural when stress spikes{ref_mention} to fear the worst possible outcome. But feeling like everything is ruined does not mean it actually is. Let's look at the facts: what is one real piece of evidence that you have navigated tough moments before?"
-        elif distortion == "all-or-nothing":
-            if language == "ta":
-                text = f"{salutation}'எப்போதுமே இப்படித்தான்' அல்லது 'முழு தோல்வி' போன்ற வார்த்தைகள் தோன்றும் போது{ref_mention}, மனம் நல்ல விஷயங்களை மறைத்து விடுகிறது. ஒரு பின்னடைவு என்பது தற்காலிகமானது, அது உங்கள் வாழ்வின் முடிவல்ல."
-            elif language == "hi":
-                text = f"{salutation}जब मन में 'हमेशा' या 'पूरी असफलता' जैसे विचार आएं{ref_mention}, तो समझें कि सोच सीमित हो रही है। एक रुकावट केवल एक क्षण है, आपका पूरा भविष्य नहीं।"
-            else:
-                text = f"{salutation}when we notice words like 'always' or 'complete failure'{ref_mention}, our minds are filtering out all grey areas. One setback is a single event, not your entire identity or future."
-        else:
-            if language == "ta":
-                text = f"{salutation}நீங்கள் இந்த நிலையை உணரும் விதம் புரிகிறது{ref_mention}. ஆனால் உணர்வுகள் நிரந்தர உண்மைகள் அல்ல. உங்களை நீங்களே சற்று பரிவோடு அணுகிப் பாருங்கள்."
-            elif language == "hi":
-                text = f"{salutation}इस स्थिति में आपकी भावनाएं पूरी तरह स्वाभाविक हैं{ref_mention}। लेकिन भावनाएं स्थायी सच्चाई नहीं होतीं। अपने प्रति थोड़ा धैर्य और स्नेह रखें।"
-            else:
-                text = f"{salutation}the way you are interpreting this situation{ref_mention} is understandable given how much you care, but feelings are signals, not permanent facts. Let's look at this with a little more kindness toward yourself."
-        spoken = text
-        emotion_tag = "insightful"
-        gesture = "nod"
-
-    elif strategy == "exercise":
-        # Interactive exercise strictly when requested
-        if language == "ta":
-            text = f"{salutation}நான் உங்கள் குரலைக் கேட்கிறேன். உங்கள் மனதை அமைதிப்படுத்த ஒரு எளிய 4-7-8 சுவாசப் பயிற்சி செய்வோம்: மூக்கு வழியாக 4 நொடிகள் மெதுவாக மூச்சை உள்ளிழுங்கள், 7 நொடிகள் நிறுத்தி வையுங்கள், பிறகு வாய் வழியாக 8 நொடிகள் மெதுவாக வெளிவிடுங்கள்."
-        elif language == "hi":
-            text = f"{salutation}मैं आपकी बात समझ रहा हूँ। मन को शांत करने के लिए एक सरल 4-7-8 श्वास अभ्यास करते हैं: नाक से 4 सेकंड तक गहरी सांस अंदर लें, 7 सेकंड तक रोकें, और मुँह से 8 सेकंड में धीरे-धीरे बाहर छोड़ें।"
-        else:
-            text = f"{salutation}I hear you. Let's ground your nervous system with a quick 4-7-8 breathing practice: gently inhale through your nose for 4 counts, hold for 7, and release slowly through your mouth for 8."
-        spoken = text
-        emotion_tag = "grounding"
-        gesture = "breathe"
-
-    else:  # validate or reflect
-        if language == "ta":
-            text = f"{salutation}நீங்கள் பகிர்ந்து கொண்டதை நான் கவனமாகக் கேட்கிறேன்{ref_mention}. இந்த உணர்வு ஏற்படுவது முற்றிலும் நியாயமானது, உங்கள் வலியை நான் மதிக்கிறேன். நான் உங்களுடன் இருக்கிறேன்."
-            spoken = text
-        elif language == "hi":
-            text = f"{salutation}आपने जो साझा किया, उसे मैं पूरी संवेदनशीलता से सुन रहा हूँ{ref_mention}। ऐसी स्थिति में ऐसा महसूस होना पूरी तरह स्वाभाविक है। आप अकेले नहीं हैं।"
-            spoken = text
-        else:
-            text = f"{salutation}I hear you clearly, and what you are feeling{ref_mention} makes complete sense given what you are carrying. You don't have to carry all of this alone."
-            spoken = text
-        emotion_tag = "empathetic"
-        gesture = "listening"
-
-    segments = [
-        {
-            "spoken_text": spoken,
-            "text": text,
-            "emotion": emotion_tag,
-            "gesture": gesture
-        }
-    ]
-
-    return {
-        "reply": text,
-        "spoken_text": spoken,
-        "emotion": emotion_tag,
-        "gesture": gesture,
-        "segments": segments,
-        "strategy_used": strategy,
-        "stress_level": understanding.get("intensity", 5)
-    }
-
+# Scripted/canned reply generation removed in favor of live LLM generation.
 
 # ===========================================================================
 # STAGE 7: CRITIC PASS (Specificity, Repetition, Safety, Question Answered)
@@ -986,40 +792,30 @@ async def run_chat_pipeline(
         generation["strategy_used"] = generation.get("strategy_used") or chosen_strategy
         generation["stress_level"] = generation.get("stress_level") or understanding.get("intensity", 4)
     except Exception as e:
-        log.warning("Primary LLM generation failed (%s), using dynamic local generation", e)
-        generation = _generate_deterministic_reply(
-            user_name=user_name,
-            message=message,
-            language=detected_lang,
-            tone=tone,
-            understanding=understanding,
-            strategy=chosen_strategy,
-            retrieval=retrieval
-        )
+        log.warning("Primary LLM generation failed (%s), returning connection hiccup message", e)
+        generation = {
+            "reply": "Connection hiccup, please try again.",
+            "spoken_text": "Connection hiccup, please try again.",
+            "emotion": "calm",
+            "gesture": "nod",
+            "expression": "calm",
+            "risk_level": "none",
+            "suggest_tool": "none",
+            "quick_replies": [],
+            "suggested_exercise": "none",
+            "is_error": True,
+            "strategy_used": chosen_strategy,
+            "stress_level": understanding.get("intensity", 4),
+            "segments": [{
+                "spoken_text": "Connection hiccup, please try again.",
+                "text": "Connection hiccup, please try again.",
+                "emotion": "calm",
+                "gesture": "nod"
+            }]
+        }
 
-    # STAGE 7: Critic Pass (with up to 2 regenerations on failure)
-    regeneration_count = 0
-    passed, critic_reason = critic_pass(
-        draft_reply=generation["reply"],
-        user_message=message,
-        recent_bot_replies=recent_bot_replies,
-        language=detected_lang,
-        intent=understanding["intent"]
-    )
-
-    while not passed and regeneration_count < 2:
-        regeneration_count += 1
-        log.debug("Critic pass failed (%s). Regenerating draft (attempt %d)...", critic_reason, regeneration_count)
-        alt_strategy = "small action step" if chosen_strategy != "small action step" else "reframe"
-        generation = _generate_deterministic_reply(
-            user_name=user_name,
-            message=message,
-            language=detected_lang,
-            tone=tone,
-            understanding=understanding,
-            strategy=alt_strategy,
-            retrieval=retrieval
-        )
+    # STAGE 7: Critic Pass
+    if not generation.get("is_error"):
         passed, critic_reason = critic_pass(
             draft_reply=generation["reply"],
             user_message=message,
@@ -1027,6 +823,9 @@ async def run_chat_pipeline(
             language=detected_lang,
             intent=understanding["intent"]
         )
+    else:
+        passed = True
+
 
     # STAGE 8: Post-Reply Persistence (Memory, Mood, Traces without PII)
     duration_ms = (time.time() - start_time) * 1000.0

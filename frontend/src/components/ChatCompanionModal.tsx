@@ -46,6 +46,9 @@ import {
   sendChatFeedback,
   fetchChatHistory,
   clearChatHistoryRemote,
+  saveSessionSummaryRemote,
+  fetchSessionSummaryRemote,
+  deleteSessionSummaryRemote,
 } from '../lib/ai/aiChatService';
 
 interface ChatCompanionModalProps {
@@ -63,6 +66,51 @@ interface ChatCompanionModalProps {
   onOpenJournalGoals?: () => void;
   onOpenSafetyPlan?: () => void;
   onOpenPrivacy?: () => void;
+}
+
+/**
+ * Extracts completed sentences from a streaming text buffer.
+ * Sentence boundaries match punctuation (.!?।) followed by whitespace/newlines.
+ */
+function extractFinishedSentences(buffer: string): { sentences: string[]; remaining: string } {
+  const sentences: string[] = [];
+  const regex = /^([\s\S]*?[.!?।\n]+)(?:\s+|\n+)([\s\S]*)$/;
+  let remaining = buffer;
+  let match = remaining.match(regex);
+  while (match) {
+    const s = match[1].trim();
+    if (s) {
+      sentences.push(s);
+    }
+    remaining = match[2];
+    match = remaining.match(regex);
+  }
+  return { sentences, remaining };
+}
+
+/**
+ * Default starting quick replies per language
+ */
+function getInitialQuickReplies(lang: string): string[] {
+  if (lang === 'ta') {
+    return [
+      'இன்று மனம் மிகவும் பாரமாக இருக்கிறது',
+      'படபடப்பைக் குறைக்க என்ன செய்ய வேண்டும்?',
+      'நாம் ஒரு மூச்சுப் பயிற்சி செய்வோமா?',
+    ];
+  }
+  if (lang === 'hi') {
+    return [
+      'आज मन बहुत भारी और तनावग्रस्त है',
+      'घबराहट शांत करने के लिए क्या करूं?',
+      'आइए साथ में एक गहरी सांस लें',
+    ];
+  }
+  return [
+    "I'm feeling really stressed today",
+    'Help me untangle what feels heaviest',
+    'Can we do a short breathing exercise?',
+  ];
 }
 
 export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
@@ -112,6 +160,34 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   const [isThinking, setIsThinking] = useState<boolean>(false);
   const [audioEnergy, setAudioEnergy] = useState<number>(0);
   const [voiceOutputEnabled, setVoiceOutputEnabled] = useState<boolean>(mascotConfig.speakingEnabled);
+  const voiceOutputEnabledRef = useRef<boolean>(mascotConfig.speakingEnabled);
+  useEffect(() => {
+    voiceOutputEnabledRef.current = voiceOutputEnabled;
+  }, [voiceOutputEnabled]);
+
+  // Session memory state (Requirement 6)
+  const [sessionMemory, setSessionMemory] = useState<{
+    mood_themes?: string;
+    what_helped?: string;
+    summary?: string;
+    created_at?: string;
+  } | null>(null);
+  const [isDeletingMemory, setIsDeletingMemory] = useState<boolean>(false);
+
+  // Dynamic quick-reply chips from live LLM (Requirement 4)
+  const [quickReplies, setQuickReplies] = useState<string[]>(() =>
+    getInitialQuickReplies(userProfile.language || 'en')
+  );
+
+  useEffect(() => {
+    setQuickReplies(getInitialQuickReplies(userProfile.language || 'en'));
+  }, [userProfile.language]);
+
+  // Streaming sentence-by-sentence TTS queue (Requirement 8)
+  const sentenceBufferRef = useRef<string>('');
+  const ttsQueueRef = useRef<string[]>([]);
+  const isTTSPlayingRef = useRef<boolean>(false);
+  const currentTTSMsgIdRef = useRef<string | null>(null);
 
   // Messages state: strictly one chronological list (oldest at top, newest at bottom)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -195,13 +271,17 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     };
   }, [isMenuOpen]);
 
-  // Barge-in: immediately stop speech synthesis when user interrupts
-  const handleBargeIn = () => {
+  // Barge-in: immediately stop speech synthesis and clear streaming sentence queue
+  const handleBargeIn = useCallback(() => {
     speechEngine.stopSpeaking();
+    ttsQueueRef.current = [];
+    isTTSPlayingRef.current = false;
+    currentTTSMsgIdRef.current = null;
+    sentenceBufferRef.current = '';
     setIsAvatarSpeaking(false);
     setSpeakingMessageId(null);
     setAudioEnergy(0);
-  };
+  }, []);
 
   // Register speech barge-in hook
   useEffect(() => {
@@ -209,101 +289,130 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       handleBargeIn();
     });
     return () => unsub();
-  }, []);
+  }, [handleBargeIn]);
 
   // Duck music volume when avatar is speaking
   useEffect(() => {
     musicPlayer.setAvatarSpeaking(isAvatarSpeaking);
   }, [isAvatarSpeaking]);
 
-  // Speak response aloud with synchronized lip-sync energy and segment progression
-  const speakResponse = (
-    text: string,
-    lang = 'en',
-    messageId?: string,
-    segments?: Array<{ spoken_text?: string; text?: string; emotion?: string; gesture?: string }>
-  ) => {
-    if (!text.trim()) return;
-
-    handleBargeIn();
-    setIsAvatarSpeaking(true);
-    if (messageId) setSpeakingMessageId(messageId);
-
-    // If structured sentence segments exist, advance through each segment
-    if (segments && segments.length > 0) {
-      let currentSegIdx = 0;
-
-      const playNextSegment = () => {
-        if (currentSegIdx >= segments.length) {
-          setIsAvatarSpeaking(false);
-          setSpeakingMessageId(null);
-          setAudioEnergy(0);
-          setTimeout(() => {
-            setMascotExpr((prev) => (prev === 'concerned' ? 'empathetic' : 'calm'));
-            setActiveGesture('idle');
-          }, 1200);
-          return;
-        }
-
-        const seg = segments[currentSegIdx++];
-        const segText = seg.spoken_text || seg.text || '';
-        if (seg.emotion) {
-          setMascotExpr(seg.emotion as MascotEmotion);
-        }
-        if (seg.gesture) {
-          setActiveGesture(seg.gesture as any);
-        }
-
-        const voiceGender =
-          userProfile.voiceGender ||
-          (userProfile.avatarType === 'girl' ? 'girl' : userProfile.gender === 'girl' ? 'girl' : 'boy');
-        const userPitch = userProfile.voicePitch;
-
-        speechEngine.speak(segText, lang, {
-          voiceSpeed: mascotConfig.voiceSpeed,
-          pitch: userPitch,
-          gender: voiceGender,
-          onEnergy: (energy) => setAudioEnergy(energy),
-          onEnd: () => {
-            playNextSegment();
-          },
-          onError: () => {
-            setIsAvatarSpeaking(false);
-            setSpeakingMessageId(null);
-            setAudioEnergy(0);
-          },
-        });
-      };
-
-      playNextSegment();
+  // Play sentences sequentially from queue (Requirement 8)
+  const playNextQueuedSentence = useCallback(() => {
+    if (isTTSPlayingRef.current) return;
+    if (ttsQueueRef.current.length === 0) {
+      setIsAvatarSpeaking(false);
+      setSpeakingMessageId(null);
+      setAudioEnergy(0);
       return;
     }
 
-    // Single-pass speech synthesis fallback
+    const nextSentence = ttsQueueRef.current.shift()!;
+    isTTSPlayingRef.current = true;
+    setIsAvatarSpeaking(true);
+    if (currentTTSMsgIdRef.current) {
+      setSpeakingMessageId(currentTTSMsgIdRef.current);
+    }
+
     const voiceGender =
       userProfile.voiceGender ||
       (userProfile.avatarType === 'girl' ? 'girl' : userProfile.gender === 'girl' ? 'girl' : 'boy');
     const userPitch = userProfile.voicePitch;
 
-    speechEngine.speak(text, lang, {
+    speechEngine.speak(nextSentence, userProfile.language || 'en', {
       voiceSpeed: mascotConfig.voiceSpeed,
       pitch: userPitch,
       gender: voiceGender,
       onEnergy: (energy) => setAudioEnergy(energy),
       onEnd: () => {
-        setIsAvatarSpeaking(false);
-        setSpeakingMessageId(null);
-        setAudioEnergy(0);
-        setTimeout(() => {
-          setMascotExpr((prev) => (prev === 'concerned' ? 'empathetic' : 'calm'));
-        }, 1200);
+        isTTSPlayingRef.current = false;
+        playNextQueuedSentence();
       },
       onError: () => {
-        setIsAvatarSpeaking(false);
-        setSpeakingMessageId(null);
-        setAudioEnergy(0);
+        isTTSPlayingRef.current = false;
+        playNextQueuedSentence();
       },
     });
+  }, [
+    userProfile.voiceGender,
+    userProfile.avatarType,
+    userProfile.gender,
+    userProfile.voicePitch,
+    userProfile.language,
+    mascotConfig.voiceSpeed,
+  ]);
+
+  // Enqueue a finished sentence to TTS (Requirement 8)
+  const enqueueSentenceTTS = useCallback(
+    (sentence: string, botId?: string) => {
+      if (!sentence.trim()) return;
+      ttsQueueRef.current.push(sentence.trim());
+      if (botId) currentTTSMsgIdRef.current = botId;
+      playNextQueuedSentence();
+    },
+    [playNextQueuedSentence]
+  );
+
+  // Speak response aloud (replay on demand or full text)
+  const speakResponse = (text: string, _lang = 'en', messageId?: string) => {
+    if (!text.trim()) return;
+    handleBargeIn();
+    const { sentences, remaining } = extractFinishedSentences(text);
+    const toPlay = sentences.length > 0 ? sentences : [text.trim()];
+    if (remaining.trim() && sentences.length > 0) {
+      toPlay.push(remaining.trim());
+    }
+    for (const s of toPlay) {
+      enqueueSentenceTTS(s, messageId);
+    }
+  };
+
+  // Load session memory from DB on mount (Requirement 6)
+  useEffect(() => {
+    const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+    fetchSessionSummaryRemote(userId)
+      .then((mem) => {
+        if (mem && (mem.mood_themes || mem.summary)) {
+          setSessionMemory(mem);
+        }
+      })
+      .catch((err) => console.warn('Could not load session memory:', err));
+  }, [userProfile.id]);
+
+  // Delete session memory handler (Requirement 6)
+  const handleDeleteSessionMemory = async () => {
+    const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+    setIsDeletingMemory(true);
+    try {
+      await deleteSessionSummaryRemote(userId);
+      setSessionMemory(null);
+    } catch (err) {
+      console.warn('Failed to delete session memory:', err);
+    } finally {
+      setIsDeletingMemory(false);
+    }
+  };
+
+  // Save session memory on close or navigation
+  const saveCurrentSessionMemory = useCallback(async () => {
+    const userMsgs = messages.filter((m) => m.sender === 'user' && !m.isError);
+    if (userMsgs.length >= 2) {
+      const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+      const recentThemes = userMsgs.slice(-4).map((m) => m.text).join('; ');
+      try {
+        await saveSessionSummaryRemote(userId, {
+          mood_themes: recentThemes.slice(0, 150),
+          what_helped: 'Conversational emotional reflection and grounding support',
+          summary: `Session with ${userMsgs.length} messages. Discussed: ${recentThemes.slice(0, 120)}`,
+        });
+      } catch (err) {
+        console.warn('Could not save session memory:', err);
+      }
+    }
+  }, [messages, userProfile.id]);
+
+  const handleCloseWorkspace = () => {
+    saveCurrentSessionMemory();
+    onClose();
   };
 
   // Smooth scroll helper
@@ -417,6 +526,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     if (!textToSend.trim() || isTyping) return;
 
     handleBargeIn();
+    sentenceBufferRef.current = '';
 
     const timestamp = Date.now();
     const userMsgId = `user_${timestamp}_${Math.random().toString(36).substring(2, 7)}`;
@@ -474,6 +584,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                     state_label: meta.state_label || m.state_label,
                     stress_level: meta.stress_level,
                     suggested_exercise: meta.suggested_exercise,
+                    suggest_tool: meta.suggest_tool,
                     helplines: meta.helplines,
                     isHighRisk: meta.isHighRisk,
                     crisis: meta.crisis,
@@ -495,11 +606,54 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 : m
             )
           );
+
+          // Requirement 8: Send each finished sentence to TTS as it streams, then to the avatar
+          if (voiceOutputEnabledRef.current) {
+            sentenceBufferRef.current += token;
+            const { sentences, remaining } = extractFinishedSentences(sentenceBufferRef.current);
+            sentenceBufferRef.current = remaining;
+            for (const sentence of sentences) {
+              enqueueSentenceTTS(sentence, botMsgId);
+            }
+          }
+
           if (shouldAutoScrollRef.current) {
             scrollToBottom(false);
           }
         },
       });
+
+      // Stream completed: flush any remaining sentence buffer to TTS
+      if (voiceOutputEnabledRef.current && sentenceBufferRef.current.trim()) {
+        enqueueSentenceTTS(sentenceBufferRef.current.trim(), botMsgId);
+        sentenceBufferRef.current = '';
+      }
+
+      // Requirement 4: Update quick-reply chips dynamically from live LLM response
+      if (res.quick_replies && Array.isArray(res.quick_replies) && res.quick_replies.length > 0) {
+        setQuickReplies(res.quick_replies.slice(0, 3));
+      }
+
+      // Check for error response from LLM / API
+      if (res.isError) {
+        setIsThinking(false);
+        setMascotExpr('concerned');
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === botMsgId
+              ? {
+                  ...m,
+                  isThinking: false,
+                  isStreaming: false,
+                  isError: true,
+                  text: 'Connection hiccup, please try again.',
+                  retryText: textToSend.trim(),
+                }
+              : m
+          )
+        );
+        return;
+      }
 
       // Finalize bot message
       setIsThinking(false);
@@ -519,8 +673,10 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 helplines: res.helplines,
                 state_label: res.state_label,
                 suggested_exercise: res.suggested_exercise,
+                suggest_tool: res.suggest_tool,
                 gesture: res.animation,
                 spoken_text: res.spoken_text,
+                quick_replies: res.quick_replies,
               }
             : m
         )
@@ -534,11 +690,6 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       if (shouldAutoScrollRef.current) {
         scrollToBottom(true);
       }
-
-      // Speak aloud if voice output is enabled
-      if (voiceOutputEnabled) {
-        speakResponse(res.spoken_text || res.message, userProfile.language, botMsgId, res.segments);
-      }
     } catch (err) {
       console.warn('Chat interaction error:', err);
       setIsThinking(false);
@@ -551,7 +702,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 isThinking: false,
                 isStreaming: false,
                 isError: true,
-                text: 'Connection hiccup. Your companion is right here — click Retry to send again.',
+                text: 'Connection hiccup, please try again.',
                 retryText: textToSend.trim(),
               }
             : m
@@ -581,41 +732,18 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     setTimeout(() => setActiveGesture('idle'), 2800);
   };
 
-  // Clear conversation option
+  // Clear conversation option and companion memory (Requirement 6)
   const handleClearConversation = async () => {
-    if (confirm('Clear the current conversation?')) {
+    if (confirm('Clear the current conversation and companion memory?')) {
       handleBargeIn();
       setMessages([]);
       setMascotExpr('calm');
       const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
       localStorage.removeItem(`manas_chat_${userId}`);
       await clearChatHistoryRemote(userId);
+      await deleteSessionSummaryRemote(userId);
+      setSessionMemory(null);
     }
-  };
-
-  // Contextual chips for prompt inspiration (simply insert text into the normal send pipeline)
-  const getContextualChips = () => {
-    const lang = userProfile.language || 'en';
-    if (lang === 'ta') {
-      return [
-        'இன்று மனம் மிகவும் பாரமாக இருக்கிறது',
-        'படபடப்பைக் குறைக்க என்ன செய்ய வேண்டும்?',
-        'நாம் 4-7-8 மூச்சுப் பயிற்சி செய்வோம்',
-      ];
-    }
-    if (lang === 'hi') {
-      return [
-        'आज मन बहुत भारी और तनावग्रस्त है',
-        'घबराहट शांत करने के लिए क्या करूं?',
-        'मेरे साथ 4-7-8 सांस का अभ्यास करें',
-      ];
-    }
-    return [
-      "I'm feeling really stressed today",
-      'Help me untangle what feels heaviest',
-      'Can we do the 4-7-8 breathing exercise?',
-      'Guide me through 5-4-3-2-1 grounding',
-    ];
   };
 
   return (
@@ -922,6 +1050,16 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                     <Edit3 className="w-3.5 h-3.5" /> Edit Profile
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    handleDeleteSessionMemory();
+                    setIsMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-50 flex items-center gap-2 text-rose-600 cursor-pointer"
+                  title="Clear remembered mood themes and session history"
+                >
+                  <Brain className="w-3.5 h-3.5 text-rose-500" /> Delete Companion Memory
+                </button>
                 {onDeleteData && (
                   <button
                     onClick={() => {
@@ -937,7 +1075,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                   <button
                     onClick={() => {
                       setIsMenuOpen(false);
-                      onClose();
+                      handleCloseWorkspace();
                     }}
                     className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] text-[#0A0A0A]/60 cursor-pointer"
                   >
@@ -951,7 +1089,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           {/* Close Workspace Button */}
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCloseWorkspace}
             className="p-1.5 rounded-full hover:bg-[#F2EFE8] text-[#0A0A0A]/60 hover:text-[#0A0A0A] transition-colors cursor-pointer"
             title="Close workspace"
           >
@@ -994,6 +1132,29 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           aria-label="Conversation with Mascot"
           className="w-full md:w-[55%] flex-1 flex flex-col justify-between overflow-hidden bg-[#FFFFFF] relative"
         >
+          {/* Session Memory Indicator (Requirement 6) */}
+          {sessionMemory && (
+            <div className="mx-4 sm:mx-8 mt-3 p-2.5 rounded-xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/5 flex items-center justify-between gap-3 text-xs font-mono shrink-0">
+              <div className="flex items-center gap-2 truncate text-[#0A0A0A]/80">
+                <Brain className="w-4 h-4 text-[#8B5CF6] shrink-0" />
+                <span className="truncate">
+                  <strong className="text-[#8B5CF6]">Remembered:</strong>{' '}
+                  {sessionMemory.mood_themes || sessionMemory.summary}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleDeleteSessionMemory}
+                disabled={isDeletingMemory}
+                className="shrink-0 flex items-center gap-1 text-[11px] text-rose-600 hover:text-rose-800 hover:underline cursor-pointer"
+                title="Delete remembered session memory"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{isDeletingMemory ? 'Deleting...' : 'Delete Memory'}</span>
+              </button>
+            </div>
+          )}
+
           {/* Scrollable Conversation Container: oldest at top, newest at bottom */}
           <div
             ref={chatContainerRef}
@@ -1045,9 +1206,9 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
 
           {/* BOTTOM CHAT COMPOSER AREA */}
           <div className="p-3 sm:p-5 border-t border-[#0A0A0A]/10 bg-[#FFFFFF] space-y-2.5 shrink-0 z-10">
-            {/* Quick Contextual Response Chips */}
+            {/* Quick Contextual Response Chips from Live LLM (Requirement 4) */}
             <div className="flex flex-wrap gap-1.5">
-              {getContextualChips().map((chip, idx) => (
+              {quickReplies.map((chip, idx) => (
                 <button
                   key={idx}
                   type="button"

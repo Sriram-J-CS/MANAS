@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 from datetime import datetime
+from typing import Optional, Dict, Any, List
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manas_twin.db")
 
@@ -556,6 +557,18 @@ def init_db():
     )
     """)
 
+    # Session Summaries Table (for persistent session memory: mood themes, what helped)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS session_summaries (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        mood_themes TEXT,
+        what_helped TEXT,
+        summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # -----------------------------------------------------------------------
     # PERFORMANCE INDEXES
     # -----------------------------------------------------------------------
@@ -567,9 +580,47 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_journal_user_time ON journal_entries(user_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_user_status ON goals(user_id, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_memories_user_cat ON user_memories(user_id, category)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_summaries_user ON session_summaries(user_id, created_at)")
 
     conn.commit()
     conn.close()
+
+def save_session_summary(user_id: str, mood_themes: str, what_helped: str, summary: str) -> str:
+    import uuid
+    summary_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO session_summaries (id, user_id, mood_themes, what_helped, summary)
+        VALUES (?, ?, ?, ?, ?)
+    """, (summary_id, user_id, mood_themes, what_helped, summary))
+    conn.commit()
+    conn.close()
+    return summary_id
+
+def get_latest_session_summary(user_id: str) -> Optional[dict]:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, user_id, mood_themes, what_helped, summary, created_at
+        FROM session_summaries
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_user_session_summaries(user_id: str) -> int:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM session_summaries WHERE user_id = ?", (user_id,))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
 
 if __name__ == "__main__":
     init_db()
