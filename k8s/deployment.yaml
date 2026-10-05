@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: manas-api-deployment
+  namespace: manas
+  labels:
+    app: manas-api
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: manas-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: manas-api
+    spec:
+      containers:
+        - name: manas-api
+          image: manas-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8008
+          envFrom:
+            - configMapRef:
+                name: manas-config
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manas-secrets
+                  key: gemini-api-key
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: manas-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: manas-secrets
+                  key: redis-url
+            - name: DATA_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: manas-secrets
+                  key: data-encryption-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: manas-secrets
+                  key: jwt-secret
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2048Mi"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8008
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8008
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3

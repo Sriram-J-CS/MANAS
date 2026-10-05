@@ -1,0 +1,81 @@
+name: MANAS Scale-Ready CI & Multilingual Safety Eval
+
+on:
+  push:
+    branches: [ "main", "scale-ready" ]
+  pull_request:
+    branches: [ "main", "scale-ready" ]
+
+jobs:
+  test-and-eval:
+    name: Multilingual Eval Suite (200+ Cases) & Services Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: manas_test
+          POSTGRES_USER: manas_user
+          POSTGRES_PASSWORD: manas_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Multilingual Eval Suite (200+ Cases)
+        env:
+          DATABASE_URL: postgresql://manas_user:manas_password@localhost:5432/manas_test
+          REDIS_URL: redis://localhost:6379/0
+          PYTHONPATH: backend
+        run: |
+          python -m pytest backend/tests/test_eval_200.py -v
+
+      - name: Run Full Backend Test Suite
+        env:
+          DATABASE_URL: postgresql://manas_user:manas_password@localhost:5432/manas_test
+          REDIS_URL: redis://localhost:6379/0
+          PYTHONPATH: backend
+        run: |
+          python -m pytest backend/tests/test_auto_features.py backend/tests/test_voice_native.py backend/tests/test_load_bench.py -v
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate Frontend Zero Regressions
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build

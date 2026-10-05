@@ -62,11 +62,41 @@ from .services.notifications import (
     send_web_push_notification,
 )
 from .services.privacy import purge_all_user_presence, export_all_user_data
+from .services.telemetry import (
+    TracingMiddleware,
+    get_system_telemetry_stats,
+    track_system_error,
+    logger as telemetry_logger,
+)
+from .services.redis_cache import (
+    check_rate_limit,
+    check_and_record_cost,
+    get_redis_client,
+    get_session_context,
+    cache_session_context,
+)
+from .services.job_queue import enqueue_job, get_job_queue
+from .safety.multilingual_crisis import (
+    detect_multilingual_crisis,
+    get_multilingual_crisis_response,
+)
+from .services.postgres_db import is_postgres_active, init_postgres_schema
+from .services.status_page import get_system_status_data, render_status_html
+from fastapi.responses import HTMLResponse
 
 # Initialize SQLite database schema
 init_db()
 
 app = FastAPI(title="MANAS API", version="2.0.0")
+app.add_middleware(TracingMiddleware)
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        await init_postgres_schema()
+    except Exception as e:
+        telemetry_logger.warning("Postgres schema init note: %s", e)
+
 app.include_router(auth_router)
 app.include_router(agent_router)
 app.include_router(domain_router)
@@ -177,6 +207,22 @@ class FeedbackRequest(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "MANAS AI Emotional Wellness Companion", "version": "2.0.0"}
+
+@app.get("/api/status")
+async def api_status_endpoint():
+    """Scale-ready real-time system status and telemetry metrics."""
+    return await get_system_status_data()
+
+@app.get("/status")
+async def status_dashboard(request: Request):
+    """
+    Renders interactive HTML dashboard if opened in a browser, or returns JSON.
+    """
+    data = await get_system_status_data()
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return HTMLResponse(content=render_status_html(data), status_code=200)
+    return data
 
 @app.get("/api/ai/health")
 async def ai_health():
@@ -366,26 +412,57 @@ def get_admin_feedback(limit: int = 50, only_negative: bool = True, admin_id: st
 
 @app.post("/api/chat")
 @app.post("/api/chat/stream")
-async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = Depends(get_current_user_id)):
     """
-    Live streaming chat endpoint calling Gemini API (model name from env, key server-side only).
-    Sends: system prompt, user profile, last 20 turns, rolling summary of older turns.
-    Returns: Server-Sent Events (SSE) streaming tokens to the UI with structured output metadata.
-    Safety: Pre-approved crisis message on high risk detection; never improvises medical advice.
+    Scale-ready streaming chat endpoint:
+    - OpenTelemetry / trace correlation with X-Trace-ID
+    - Per-IP (60 req/min) and per-user (30 req/min) sliding-window rate limits
+    - Daily token spend / cost caps ($0.50/day/user)
+    - Safety layer: high-risk detection in all 8 Indian languages + approved Tele-MANAS crisis templates
+    - Distributed job queue for background extraction and push notifications
+    - Live Server-Sent Events (SSE) streaming tokens to UI with structured output metadata
     """
     uid = current_uid or req.user_id or "anonymous"
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # Rate limiting: 60 req/min per IP
+    ip_allowed, _, ip_retry = await check_rate_limit(f"ip:{client_ip}", limit=60, window_seconds=60)
+    if not ip_allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"IP rate limit exceeded (60 req/min). Please retry after {ip_retry}s.",
+            headers={"Retry-After": str(ip_retry)}
+        )
+
+    # Rate limiting: 30 req/min per user
+    user_allowed, _, user_retry = await check_rate_limit(f"user:{uid}", limit=30, window_seconds=60)
+    if not user_allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"User rate limit exceeded (30 req/min). Please retry after {user_retry}s.",
+            headers={"Retry-After": str(user_retry)}
+        )
+
+    # Cost cap: verify user within daily token budget
+    est_prompt_tokens = max(10, len(req.message.split()) * 2)
+    cost_allowed, current_spend, max_spend = await check_and_record_cost(uid, prompt_tokens=est_prompt_tokens, response_tokens=0)
+    if not cost_allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily token quota exceeded (${current_spend:.4f} / ${max_spend:.2f}). Resets at midnight UTC."
+        )
+
     user_msg_id = str(uuid.uuid4())
     bot_msg_id = str(uuid.uuid4())
 
-    # 1. SAFETY LAYER: Run classifier on incoming user message
+    # 1. SAFETY LAYER: Multilingual High-Risk Crisis Detection in all 8 languages + Rule-based fallback
+    crisis_detected, crisis_lang, crisis_pattern = detect_multilingual_crisis(req.message, req.language)
     safety_res = check_safety(req.message)
-    if safety_res.get("risk_level") == "high":
-        crisis_text = get_crisis_response(req.language)
-        helplines_data = [
-            {"name": "Tele-MANAS (24/7 Toll-Free)", "number": "14416", "alt": "1800 891 4416"},
-            {"name": "National Emergency", "number": "112"},
-            {"name": "KIRAN Helpline", "number": "1800-599-0019"}
-        ]
+    if crisis_detected or safety_res.get("risk_level") == "high":
+        target_lang = req.language or crisis_lang or "en"
+        crisis_info = get_multilingual_crisis_response(target_lang)
+        crisis_text = crisis_info["crisis_text"]
+        helplines_data = crisis_info["helpline_buttons"]
 
         conn = get_db()
         cur = conn.cursor()
@@ -498,6 +575,21 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
     # Retrieve previous session memory summary if present
     session_mem = get_latest_session_summary(uid)
 
+    # Enqueue extraction to distributed Redis/In-Memory job queue
+    try:
+        await enqueue_job(
+            job_type="chat_background_extraction",
+            payload={
+                "user_id": uid,
+                "user_message": req.message,
+                "recent_history": prior_messages[-6:],
+                "language": req.language
+            },
+            priority=1
+        )
+    except Exception as q_err:
+        telemetry_logger.warning("Job queue enqueue note: %s", q_err)
+
     # Launch non-blocking background extraction call with Gemini function calling & thinking level MEDIUM
     extraction_task = asyncio.create_task(
         run_chat_background_extraction(
@@ -596,6 +688,13 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
             ))
             conn_b.commit()
             conn_b.close()
+        except Exception:
+            pass
+
+        # Record response token usage in daily budget
+        est_response_tokens = max(10, len(reply_to_store.split()) * 2)
+        try:
+            await check_and_record_cost(uid, prompt_tokens=0, response_tokens=est_response_tokens)
         except Exception:
             pass
 

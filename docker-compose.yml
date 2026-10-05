@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL 16 with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: manas-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-manas_production}
+      POSTGRES_USER: ${POSTGRES_USER:-manas_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-manas_secure_pass_2026}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/schema_pgvector.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manas_admin -d manas_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+
+  # 2. Redis 7 for sliding-window rate limits and distributed job queue
+  redis:
+    image: redis:7-alpine
+    container_name: manas-redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
+  # 3. MANAS Backend Web API (Autoscalable container)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manas-api
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://manas_admin:${POSTGRES_PASSWORD:-manas_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-manas_production}
+      REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      JWT_SECRET: ${JWT_SECRET:-manas-super-secret-jwt-key-change-in-prod}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-manas-aes-256-gcm-master-key-prod-32}
+      RATE_LIMIT_USER: "30"
+      RATE_LIMIT_IP: "60"
+      DAILY_COST_CAP_USD: "0.50"
+    ports:
+      - "8008:8008"
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # 4. MANAS Asynchronous Background Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manas-worker
+    restart: always
+    command: ["python", "worker.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://manas_admin:${POSTGRES_PASSWORD:-manas_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-manas_production}
+      REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-manas-aes-256-gcm-master-key-prod-32}
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
+volumes:
+  pgdata:
+  redisdata:
