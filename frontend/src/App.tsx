@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { MenuOverlay } from './components/MenuOverlay';
@@ -63,7 +64,7 @@ export function App() {
       const phone = localStorage.getItem('manas_user_phone');
       const name = localStorage.getItem('manas_user_name');
       if (uid && (email || phone)) return { user_id: uid, email: email || '', phone: phone || '', name: name || 'User' };
-    } catch (_) {}
+    } catch (_) { }
     return null;
   });
 
@@ -72,7 +73,7 @@ export function App() {
     try {
       const saved = localStorage.getItem('manas_twin_profile');
       if (saved) return JSON.parse(saved);
-    } catch (_) {}
+    } catch (_) { }
     return {
       name: 'Friend',
       age: 20,
@@ -137,7 +138,7 @@ export function App() {
       const next = { ...prev, language: lang };
       try {
         localStorage.setItem('manas_twin_profile', JSON.stringify(next));
-      } catch (_) {}
+      } catch (_) { }
       return next;
     });
   };
@@ -164,7 +165,7 @@ export function App() {
     try {
       localStorage.setItem('manas_twin_profile', JSON.stringify(profile));
       localStorage.setItem('manas_twin_onboarded', 'true');
-    } catch (_) {}
+    } catch (_) { }
 
     if (profile.language) {
       setCurrentLang(profile.language as Language);
@@ -179,7 +180,7 @@ export function App() {
       const next = { ...prev, ...updated };
       try {
         localStorage.setItem('manas_twin_profile', JSON.stringify(next));
-      } catch (_) {}
+      } catch (_) { }
       return next;
     });
   };
@@ -189,7 +190,7 @@ export function App() {
       if (userProfile.id) {
         await fetch(`/api/user/data/${userProfile.id}`, { method: 'DELETE' });
       }
-    } catch (_) {}
+    } catch (_) { }
     localStorage.removeItem('manas_twin_profile');
     localStorage.removeItem('manas_twin_onboarded');
     setHasCompletedOnboarding(false);
@@ -239,9 +240,8 @@ export function App() {
 
   return (
     <div
-      className={`min-h-screen bg-[#000000] text-[#ffffff] selection:bg-[#ffffff] selection:text-[#000000] ${
-        currentLang === 'ta' ? 'font-tamil' : ''
-      }`}
+      className={`min-h-screen bg-[#000000] text-[#ffffff] selection:bg-[#ffffff] selection:text-[#000000] ${currentLang === 'ta' ? 'font-tamil' : ''
+        }`}
     >
       {/* Calm Page-Load Reveal Veil (< 1.2s) */}
       <PageIntroCurtain />
@@ -297,6 +297,7 @@ export function App() {
           onOpenHelp={() => setIsHelpOpen(true)}
           onToggleLang={toggleLanguage}
         />
+
 
         {/* Signature Moment 2: Statement with Word-by-Word Scroll Opacity Scrub */}
         <Statement statement={config.statement} />
@@ -374,7 +375,7 @@ export function App() {
         userProfile={userProfile}
         onUpdateProfile={handleUpdateProfile}
         isFullscreen={true}
-        onToggleFullscreen={() => {}}
+        onToggleFullscreen={() => { }}
       />
 
       {/* 24/7 Crisis Help & Tele-MANAS Safety Modal */}

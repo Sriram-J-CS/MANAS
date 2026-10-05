@@ -37,7 +37,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onClearConversation,
   onOpenMascotUpload,
   language = 'en',
-  silenceTimeoutSeconds = 15,
+  silenceTimeoutSeconds = 5,
   className = '',
   placeholder = 'Speak or type what you are carrying...',
 }) => {
@@ -136,7 +136,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }, 100);
   };
 
-  // Start 15s silence countdown
+  // Start 5s silence countdown
   const restartSilenceTimer = (currentText: string) => {
     clearSilenceTimer();
     setIsCountingDown(true);
@@ -180,7 +180,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           if (isVoiceEndPhrase(transcript, language)) {
             startEndPhraseCountdown(transcript);
           } else {
-            // Restart 15s silence timer
+            // Restart 5s silence timer
             restartSilenceTimer(transcript);
           }
         }
@@ -261,7 +261,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
       )}
 
-      {/* 15s Silence Countdown Bar & Cancel button (when countdown active and not in end-phrase mode) */}
+      {/* 5s Silence Countdown Bar & Cancel button (when countdown active and not in end-phrase mode) */}
       {isCountingDown && !pendingEndPhrase && (
         <div className="flex items-center justify-between px-3 py-1.5 bg-[#FAF8F5] border border-[#0A0A0A]/10 rounded-xl text-xs text-[#0A0A0A]/70">
           <div className="flex items-center gap-2">
