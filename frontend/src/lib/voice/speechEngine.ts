@@ -1,19 +1,17 @@
 /**
  * speechEngine.ts
  * 
- * Multilingual Speech Synthesis (TTS) & Continuous Speech Recognition (STT) engine.
+ * Multilingual Speech Synthesis (TTS) & Continuous Speech Recognition (STT) engine for MANAS.
  * 
- * Key Features:
- * 1. Continuous STT in 8 Indian languages (en, ta, hi, te, kn, ml, bn, mr).
- * 2. Live interim transcript updates directly into input box.
- * 3. Server-side fallback (POST /api/voice/stt via Sarvam/Gemini) when browser Web Speech API is absent.
- * 4. Immediate Barge-in: mascot avatar stops speaking the instant the user produces vocal input.
- * 5. Text-to-Speech (TTS):
- *    - Uses spoken_text or cleansed text.
- *    - Strips emojis and markdown formatting.
- *    - Pronounces emergency helplines ("14416", "112", "1098") digit by digit across all 8 languages.
- *    - Caching and sentence-level streaming with synchronized mouth viseme energy callbacks.
+ * Audio Fix Requirements:
+ * 1. Single shared AudioContext: routes base64 audio and AnalyserNode to sharedAudioManager voice master gain.
+ * 2. Microphone echo suppression: requests getUserMedia with { echoCancellation: true, noiseSuppression: true, autoGainControl: true }.
+ * 3. While TTS is playing, pauses speech recognition, and restarts it 400ms after playback ends.
+ * 4. Never triggers barge-in or auto-sends text while bot is speaking.
+ * 5. Voice volume and mute controlled via sharedAudioManager (voice is at least 12 dB louder than music).
  */
+
+import { sharedAudioManager } from '../audio/sharedAudioContext';
 
 export interface SpeechEngineOptions {
   voiceSpeed?: number;
@@ -60,7 +58,7 @@ const EMERGENCY_DIGIT_MAP: Record<string, Record<string, string>> = {
     en: 'one, zero, nine, eight',
     ta: 'ஒன்று, பூஜ்ஜியம், ஒன்பது, எட்டு',
     hi: 'एक, शून्य, नौ, आठ',
-    te: 'ఒకటి, సున్నా, తొమ్మిది, ఎనిమిది',
+    te: 'ఒకటి, సున్నా, తొమ్మిది, ఎనిमिది',
     kn: 'ಒಂದು, ಸೊನ್ನೆ, ಒಂಬತ್ತು, ಎಂಟು',
     ml: 'ഒന്ന്, പൂജ്യം, ഒൻപത്, എട്ട്',
     bn: 'এক, शून्य, নয়, আট',
@@ -85,12 +83,16 @@ class SpeechEngine {
   private energyInterval: any = null;
   private recognition: any = null;
   private isListeningActive = false;
+  private isPausedForTTS = false;
+  private ttsRestartTimer: any = null;
   private isSpeaking = false;
   private bargeInListeners: Set<() => void> = new Set();
-  private audioCtx: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
   private analyserRAF: number | null = null;
   private currentBlobUrl: string | null = null;
+
+  // Active mic stream with hardware AEC / NS / AGC
+  private micStream: MediaStream | null = null;
 
   // MediaRecorder fallback state for browsers without Web Speech STT
   private mediaRecorder: MediaRecorder | null = null;
@@ -108,12 +110,15 @@ class SpeechEngine {
    * Triggers barge-in: avatar immediately ceases vocalizing.
    */
   public triggerBargeIn(): void {
-    this.stopSpeaking();
-    this.bargeInListeners.forEach((cb) => {
-      try {
-        cb();
-      } catch (_) {}
-    });
+    // Only trigger barge-in if we are actually speaking
+    if (this.isSpeakingActive()) {
+      this.stopSpeaking();
+      this.bargeInListeners.forEach((cb) => {
+        try {
+          cb();
+        } catch (_) {}
+      });
+    }
   }
 
   public getAvailableVoices(): SpeechSynthesisVoice[] {
@@ -121,8 +126,82 @@ class SpeechEngine {
     return window.speechSynthesis.getVoices();
   }
 
+  /**
+   * Handles TTS start: pauses speech recognition to prevent mic echo.
+   */
+  private handleTTSStart(opts: SpeechEngineOptions): void {
+    this.isSpeaking = true;
+    sharedAudioManager.setDuckingSource('voice', true);
+
+    // Pause speech recognition while TTS is playing to avoid picking up speaker output
+    this.pauseRecognitionForTTS();
+    opts.onStart?.();
+  }
+
+  /**
+   * Handles TTS end: schedules speech recognition restart 400ms after playback ends.
+   */
+  private handleTTSEnd(opts: SpeechEngineOptions): void {
+    this.isSpeaking = false;
+    sharedAudioManager.setDuckingSource('voice', false);
+
+    if (this.analyserRAF !== null) {
+      cancelAnimationFrame(this.analyserRAF);
+      this.analyserRAF = null;
+    }
+    this.stopVisemeEnergyInterval(opts.onEnergy);
+
+    if (this.currentBlobUrl) {
+      try {
+        URL.revokeObjectURL(this.currentBlobUrl);
+      } catch (_) {}
+      this.currentBlobUrl = null;
+    }
+    this.currentAudioElement = null;
+    this.currentUtterance = null;
+
+    opts.onEnd?.();
+
+    // Restart speech recognition 400ms after playback ends
+    this.scheduleRecognitionRestartAfterTTS();
+  }
+
+  private pauseRecognitionForTTS(): void {
+    if (this.ttsRestartTimer) {
+      clearTimeout(this.ttsRestartTimer);
+      this.ttsRestartTimer = null;
+    }
+    if (this.isListeningActive && this.recognition) {
+      this.isPausedForTTS = true;
+      try {
+        this.recognition.abort();
+      } catch (_) {}
+    }
+  }
+
+  private scheduleRecognitionRestartAfterTTS(): void {
+    if (this.ttsRestartTimer) {
+      clearTimeout(this.ttsRestartTimer);
+      this.ttsRestartTimer = null;
+    }
+    // Restart exactly 400ms after playback ends
+    this.ttsRestartTimer = window.setTimeout(() => {
+      this.ttsRestartTimer = null;
+      if (this.isListeningActive && this.isPausedForTTS && !this.isSpeaking) {
+        this.isPausedForTTS = false;
+        try {
+          if (this.recognition) {
+            this.recognition.start();
+          }
+        } catch (_) {}
+      }
+    }, 400);
+  }
+
   public stopSpeaking(): void {
     this.isSpeaking = false;
+    sharedAudioManager.setDuckingSource('voice', false);
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -133,23 +212,20 @@ class SpeechEngine {
       } catch (_) {}
       this.currentAudioElement = null;
     }
-    // Cancel Web Audio API analysis loop
     if (this.analyserRAF !== null) {
       cancelAnimationFrame(this.analyserRAF);
       this.analyserRAF = null;
     }
-    // Disconnect and release AudioContext
     if (this.analyserNode) {
-      try { this.analyserNode.disconnect(); } catch (_) {}
+      try {
+        this.analyserNode.disconnect();
+      } catch (_) {}
       this.analyserNode = null;
     }
-    if (this.audioCtx) {
-      try { this.audioCtx.close(); } catch (_) {}
-      this.audioCtx = null;
-    }
-    // Revoke blob URL to prevent memory leak
     if (this.currentBlobUrl) {
-      try { URL.revokeObjectURL(this.currentBlobUrl); } catch (_) {}
+      try {
+        URL.revokeObjectURL(this.currentBlobUrl);
+      } catch (_) {}
       this.currentBlobUrl = null;
     }
     if (this.energyInterval) {
@@ -157,6 +233,9 @@ class SpeechEngine {
       this.energyInterval = null;
     }
     this.currentUtterance = null;
+
+    // Restart speech recognition 400ms after playback ends
+    this.scheduleRecognitionRestartAfterTTS();
   }
 
   public isSpeakingActive(): boolean {
@@ -178,13 +257,11 @@ class SpeechEngine {
     if (!text) return '';
     let clean = text
       .replace(/[*_~`#\[\]\(\)<>]|https?:\/\/\S+/g, ' ')
-      // Strip emojis
       .replace(
         /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu,
         ''
       );
 
-    // Expand emergency numbers digit by digit
     const langKey = lang in EMERGENCY_DIGIT_MAP['14416'] ? lang : 'en';
     for (const [number, digitDict] of Object.entries(EMERGENCY_DIGIT_MAP)) {
       if (clean.includes(number)) {
@@ -196,9 +273,6 @@ class SpeechEngine {
     return clean.replace(/\s+/g, ' ').trim();
   }
 
-  /**
-   * Splits text into sentence chunks for progressive streaming.
-   */
   public splitSentences(text: string): string[] {
     const clean = text.trim();
     if (!clean) return [];
@@ -208,8 +282,7 @@ class SpeechEngine {
   /**
    * Speaks text using per-language provider chain:
    * 1. Calls backend /api/voice/tts (checks cache or Sarvam AI).
-   * 2. If backend returns base64 audio, plays through HTML5 Audio element.
-   * 3. Falls back to browser SpeechSynthesis with sentence-level streaming.
+   * 2. Falls back smoothly to browser Web Speech API.
    */
   public async speak(
     text: string,
@@ -217,10 +290,20 @@ class SpeechEngine {
     opts: SpeechEngineOptions = {}
   ): Promise<void> {
     this.stopSpeaking();
+
+    // Respect voice mute
+    if (sharedAudioManager.getIsVoiceMuted()) {
+      opts.onEnd?.();
+      return;
+    }
+
     const clean = this.sanitizeSpokenText(text, lang);
     if (!clean) return;
 
-    // Check backend provider for pre-synthesized or cached audio
+    const isBoy = opts.gender === 'boy' || opts.gender === 'male';
+    const genderStr = isBoy ? 'male' : 'female';
+    const defaultVoice = isBoy ? 'achal' : 'ananya';
+
     try {
       const response = await fetch('/api/voice/tts', {
         method: 'POST',
@@ -228,30 +311,27 @@ class SpeechEngine {
         body: JSON.stringify({
           text: clean,
           language: lang,
-          voice: opts.voiceName || 'ananya',
+          voice: opts.voiceName || defaultVoice,
+          gender: genderStr,
+          emotion: 'calm',
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
         if (data.audio_base64) {
-          // Play returned server audio
           this.playBase64Audio(data.audio_base64, opts);
           return;
         }
       }
-    } catch (err) {
-      // Backend request failure, seamlessly proceed to Web Speech fallback
-    }
+    } catch (_) {}
 
-    // Client-side Web Speech Synthesis fallback with sentence streaming
+    // Fallback: Web Speech API
     this.speakWithBrowserWebSpeech(clean, lang, opts);
   }
 
   /**
-   * Plays base64 audio with Web Audio API AnalyserNode for real lip-sync energy.
-   * Falls back to sine-wave interval if AudioContext is unavailable (e.g. Safari restrictions).
-   * Automatically revokes blob URL when audio ends to prevent memory leaks.
+   * Plays base64 audio routed into shared AudioContext voice master gain.
    */
   private playBase64Audio(base64Data: string, opts: SpeechEngineOptions): void {
     const audioUrl = base64Data.startsWith('data:')
@@ -259,33 +339,28 @@ class SpeechEngine {
       : `data:audio/wav;base64,${base64Data}`;
 
     const audio = new Audio(audioUrl);
-    // Store blob URL for revocation (only for blob: URLs)
     if (audioUrl.startsWith('blob:')) {
       this.currentBlobUrl = audioUrl;
     }
     this.currentAudioElement = audio;
 
     const startWebAudioAnalysis = (): boolean => {
-      if (typeof AudioContext === 'undefined' && typeof (window as any).webkitAudioContext === 'undefined') {
-        return false;
-      }
       try {
-        const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
-        const ctx = new AC() as AudioContext;
+        const ctx = sharedAudioManager.getAudioContext();
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
         analyser.smoothingTimeConstant = 0.7;
+
         const source = ctx.createMediaElementSource(audio);
         source.connect(analyser);
-        analyser.connect(ctx.destination);
-        this.audioCtx = ctx;
+        // Connect directly to the voice master gain node
+        analyser.connect(sharedAudioManager.getVoiceMasterGainNode());
         this.analyserNode = analyser;
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         const poll = () => {
           if (!this.analyserNode || !this.isSpeaking) return;
           this.analyserNode.getByteFrequencyData(dataArray);
-          // RMS energy from frequency bins 0-80 (vocal formant range)
           const len = Math.min(80, dataArray.length);
           let sumSq = 0;
           for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
@@ -301,41 +376,25 @@ class SpeechEngine {
     };
 
     audio.onplay = () => {
-      this.isSpeaking = true;
-      opts.onStart?.();
+      this.handleTTSStart(opts);
       const usedWebAudio = startWebAudioAnalysis();
       if (!usedWebAudio) {
-        // Fallback: sine-wave approximation when Web Audio API is blocked
         this.startVisemeEnergyInterval(opts.onEnergy);
       }
     };
 
     audio.onended = () => {
-      this.isSpeaking = false;
-      if (this.analyserRAF !== null) {
-        cancelAnimationFrame(this.analyserRAF);
-        this.analyserRAF = null;
-      }
-      this.stopVisemeEnergyInterval(opts.onEnergy);
-      // Revoke blob URL now that playback is complete
-      if (this.currentBlobUrl) {
-        try { URL.revokeObjectURL(this.currentBlobUrl); } catch (_) {}
-        this.currentBlobUrl = null;
-      }
-      this.currentAudioElement = null;
-      opts.onEnd?.();
+      this.handleTTSEnd(opts);
     };
 
     audio.onerror = (e) => {
-      this.isSpeaking = false;
-      this.stopVisemeEnergyInterval(opts.onEnergy);
-      this.currentAudioElement = null;
+      this.handleTTSEnd(opts);
       opts.onError?.(e);
     };
 
     audio.play().catch((err) => {
+      this.handleTTSEnd(opts);
       opts.onError?.(err);
-      this.currentAudioElement = null;
     });
   }
 
@@ -359,90 +418,88 @@ class SpeechEngine {
 
     const speakNextSentence = () => {
       if (index >= sentences.length) {
-        this.stopVisemeEnergyInterval(opts.onEnergy);
-        this.currentUtterance = null;
-        opts.onEnd?.();
+        this.handleTTSEnd(opts);
         return;
       }
 
       const sentence = sentences[index++];
       const utterance = new SpeechSynthesisUtterance(sentence);
-      utterance.rate = opts.voiceSpeed ?? 0.95;
+
+      // Volume controlled via sharedAudioManager
+      if (sharedAudioManager.getIsVoiceMuted()) {
+        utterance.volume = 0.0;
+      } else {
+        utterance.volume = sharedAudioManager.getVoiceVolume();
+      }
 
       const isBoy = opts.gender === 'boy' || opts.gender === 'male';
       const isGirl = opts.gender === 'girl' || opts.gender === 'female';
 
-      // Tune pitch according to user's gender preference:
-      // Boy user -> deeper, grounded masculine resonance (0.86 - 0.90)
-      // Girl user -> bright, gentle feminine warmth (1.15 - 1.22)
       if (opts.pitch !== undefined) {
         utterance.pitch = opts.pitch;
       } else if (isBoy) {
-        utterance.pitch = 0.88;
+        utterance.pitch = 0.82;
       } else if (isGirl) {
         utterance.pitch = 1.18;
       } else {
-        utterance.pitch = 1.02;
+        utterance.pitch = 1.0;
       }
+
+      utterance.rate = (opts.voiceSpeed ?? 0.95) * (isBoy ? 0.94 : 0.98);
 
       const targetLang = BROWSER_LANG_CODES[lang] || 'en-US';
       utterance.lang = targetLang;
       const langPrefix = targetLang.split('-')[0].toLowerCase();
 
-      // Find available voices installed on the operating system
-      const voices = this.getAvailableVoices();
+      const voices = window.speechSynthesis.getVoices();
       if (voices.length > 0) {
-        if (opts.voiceName && opts.voiceName !== 'default') {
-          const match = voices.find((v) => v.name.toLowerCase().includes(opts.voiceName!.toLowerCase()));
-          if (match) utterance.voice = match;
+        if (opts.voiceName) {
+          const found = voices.find(
+            (v) => v.name.toLowerCase() === opts.voiceName!.toLowerCase()
+          );
+          if (found) utterance.voice = found;
         }
 
         if (!utterance.voice) {
-          // 1. Filter voices for the native language code
           const matchingLangVoices = voices.filter((v) => {
-            const vLang = (v.lang || '').replace('_', '-').toLowerCase();
+            const vLang = v.lang.toLowerCase();
             return vLang.startsWith(langPrefix) || vLang.includes(langPrefix);
           });
 
-          if (matchingLangVoices.length > 0) {
-            let matchedVoice = null;
-            if (isBoy) {
-              matchedVoice = matchingLangVoices.find((v) => {
-                const n = v.name.toLowerCase();
-                return (
-                  n.includes('male') ||
-                  n.includes('boy') ||
-                  n.includes('ravi') ||
-                  n.includes('valluvar') ||
-                  n.includes('madhur') ||
-                  n.includes('mohan') ||
-                  n.includes('arvind') ||
-                  n.includes('hemant')
-                );
-              });
-            } else if (isGirl) {
-              matchedVoice = matchingLangVoices.find((v) => {
-                const n = v.name.toLowerCase();
-                return (
-                  n.includes('female') ||
-                  n.includes('girl') ||
-                  n.includes('priya') ||
-                  n.includes('ananya') ||
-                  n.includes('swara') ||
-                  n.includes('kalpana') ||
-                  n.includes('shruthi') ||
-                  n.includes('heera')
-                );
-              });
-            }
-            utterance.voice = matchedVoice || matchingLangVoices[0];
+          const maleKeywords = [
+            'david', 'mark', 'george', 'guy', 'ravi', 'valluvar', 'madhur', 
+            'mohan', 'arvind', 'hemant', 'achal', 'arjun', 'karan', 'male', 
+            'boy', 'man', 'paul', 'james', 'richard', 'daniel', 'stefan', 
+            'neil', 'alex', 'fred', 'bruce', 'sean', 'oliver', 'rishi'
+          ];
+          const femaleKeywords = [
+            'zira', 'jenny', 'heera', 'priya', 'ananya', 'swara', 'kalpana', 
+            'shruthi', 'pavithra', 'maitreyi', 'female', 'girl', 'woman', 
+            'samantha', 'victoria', 'karen', 'moira', 'tessa', 'veena', 
+            'linda', 'susan', 'catherine', 'fiona', 'alice', 'aditi', 'neerja'
+          ];
+
+          const isVoiceMatch = (v: SpeechSynthesisVoice, keywords: string[]) => {
+            const name = v.name.toLowerCase();
+            return keywords.some((k) => name.includes(k));
+          };
+
+          const pool = matchingLangVoices.length > 0 ? matchingLangVoices : voices;
+          let matchedVoice: SpeechSynthesisVoice | undefined;
+
+          if (isBoy) {
+            matchedVoice = pool.find((v) => isVoiceMatch(v, maleKeywords));
+          } else if (isGirl) {
+            matchedVoice = pool.find((v) => isVoiceMatch(v, femaleKeywords));
           }
+
+          utterance.voice = matchedVoice || pool[0];
         }
       }
 
       utterance.onstart = () => {
         if (index === 1) {
-          opts.onStart?.();
+          this.handleTTSStart(opts);
           this.startVisemeEnergyInterval(opts.onEnergy);
         }
       };
@@ -452,8 +509,7 @@ class SpeechEngine {
       };
 
       utterance.onerror = (e) => {
-        this.stopVisemeEnergyInterval(opts.onEnergy);
-        this.currentUtterance = null;
+        this.handleTTSEnd(opts);
         opts.onError?.(e);
       };
 
@@ -485,7 +541,8 @@ class SpeechEngine {
   }
 
   /**
-   * Continuous Speech-to-Text with live interim text & server fallback.
+   * Continuous Speech-to-Text with hardware echo suppression & server fallback.
+   * Requests getUserMedia with { echoCancellation: true, noiseSuppression: true, autoGainControl: true }.
    */
   public startListening(
     lang = 'en',
@@ -497,6 +554,26 @@ class SpeechEngine {
 
     this.stopListening();
     this.isListeningActive = true;
+    this.isPausedForTTS = false;
+    sharedAudioManager.setDuckingSource('mic', true);
+
+    // Hardware Echo Cancellation, Noise Suppression, and AGC Request
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
+        .then((stream) => {
+          this.micStream = stream;
+        })
+        .catch((err) => {
+          console.warn('getUserMedia mic hardware AEC initialization:', err);
+        });
+    }
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -509,17 +586,21 @@ class SpeechEngine {
         rec.lang = BROWSER_LANG_CODES[lang] || 'en-US';
 
         rec.onspeechstart = () => {
-          this.triggerBargeIn();
+          if (this.isSpeaking || this.isPausedForTTS) return;
           onSpeechDetected?.();
         };
 
         rec.onsoundstart = () => {
-          this.triggerBargeIn();
+          if (this.isSpeaking || this.isPausedForTTS) return;
           onSpeechDetected?.();
         };
 
         rec.onresult = (event: any) => {
-          this.triggerBargeIn();
+          // Never process or auto-send text that arrives while bot is speaking
+          if (this.isSpeaking || this.isPausedForTTS) {
+            return;
+          }
+
           onSpeechDetected?.();
 
           let finalTranscript = '';
@@ -543,15 +624,14 @@ class SpeechEngine {
         };
 
         rec.onerror = (event: any) => {
-          // 'no-speech' is benign in continuous mode
-          if (event.error !== 'no-speech') {
+          if (event.error !== 'no-speech' && event.error !== 'aborted') {
             onError(event.error);
           }
         };
 
         rec.onend = () => {
-          // Restart continuous listening if still active
-          if (this.isListeningActive) {
+          // Only restart if still active and not paused for TTS
+          if (this.isListeningActive && !this.isPausedForTTS && !this.isSpeaking) {
             try {
               rec.start();
             } catch (_) {}
@@ -569,13 +649,12 @@ class SpeechEngine {
         return this.startServerSideRecordingFallback(lang, onResult, onError);
       }
     } else {
-      // Browser lacks SpeechRecognition, fallback to MediaRecorder + /api/voice/stt
       return this.startServerSideRecordingFallback(lang, onResult, onError);
     }
   }
 
   /**
-   * MediaRecorder fallback for browsers without SpeechRecognition.
+   * MediaRecorder fallback with hardware AEC constraints for browsers without SpeechRecognition.
    */
   private startServerSideRecordingFallback(
     lang: string,
@@ -589,8 +668,15 @@ class SpeechEngine {
 
     this.recordedChunks = [];
     navigator.mediaDevices
-      .getUserMedia({ audio: true })
+      .getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
       .then((stream) => {
+        this.micStream = stream;
         if (!this.isListeningActive) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -606,8 +692,8 @@ class SpeechEngine {
         };
 
         recorder.onstop = async () => {
-          stream.getTracks().forEach((track) => track.stop());
           if (this.recordedChunks.length === 0) return;
+          if (this.isSpeaking || this.isPausedForTTS) return;
 
           const audioBlob = new Blob(this.recordedChunks, { type: 'audio/webm' });
           const reader = new FileReader();
@@ -625,7 +711,7 @@ class SpeechEngine {
               });
               if (res.ok) {
                 const data = await res.json();
-                if (data.transcript) {
+                if (data.transcript && !this.isSpeaking && !this.isPausedForTTS) {
                   onResult(data.transcript, true);
                 }
               }
@@ -649,6 +735,13 @@ class SpeechEngine {
 
   public stopListening(): void {
     this.isListeningActive = false;
+    this.isPausedForTTS = false;
+    sharedAudioManager.setDuckingSource('mic', false);
+
+    if (this.ttsRestartTimer) {
+      clearTimeout(this.ttsRestartTimer);
+      this.ttsRestartTimer = null;
+    }
     if (this.recognition) {
       try {
         this.recognition.stop();
@@ -661,6 +754,12 @@ class SpeechEngine {
       } catch (_) {}
       this.mediaRecorder = null;
     }
+    if (this.micStream) {
+      try {
+        this.micStream.getTracks().forEach((t) => t.stop());
+      } catch (_) {}
+      this.micStream = null;
+    }
   }
 }
 
@@ -668,4 +767,3 @@ export const speechEngine = new SpeechEngine();
 if (typeof window !== 'undefined') {
   (window as any).speechEngine = speechEngine;
 }
-

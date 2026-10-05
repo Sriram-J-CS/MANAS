@@ -3,16 +3,18 @@
  * 
  * Spotify-style Music Player Service for MANAS.
  * 
- * Features:
- * - Playlist management (12 therapeutic tracks).
- * - Real-time Web Audio API ambient synthesizer generating soothing harmonic drones, 432Hz sine pads, rain, and singing bowls.
- * - Automatic volume ducking when the mascot avatar is vocalizing.
- * - Persistent state (remembers last track, user volume, shuffle/repeat preferences).
- * - Scrubbable seek bar and time synchronization.
- * - Reactive state subscribers for UI synchronization.
+ * Audio Fix Requirements:
+ * 1. Default to OFF in chat (user can switch on).
+ * 2. Volume capped at max -30 dB (scaled via sharedAudioContext).
+ * 3. Filtered via 600 Hz lowpass filter in sharedAudioContext.
+ * 4. Slow fade-in and slow fade-out (1.5 seconds) on play/pause.
+ * 5. Integrated with sharedAudioContext: companion voice is at least 12 dB louder than music.
+ * 6. Auto-ducking: ducks music to ~10% in 300ms when voice plays or mic is active;
+ *    restores 1.5s after both cease.
  */
 
 import { THERAPEUTIC_TRACKS, type MusicTrack } from './musicTracks';
+import { sharedAudioManager } from '../audio/sharedAudioContext';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -22,7 +24,7 @@ export interface PlayerState {
   currentTime: number;
   duration: number;
   userVolume: number;       // 0.0 to 1.0 (set by user)
-  effectiveVolume: number;  // 0.0 to 1.0 (with ducking applied)
+  effectiveVolume: number;  // Linear gain with -30 dB max and ducking applied
   isMuted: boolean;
   isShuffle: boolean;
   repeatMode: RepeatMode;
@@ -33,37 +35,45 @@ export interface PlayerState {
 type Listener = (state: PlayerState) => void;
 
 class MusicPlayerService {
-  private audioCtx: AudioContext | null = null;
-  private masterGain: GainNode | null = null;
   private activeNodes: Array<AudioNode> = [];
+  private trackGain: GainNode | null = null;
+  private fadeTimeout: any = null;
   private progressInterval: any = null;
   private listeners: Set<Listener> = new Set();
 
   private state: PlayerState;
 
   constructor() {
-    // Load persisted state from localStorage
     const savedTrackId = typeof window !== 'undefined' ? localStorage.getItem('manas_music_last_track') : null;
-    const savedVol = typeof window !== 'undefined' ? localStorage.getItem('manas_music_vol') : null;
     const savedShuffle = typeof window !== 'undefined' ? localStorage.getItem('manas_music_shuffle') : null;
     const savedRepeat = typeof window !== 'undefined' ? localStorage.getItem('manas_music_repeat') : null;
 
     const initialTrack = THERAPEUTIC_TRACKS.find((t) => t.id === savedTrackId) || THERAPEUTIC_TRACKS[0];
-    const initialVol = savedVol !== null ? parseFloat(savedVol) : 0.65;
+    const initialVol = sharedAudioManager.getMusicVolume();
 
+    // Default to OFF in chat (isPlaying: false)
     this.state = {
       currentTrack: initialTrack,
       isPlaying: false,
       currentTime: 0,
       duration: initialTrack.duration,
       userVolume: initialVol,
-      effectiveVolume: initialVol,
-      isMuted: false,
+      effectiveVolume: sharedAudioManager.computeMusicTargetGain(),
+      isMuted: sharedAudioManager.getIsMusicMuted(),
       isShuffle: savedShuffle === 'true',
       repeatMode: (savedRepeat as RepeatMode) || 'all',
       isDucked: false,
       playlist: [...THERAPEUTIC_TRACKS],
     };
+
+    // Keep synced with sharedAudioManager
+    sharedAudioManager.subscribe(() => {
+      this.state.userVolume = sharedAudioManager.getMusicVolume();
+      this.state.isMuted = sharedAudioManager.getIsMusicMuted();
+      this.state.isDucked = sharedAudioManager.getIsDucked();
+      this.state.effectiveVolume = sharedAudioManager.computeMusicTargetGain();
+      this.notify();
+    });
   }
 
   public getState(): PlayerState {
@@ -85,60 +95,50 @@ class MusicPlayerService {
     });
   }
 
-  private initAudioContext(): void {
-    if (!this.audioCtx) {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioContextClass) {
-        this.audioCtx = new AudioContextClass();
-        this.masterGain = this.audioCtx.createGain();
-        this.masterGain.gain.setValueAtTime(this.computeTargetGain(), this.audioCtx.currentTime);
-        this.masterGain.connect(this.audioCtx.destination);
-      }
-    }
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
-    }
-  }
-
-  private computeTargetGain(): number {
-    if (this.state.isMuted) return 0;
-    const base = this.state.userVolume;
-    // When ducked, reduce music volume down to 18% of user volume
-    return this.state.isDucked ? base * 0.18 : base;
-  }
-
-  private applyVolumeRamp(rampDurationMs = 300): void {
-    if (!this.masterGain || !this.audioCtx) return;
-    const target = this.computeTargetGain();
-    const now = this.audioCtx.currentTime;
-    this.masterGain.gain.cancelScheduledValues(now);
-    this.masterGain.gain.linearRampToValueAtTime(target, now + rampDurationMs / 1000);
-    this.state.effectiveVolume = target;
+  /**
+   * Ducking: delegate to sharedAudioManager.
+   * Ducks music to ~10% in 300ms when voice plays or mic is active;
+   * restores 1.5s after both cease.
+   */
+  public setDuckingSource(source: 'voice' | 'mic', active: boolean): void {
+    sharedAudioManager.setDuckingSource(source, active);
+    this.state.isDucked = sharedAudioManager.getIsDucked();
     this.notify();
   }
 
-  /**
-   * Automatic Volume Ducking: Call when avatar begins or ceases speaking.
-   */
   public setAvatarSpeaking(isSpeaking: boolean): void {
-    if (this.state.isDucked === isSpeaking) return;
-    this.state.isDucked = isSpeaking;
-    // Duck smoothly over 350ms, restore smoothly over 600ms
-    this.applyVolumeRamp(isSpeaking ? 350 : 600);
+    this.setDuckingSource('voice', isSpeaking);
+  }
+
+  public setMicListening(isListening: boolean): void {
+    this.setDuckingSource('mic', isListening);
   }
 
   /**
    * Synthesizes therapeutic ambient soundscape in real time.
+   * Routed to sharedAudioManager.getMusicDestinationNode() (600 Hz lowpass -> -30 dB master gain).
    */
   private startSynthesis(track: MusicTrack): void {
-    this.stopSynthesis();
-    this.initAudioContext();
-    if (!this.audioCtx || !this.masterGain) return;
+    this.stopSynthesisImmediate();
 
-    const ctx = this.audioCtx;
+    if (this.fadeTimeout) {
+      clearTimeout(this.fadeTimeout);
+      this.fadeTimeout = null;
+    }
+
+    const ctx = sharedAudioManager.getAudioContext();
     const now = ctx.currentTime;
     const baseFreq = track.audioFreq || 432;
     const chords = track.audioChords || [baseFreq, baseFreq * 1.25, baseFreq * 1.5];
+
+    // Master track envelope for smooth 1.5s fade-in
+    const trackEnvelope = ctx.createGain();
+    trackEnvelope.gain.setValueAtTime(0.0001, now);
+    // Slow fade-in over 1.5 seconds
+    trackEnvelope.gain.linearRampToValueAtTime(1.0, now + 1.5);
+    trackEnvelope.connect(sharedAudioManager.getMusicDestinationNode());
+    this.trackGain = trackEnvelope;
+    this.activeNodes.push(trackEnvelope);
 
     // Create polyphonic harmonic oscillators
     chords.forEach((freq, idx) => {
@@ -160,7 +160,7 @@ class MusicPlayerService {
       lfoGain.gain.setValueAtTime(0.06, now);
       lfo.connect(oscGain.gain);
       lfo.start(now);
-      this.activeNodes.push(lfo);
+      this.activeNodes.push(lfo, lfoGain);
 
       // Initial gain
       const baseGain = 0.18 / Math.sqrt(chords.length);
@@ -171,11 +171,12 @@ class MusicPlayerService {
         panner.pan.setValueAtTime((idx / (chords.length - 1 || 1)) * 1.2 - 0.6, now);
         osc.connect(panner);
         panner.connect(oscGain);
+        this.activeNodes.push(panner);
       } else {
         osc.connect(oscGain);
       }
 
-      oscGain.connect(this.masterGain!);
+      oscGain.connect(trackEnvelope);
       osc.start(now);
       this.activeNodes.push(osc, oscGain);
     });
@@ -212,13 +213,20 @@ class MusicPlayerService {
 
       whiteNoise.connect(filter);
       filter.connect(noiseGain);
-      noiseGain.connect(this.masterGain);
+      noiseGain.connect(trackEnvelope);
       whiteNoise.start(now);
       this.activeNodes.push(whiteNoise, filter, noiseGain);
     }
   }
 
-  private stopSynthesis(): void {
+  /**
+   * Immediate disconnection of nodes without fade (internal cleanup).
+   */
+  private stopSynthesisImmediate(): void {
+    if (this.fadeTimeout) {
+      clearTimeout(this.fadeTimeout);
+      this.fadeTimeout = null;
+    }
     if (this.activeNodes.length > 0) {
       this.activeNodes.forEach((node) => {
         try {
@@ -229,6 +237,26 @@ class MusicPlayerService {
         } catch (_) {}
       });
       this.activeNodes = [];
+    }
+    this.trackGain = null;
+  }
+
+  /**
+   * Slow 1.5s fade-out of synthesis nodes.
+   */
+  private fadeOutAndStopSynthesis(): void {
+    if (this.trackGain) {
+      const ctx = sharedAudioManager.getAudioContext();
+      const now = ctx.currentTime;
+      this.trackGain.gain.cancelScheduledValues(now);
+      // Slow fade-out over 1.5 seconds
+      this.trackGain.gain.linearRampToValueAtTime(0.0001, now + 1.5);
+
+      this.fadeTimeout = setTimeout(() => {
+        this.stopSynthesisImmediate();
+      }, 1550);
+    } else {
+      this.stopSynthesisImmediate();
     }
   }
 
@@ -256,7 +284,6 @@ class MusicPlayerService {
   }
 
   public resume(): void {
-    this.initAudioContext();
     this.state.isPlaying = true;
     this.startSynthesis(this.state.currentTrack);
     this.startProgressTicker();
@@ -265,7 +292,7 @@ class MusicPlayerService {
 
   public pause(): void {
     this.state.isPlaying = false;
-    this.stopSynthesis();
+    this.fadeOutAndStopSynthesis();
     this.stopProgressTicker();
     this.notify();
   }
@@ -304,20 +331,11 @@ class MusicPlayerService {
   }
 
   public setVolume(volume: number): void {
-    const cleanVol = Math.max(0, Math.min(1, volume));
-    this.state.userVolume = cleanVol;
-    this.state.isMuted = cleanVol === 0;
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('manas_music_vol', cleanVol.toString());
-    }
-
-    this.applyVolumeRamp(100);
+    sharedAudioManager.setMusicVolume(volume);
   }
 
   public toggleMute(): void {
-    this.state.isMuted = !this.state.isMuted;
-    this.applyVolumeRamp(150);
+    sharedAudioManager.toggleMusicMute();
   }
 
   public toggleShuffle(): void {

@@ -27,6 +27,7 @@ interface ChatInputProps {
   silenceTimeoutSeconds?: number;
   className?: string;
   placeholder?: string;
+  isBotSpeaking?: boolean;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -37,9 +38,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onClearConversation,
   onOpenMascotUpload,
   language = 'en',
-  silenceTimeoutSeconds = 5,
+  silenceTimeoutSeconds = 1.8,
   className = '',
   placeholder = 'Speak or type what you are carrying...',
+  isBotSpeaking = false,
 }) => {
   const [inputText, setInputText] = useState<string>('');
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -67,6 +69,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       }
     };
   }, []);
+
+  // Cancel auto-send countdown whenever bot starts speaking
+  useEffect(() => {
+    if (isBotSpeaking) {
+      clearSilenceTimer();
+      clearEndPhraseTimer();
+    }
+  }, [isBotSpeaking]);
 
   const clearSilenceTimer = () => {
     if (silenceTimerRef.current) {
@@ -136,42 +146,42 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }, 100);
   };
 
-  // Start 5s silence countdown
+  // Start 1.8s silence countdown (cancelled and pushed back if user keeps talking)
   const restartSilenceTimer = (currentText: string) => {
     clearSilenceTimer();
+    if (isBotSpeaking || speechEngine.isSpeakingActive()) return;
+
     setIsCountingDown(true);
     setSilenceSecondsLeft(silenceTimeoutSeconds);
 
-    let sec = silenceTimeoutSeconds;
+    let remainingMs = Math.round(silenceTimeoutSeconds * 1000);
     silenceTimerRef.current = setInterval(() => {
-      sec -= 1;
+      remainingMs -= 100;
+      const sec = Math.max(0, parseFloat((remainingMs / 1000).toFixed(1)));
       setSilenceSecondsLeft(sec);
 
-      if (sec <= 0) {
-        clearInterval(silenceTimerRef.current);
-        silenceTimerRef.current = null;
-        setIsCountingDown(false);
-        if (currentText.trim()) {
+      if (remainingMs <= 0) {
+        clearSilenceTimer();
+        if (currentText.trim() && !isBotSpeaking && !speechEngine.isSpeakingActive()) {
           handleDispatch(currentText);
         }
       }
-    }, 1000);
+    }, 100);
   };
 
   // Start Voice Recognition
   const startListening = () => {
-    // Barge-in: immediately stop mascot vocalization
-    speechEngine.triggerBargeIn();
-
     clearSilenceTimer();
     clearEndPhraseTimer();
     setIsListening(true);
 
     const stopFn = speechEngine.startListening(
       language,
-      (transcript, isFinal) => {
-        // Barge-in upon speech activity
-        speechEngine.triggerBargeIn();
+      (transcript, _isFinal) => {
+        // Never auto-send text that arrives while the bot is speaking
+        if (isBotSpeaking || speechEngine.isSpeakingActive()) {
+          return;
+        }
 
         if (transcript) {
           setInputText(transcript);
@@ -180,7 +190,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           if (isVoiceEndPhrase(transcript, language)) {
             startEndPhraseCountdown(transcript);
           } else {
-            // Restart 5s silence timer
+            // Cancel any pending countdown and restart 1.8s silence timer
             restartSilenceTimer(transcript);
           }
         }
@@ -190,7 +200,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         stopListening();
       },
       () => {
-        // User speech detected
+        // User speech detected: cancel auto-send if user keeps talking
+        clearSilenceTimer();
+        clearEndPhraseTimer();
         speechEngine.triggerBargeIn();
       }
     );
@@ -279,7 +291,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   cx="12"
                   cy="12"
                   r={radius}
-                  className="stroke-amber-500 transition-all duration-1000 ease-linear"
+                  className="stroke-amber-500 transition-all duration-100 ease-linear"
                   strokeWidth="2"
                   fill="transparent"
                   strokeDasharray={circumference}
@@ -287,11 +299,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   strokeLinecap="round"
                 />
               </svg>
-              <span className="absolute text-[10px] font-mono font-semibold text-[#0A0A0A]">
-                {silenceSecondsLeft}
+              <span className="absolute text-[9px] font-mono font-semibold text-[#0A0A0A]">
+                {silenceSecondsLeft.toFixed(1)}
               </span>
             </div>
-            <span>Auto-sending after silence ({silenceSecondsLeft}s)</span>
+            <span>Auto-sending after silence ({silenceSecondsLeft.toFixed(1)}s)</span>
           </div>
 
           <button

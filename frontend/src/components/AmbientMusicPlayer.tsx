@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, VolumeX, Sparkles, Feather, Wind } from 'lucide-react';
+import { sharedAudioManager } from '../lib/audio/sharedAudioContext';
 
 // Chords designed for deep emotional warmth, heart expansion, and a soaring weightless sensation
 // Each chord defines frequencies (Hz) for multi-voice lush pads
@@ -82,19 +83,15 @@ export const AmbientMusicPlayer: React.FC = () => {
   const timersRef = useRef<Array<number>>([]);
   const chordIndexRef = useRef<number>(0);
 
-  // Initialize or resume AudioContext safely
+  // Initialize or resume shared AudioContext safely
   const getOrCreateAudioContext = async (): Promise<AudioContext | null> => {
     try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-        audioCtxRef.current = new AudioCtx();
+      const ctx = sharedAudioManager.getAudioContext();
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
       }
-      if (audioCtxRef.current.state === 'suspended') {
-        await audioCtxRef.current.resume();
-      }
-      return audioCtxRef.current;
+      audioCtxRef.current = ctx;
+      return ctx;
     } catch (err) {
       console.warn('AudioContext init error:', err);
       return null;
@@ -424,29 +421,6 @@ export const AmbientMusicPlayer: React.FC = () => {
       masterGainRef.current.gain.setTargetAtTime(newVol, audioCtxRef.current.currentTime, 0.08);
     }
   };
-
-  // Auto-start audio on first user gesture anywhere on the page if not explicitly paused
-  useEffect(() => {
-    const handleFirstUserGesture = async () => {
-      if (userInteracted) return;
-      setUserInteracted(true);
-
-      const pref = localStorage.getItem('manas_music_pref');
-      if (pref !== 'paused') {
-        await startAudio();
-      }
-    };
-
-    window.addEventListener('click', handleFirstUserGesture, { once: true });
-    window.addEventListener('keydown', handleFirstUserGesture, { once: true });
-    window.addEventListener('touchstart', handleFirstUserGesture, { once: true });
-
-    return () => {
-      window.removeEventListener('click', handleFirstUserGesture);
-      window.removeEventListener('keydown', handleFirstUserGesture);
-      window.removeEventListener('touchstart', handleFirstUserGesture);
-    };
-  }, [userInteracted]);
 
   // Cleanup on unmount
   useEffect(() => {

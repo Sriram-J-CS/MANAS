@@ -20,8 +20,6 @@ import { avatar } from './lib/avatar/avatarConfigService';
 import { initLenis } from './lib/lenis';
 import { siteConfigByLang, type WorkItem } from './content/site.config';
 import type { Language } from './types';
-import { PersistentMiniPlayer } from './components/music/PersistentMiniPlayer';
-import { MusicDrawer } from './components/music/MusicDrawer';
 import { AuthModal } from './components/auth/AuthModal';
 import { VoiceRatingLabModal } from './components/voice/VoiceRatingLabModal';
 import { DigitalTwinModal } from './components/twin/DigitalTwinModal';
@@ -44,7 +42,6 @@ export function App() {
   const [isCalmOpen, setIsCalmOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMascotCustomizerOpen, setIsMascotCustomizerOpen] = useState(false);
-  const [isMusicDrawerOpen, setIsMusicDrawerOpen] = useState(false);
   const [isVoiceRatingLabOpen, setIsVoiceRatingLabOpen] = useState(false);
 
   // EmotiCare Domain Modals State
@@ -252,8 +249,8 @@ export function App() {
       {/* Custom Awwwards Cursor */}
       <Cursor visible={cursorVisible} text={cursorText} />
 
-      {/* Mind-Relaxing Peaceful Background Ambient Music Engine */}
-      <AmbientMusicPlayer />
+      {/* Mind-Relaxing Peaceful Background Ambient Music Engine (Only when companion chat is closed) */}
+      {!isCompanionOpen && <AmbientMusicPlayer />}
 
       {/* Fixed Thin Difference Blend Navbar */}
       <Navbar
@@ -390,17 +387,6 @@ export function App() {
         isOpen={isCalmOpen}
         onClose={() => setIsCalmOpen(false)}
         currentLang={currentLang}
-      />
-
-      {/* Persistent Spotify-Style Mini Player (on cover page) */}
-      {!isCompanionOpen && (
-        <PersistentMiniPlayer onOpenDrawer={() => setIsMusicDrawerOpen(true)} />
-      )}
-
-      {/* Therapeutic Soundscapes Music Drawer */}
-      <MusicDrawer
-        isOpen={isMusicDrawerOpen}
-        onClose={() => setIsMusicDrawerOpen(false)}
       />
 
       {/* User Authentication Modal (JWT & Zero PII) */}

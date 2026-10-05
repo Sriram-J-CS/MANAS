@@ -287,9 +287,10 @@ function VRMModelInner({
         if ((obj as THREE.Mesh).isMesh) {
           const mesh = obj as THREE.Mesh;
           if (Array.isArray(mesh.material)) {
-            mesh.material = mesh.material.map((_, idx) => {
+            const mats = mesh.material;
+            mesh.material = mats.map((mat, idx) => {
               const orig = originalMaterialsRef.current.get(`${mesh.uuid}_${idx}`);
-              return orig ? orig.clone() : mesh.material[idx];
+              return orig ? orig.clone() : mat;
             });
           } else if (mesh.material) {
             const orig = originalMaterialsRef.current.get(mesh.uuid);
