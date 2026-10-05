@@ -12,12 +12,17 @@
  */
 
 import { sharedAudioManager } from '../audio/sharedAudioContext';
+import { speechGateway } from './speechGateway';
 
 export interface SpeechEngineOptions {
   voiceSpeed?: number;
   pitch?: number;
   voiceName?: string;
   gender?: 'boy' | 'girl' | 'male' | 'female';
+  companion?: string;
+  tone?: string;
+  purpose?: string;
+  lineId?: string;
   onEnergy?: (energy: number) => void;
   onStart?: () => void;
   onEnd?: () => void;
@@ -217,7 +222,12 @@ class SpeechEngine {
     }, 400);
   }
 
+  public isSpeakingActive(): boolean {
+    return this.isSpeaking || speechGateway.isSpeakingActive();
+  }
+
   public stopSpeaking(): void {
+    speechGateway.stopSpeaking();
     this.isSpeaking = false;
     sharedAudioManager.setDuckingSource('voice', false);
 
@@ -257,12 +267,8 @@ class SpeechEngine {
     this.scheduleRecognitionRestartAfterTTS();
   }
 
-  public isSpeakingActive(): boolean {
-    return this.isSpeaking || this.currentUtterance !== null || this.currentAudioElement !== null;
-  }
-
   public getAnalyserNode(): AnalyserNode | null {
-    return this.analyserNode;
+    return speechGateway.getAnalyserNode() || this.analyserNode;
   }
 
   public getAudioElement(): HTMLAudioElement | null {
@@ -326,46 +332,38 @@ class SpeechEngine {
     }
 
     const clean = this.sanitizeSpokenText(text, lang);
-    if (!clean) return;
+    if (!clean) {
+      opts.onEnd?.();
+      return;
+    }
 
-    const targetBcp47 = BROWSER_LANG_CODES[lang] || (lang.includes('-') ? lang : `${lang}-IN`);
-    const isBoy = opts.gender === 'boy' || opts.gender === 'male';
-    const genderStr = isBoy ? 'male' : 'female';
-    const defaultVoice = isBoy ? 'achal' : 'ananya';
-
-    try {
-      const response = await fetch('/api/voice/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: clean,
-          language: targetBcp47,
-          voice: opts.voiceName || defaultVoice,
-          gender: genderStr,
-          emotion: 'calm',
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.audio_base64) {
-          this.playBase64Audio(data.audio_base64, opts);
-          return;
-        }
-      }
-    } catch (_) {}
-
-    // Fallback: Web Speech API
-    this.speakWithBrowserWebSpeech(clean, lang, opts);
+    await speechGateway.speak({
+      text: clean,
+      lang,
+      gender: opts.gender,
+      companion: opts.companion,
+      tone: opts.tone,
+      purpose: opts.purpose,
+      lineId: opts.lineId,
+      voiceSpeed: opts.voiceSpeed,
+      pitch: opts.pitch,
+      voiceName: opts.voiceName,
+      onStart: opts.onStart,
+      onEnd: opts.onEnd,
+      onError: opts.onError,
+      onEnergy: opts.onEnergy,
+    });
   }
 
   /**
    * Plays base64 audio routed into shared AudioContext voice master gain.
    */
   private playBase64Audio(base64Data: string, opts: SpeechEngineOptions): void {
+    const isMp3 = base64Data.startsWith('//O') || base64Data.startsWith('SUQz') || base64Data.startsWith('/+M');
+    const mimeType = isMp3 ? 'audio/mp3' : 'audio/wav';
     const audioUrl = base64Data.startsWith('data:')
       ? base64Data
-      : `data:audio/wav;base64,${base64Data}`;
+      : `data:${mimeType};base64,${base64Data}`;
 
     const audio = new Audio(audioUrl);
     if (audioUrl.startsWith('blob:')) {
@@ -513,10 +511,37 @@ class SpeechEngine {
             return keywords.some((k) => name.includes(k));
           };
 
-          // Strictly NEVER speak non-English text with an English voice
+          // If browser has no local language voice pack, stream native audio directly so avatar speaks in all languages
           if (matchingLangVoices.length === 0 && langPrefix !== 'en') {
-            console.warn(`[SpeechEngine] No native browser voice found for ${targetLang}. Refusing to speak with an English voice.`);
-            this.handleTTSEnd(opts);
+            const streamUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(langPrefix)}&q=${encodeURIComponent(sentence)}`;
+            const directAudio = new Audio(streamUrl);
+            directAudio.onplay = () => {
+              if (index === 1) {
+                this.handleTTSStart(opts);
+                this.startVisemeEnergyInterval(opts.onEnergy);
+              }
+            };
+            directAudio.onended = () => {
+              speakNextSentence();
+            };
+            directAudio.onerror = () => {
+              if (voices.length > 0) {
+                utterance.voice = voices[0];
+                window.speechSynthesis.speak(utterance);
+              } else {
+                this.handleTTSEnd(opts);
+                speakNextSentence();
+              }
+            };
+            directAudio.play().catch(() => {
+              if (voices.length > 0) {
+                utterance.voice = voices[0];
+                window.speechSynthesis.speak(utterance);
+              } else {
+                this.handleTTSEnd(opts);
+                speakNextSentence();
+              }
+            });
             return;
           }
 

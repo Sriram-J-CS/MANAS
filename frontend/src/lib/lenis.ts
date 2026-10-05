@@ -11,31 +11,32 @@ export function initLenis() {
     return null;
   }
 
+  // Configure smooth scrolling without hijacking or blocking native cursor wheel events
   const lenis = new Lenis({
-    lerp: 0.08,
-    wheelMultiplier: 0.9,
-    touchMultiplier: 1.2,
+    lerp: 0.1,
+    wheelMultiplier: 1.0,
+    touchMultiplier: 1.0,
     orientation: 'vertical',
     gestureOrientation: 'vertical',
-    smoothWheel: true,
-    syncTouch: true,
+    smoothWheel: false, // Ensure cursor and mouse wheel scroll naturally everywhere
+    syncTouch: false,
   });
 
   lenis.on('scroll', () => {
     ScrollTrigger.update();
   });
 
-  const tickerCallback = (time: number) => {
-    lenis.raf(time * 1000);
+  let rafId: number;
+  const raf = (time: number) => {
+    lenis.raf(time);
+    rafId = requestAnimationFrame(raf);
   };
-
-  gsap.ticker.add(tickerCallback);
-  gsap.ticker.lagSmoothing(0);
+  rafId = requestAnimationFrame(raf);
 
   return {
     lenis,
     destroy: () => {
-      gsap.ticker.remove(tickerCallback);
+      cancelAnimationFrame(rafId);
       lenis.destroy();
     },
   };

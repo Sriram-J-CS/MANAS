@@ -102,7 +102,7 @@ export const MemoryCenterModal: React.FC<MemoryCenterModalProps> = ({ isOpen, on
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md">
+      <div className="fixed inset-0 z-60 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md">
         <motion.div
           initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -204,7 +204,23 @@ export const MemoryCenterModal: React.FC<MemoryCenterModalProps> = ({ isOpen, on
                               </button>
                             </div>
                           ) : (
-                            <span className="text-white/90 mr-3">{m.fact}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 mr-3 flex-1">
+                              <span className="text-white/90">{m.fact}</span>
+                              {m.source && (
+                                <span
+                                  className={`text-[9px] font-mono px-2 py-0.5 rounded-full inline-flex items-center gap-1 w-fit ${
+                                    m.source.toLowerCase().includes('chat') || m.source.toLowerCase().includes('auto')
+                                      ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                      : 'bg-white/10 text-white/50 border border-white/10'
+                                  }`}
+                                >
+                                  {(m.source.toLowerCase().includes('chat') || m.source.toLowerCase().includes('auto')) && (
+                                    <Sparkles className="w-2.5 h-2.5 text-violet-300" />
+                                  )}
+                                  {m.source}
+                                </span>
+                              )}
+                            </div>
                           )}
                           <div className="flex items-center gap-1.5 shrink-0">
                             {editingId !== m.id && (

@@ -126,7 +126,7 @@ def get_latest_wellness(uid: str = Depends(require_auth)):
         return {"has_entry": False}
     d = dict(row)
     d["note"] = decrypt_user_text(uid, d.get("note") or "")
-    return {"has_entry": True, **d}
+    return {"has_entry": True, "latest": d, **d}
 
 @router.get("/wellness/history")
 def get_wellness_history(uid: str = Depends(require_auth), limit: int = 50):
@@ -263,7 +263,7 @@ def get_memory_center(uid: str = Depends(require_auth)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, category, fact, importance, created_at
+        SELECT id, category, fact, importance, COALESCE(source, 'Manual') as source, created_at
         FROM user_memories
         WHERE user_id = ?
         ORDER BY created_at DESC
@@ -290,6 +290,7 @@ class MemoryCreateRequest(BaseModel):
     category: Optional[str] = "preferences"
     fact: str
     importance: Optional[float] = 1.0
+    source: Optional[str] = "Manual"
 
 @router.post("/memory/item")
 def add_memory_item(req: MemoryCreateRequest, uid: str = Depends(require_auth)):
@@ -299,12 +300,12 @@ def add_memory_item(req: MemoryCreateRequest, uid: str = Depends(require_auth)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO user_memories (id, user_id, category, fact, importance)
-        VALUES (?, ?, ?, ?, ?)
-    """, (mid, uid, req.category or "preferences", encrypt_user_text(uid, req.fact.strip()), req.importance or 1.0))
+        INSERT INTO user_memories (id, user_id, category, fact, importance, source)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (mid, uid, req.category or "preferences", encrypt_user_text(uid, req.fact.strip()), req.importance or 1.0, req.source or "Manual"))
     conn.commit()
     conn.close()
-    return {"status": "success", "id": mid, "fact": req.fact}
+    return {"status": "success", "id": mid, "fact": req.fact, "source": req.source or "Manual"}
 
 class MemoryEditRequest(BaseModel):
     category: Optional[str] = None
@@ -363,6 +364,27 @@ class InterventionFeedbackRequest(BaseModel):
 @router.post("/interventions/feedback")
 def submit_intervention_feedback(req: InterventionFeedbackRequest, uid: str = Depends(require_auth)):
     return record_intervention_outcome(uid, req.strategy, req.helpful)
+
+@router.delete("/interventions/strategy/{strategy_name}")
+def delete_what_works_strategy(strategy_name: str, uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM what_works_profiles WHERE user_id = ? AND strategy_name = ?", (uid, strategy_name))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Strategy not found in What Works profile.")
+    return {"status": "success", "message": f"Strategy {strategy_name} removed."}
+
+@router.delete("/interventions/clear")
+def clear_what_works_profile(uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM what_works_profiles WHERE user_id = ?", (uid,))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": "What Works profile cleared."}
 
 
 # ===========================================================================

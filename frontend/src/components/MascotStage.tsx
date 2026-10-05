@@ -1,5 +1,10 @@
-import React, { Suspense, useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect, useRef } from 'react';
 import { AvatarFallback2D } from './avatar/AvatarFallback2D';
+import { detectFaceAndAttributes } from '../lib/avatar/faceLandmarkService';
+import { avatar } from '../lib/avatar/avatarConfigService';
+import { speechEngine } from '../lib/voice/speechEngine';
+import { speechGateway } from '../lib/voice/speechGateway';
+import { Camera, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 
 const VRMAvatarCanvas = React.lazy(() => import('./avatar/VRMAvatarCanvas'));
 
@@ -23,6 +28,7 @@ export interface MascotStageProps {
   isThinking?: boolean;
   audioEnergy?: number;
   onOutfitChange?: (outfit: OutfitType) => void;
+  onGenderChange?: (gender: MascotGender) => void;
   className?: string;
   prefer3D?: boolean;
 }
@@ -76,13 +82,31 @@ export const MascotStage: React.FC<MascotStageProps> = ({
   isThinking = false,
   audioEnergy = 0,
   onOutfitChange,
+  onGenderChange,
   className = '',
   prefer3D = true,
 }) => {
+  const [currentGender, setCurrentGender] = useState<MascotGender>(gender);
   const [activeOutfit, setActiveOutfit] = useState<OutfitType>(initialOutfit);
   const [showWardrobe, setShowWardrobe] = useState<boolean>(false);
   const [activeGesture, setActiveGesture] = useState<string>('idle');
   const [webGLAvailable, setWebGLAvailable] = useState<boolean>(true);
+
+  // Sync prop gender
+  useEffect(() => {
+    setCurrentGender(gender);
+  }, [gender]);
+
+  const handleToggleGender = (newGender: MascotGender) => {
+    setCurrentGender(newGender);
+    onGenderChange?.(newGender);
+  };
+
+  // Photo personalization state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isAnalyzingPhoto, setIsAnalyzingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [photoSuccess, setPhotoSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     setWebGLAvailable(isWebGLSupported());
@@ -113,9 +137,68 @@ export const MascotStage: React.FC<MascotStageProps> = ({
     }, 100);
   };
 
-  // Wave button: triggers procedural arm rig wave animation
+  // Wave button: triggers procedural arm rig wave animation with warm speech greeting
   const handleTriggerWave = () => {
     setActiveGesture('wave');
+    try {
+      let activeLang = 'en';
+      try {
+        const saved = localStorage.getItem('manas_twin_profile');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.language) activeLang = parsed.language;
+        }
+      } catch (_) {}
+
+      const GREETINGS: Record<string, string> = {
+        en: 'Hey there! I am right here with you.',
+        hi: 'नमस्ते! मैं हमेशा आपके साथ हूँ।',
+        ta: 'வணக்கம்! நான் உங்க கூடவே இருக்கேன்.',
+        te: 'నమస్కారం! నేను మీతోనే ఉన్నాను.',
+        kn: 'ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ಜೊತೆಯಲ್ಲೇ ಇದ್ದೇನೆ.',
+        ml: 'നമസ്കാരം! ഞാൻ നിങ്ങളുടെ കൂടെയുണ്ട്.',
+        bn: 'নমস্কার! আমি সবসময় আপনার সাথে আছি।',
+        mr: 'नमस्कार! मी नेहमी तुमच्या सोबत आहे.',
+      };
+
+      const text = GREETINGS[activeLang] || GREETINGS.en;
+      speechGateway.speak({
+        text,
+        lang: activeLang,
+        gender: gender === 'girl' ? 'girl' : 'boy',
+        purpose: 'mascot_greeting',
+      });
+    } catch (_) {}
+  };
+
+  // Photo personalization handler with clarity validation
+  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPhotoError(null);
+    setPhotoSuccess(null);
+    setIsAnalyzingPhoto(true);
+
+    try {
+      const result = await detectFaceAndAttributes(file);
+      avatar.applyConfig({
+        colors: {
+          skin: result.detectedSkin,
+          hair: result.detectedHair,
+        },
+      });
+      setPhotoSuccess('Personalized twin avatar updated from your photo! ✨');
+      setTimeout(() => setPhotoSuccess(null), 5000);
+    } catch (err: any) {
+      setPhotoError(
+        err.message || 'The photo is not clear or blurry. Please upload a clear, front-facing portrait.'
+      );
+      setTimeout(() => setPhotoError(null), 7000);
+    } finally {
+      setIsAnalyzingPhoto(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleSelectOutfit = (newOutfit: OutfitType) => {
@@ -144,11 +227,36 @@ export const MascotStage: React.FC<MascotStageProps> = ({
       </div>
 
       {/* TOP STATUS BAR: Digital Twin & Status Badges */}
-      <div className="relative z-20 w-full pt-3 px-4 flex justify-between items-center text-xs shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] tracking-wider text-[#0A0A0A]/60 uppercase font-semibold">
-            Digital Twin: {gender === 'girl' ? 'Ananya' : 'Aarav'}
-          </span>
+      <div className="relative z-20 w-full pt-3 px-4 flex justify-between items-center text-xs shrink-0 flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Interactive Mascot Boy / Girl Switcher */}
+          <div className="inline-flex items-center p-0.5 rounded-full bg-[#0A0A0A]/5 border border-[#0A0A0A]/10 shadow-xs">
+            <button
+              type="button"
+              onClick={() => handleToggleGender('boy')}
+              className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase font-semibold transition-all cursor-pointer ${
+                currentGender === 'boy'
+                  ? 'bg-[#0A0A0A] text-white shadow-xs'
+                  : 'text-[#0A0A0A]/60 hover:text-[#0A0A0A]'
+              }`}
+              title="Switch to Boy Mascot (Aarav)"
+            >
+              Boy (Aarav)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleGender('girl')}
+              className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase font-semibold transition-all cursor-pointer ${
+                currentGender === 'girl'
+                  ? 'bg-[#0A0A0A] text-white shadow-xs'
+                  : 'text-[#0A0A0A]/60 hover:text-[#0A0A0A]'
+              }`}
+              title="Switch to Girl Mascot (Ananya)"
+            >
+              Girl (Ananya)
+            </button>
+          </div>
+
           {isThinking && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-mono font-medium animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
@@ -171,7 +279,7 @@ export const MascotStage: React.FC<MascotStageProps> = ({
 
         <div className="flex items-center gap-1.5 font-mono text-[10px] text-[#0A0A0A]/40 uppercase">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-          <span>Rigged 3D VRM</span>
+          <span>Adaptive 3D Character</span>
         </div>
       </div>
 
@@ -181,7 +289,7 @@ export const MascotStage: React.FC<MascotStageProps> = ({
           <WebGLErrorBoundary fallback={fallbackView}>
             <Suspense fallback={fallbackView}>
               <VRMAvatarCanvas
-                gender={gender}
+                gender={currentGender}
                 outfit={activeOutfit}
                 emotion={emotion}
                 gesture={activeGesture}
@@ -201,27 +309,7 @@ export const MascotStage: React.FC<MascotStageProps> = ({
 
       {/* BOTTOM CONTROLS TOOLBAR: BASE / WAVE / OUTFITS */}
       <div className="relative z-20 w-full px-4 pb-5 pt-2 flex flex-col items-center gap-2.5 shrink-0">
-        {/* Wardrobe Quick Selector Popup */}
-        {showWardrobe && (
-          <div className="w-full max-w-[340px] bg-[#FFFFFF] border border-[#0A0A0A]/15 shadow-xl rounded-2xl p-2.5 grid grid-cols-2 sm:grid-cols-3 gap-1.5 animate-in fade-in zoom-in-95 duration-150">
-            {outfits.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => handleSelectOutfit(o.id)}
-                className={`py-1.5 px-2 rounded-xl text-[10px] font-mono tracking-wider transition-all cursor-pointer ${
-                  activeOutfit === o.id
-                    ? 'bg-[#0A0A0A] text-[#FFFFFF] font-bold'
-                    : 'bg-[#F4F2EB] text-[#0A0A0A] hover:bg-[#EBE7DC]'
-                }`}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Compact Mono Toolbar (Base / Wave / Outfits) */}
+        {/* Compact Mono Toolbar (Base / Wave / Photo) */}
         <div className="inline-flex items-center gap-1.5 bg-[#FFFFFF]/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-[#0A0A0A]/10 shadow-sm">
           {/* Base Reset Button */}
           <button
@@ -249,20 +337,47 @@ export const MascotStage: React.FC<MascotStageProps> = ({
           </button>
           <span className="opacity-20 text-xs">/</span>
 
-          {/* Wardrobe Outfits Selector */}
+          {/* Photo Personalization Button */}
           <button
             type="button"
-            onClick={() => setShowWardrobe(!showWardrobe)}
-            className={`px-2.5 py-1 rounded-full text-[10px] font-mono tracking-wider border border-[#0A0A0A]/20 transition-colors cursor-pointer ${
-              showWardrobe
-                ? 'bg-[#0A0A0A] text-[#FFFFFF] font-bold'
-                : 'hover:bg-[#F2EFE8] text-[#0A0A0A]'
-            }`}
-            title="Swap clothing materials and colors"
+            disabled={isAnalyzingPhoto}
+            onClick={() => fileInputRef.current?.click()}
+            className="px-2.5 py-1 rounded-full text-[10px] font-mono tracking-wider bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
+            title="Upload your photo to personalize your twin avatar"
           >
-            OUTFITS
+            {isAnalyzingPhoto ? (
+              <Loader2 className="w-3 h-3 animate-spin text-violet-600" />
+            ) : (
+              <Camera className="w-3 h-3 text-violet-600" />
+            )}
+            <span>PHOTO</span>
           </button>
         </div>
+
+        {/* Hidden File Input for Photo Upload */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handlePhotoSelect}
+        />
+
+        {/* Photo Clarity Error Alert */}
+        {photoError && (
+          <div className="w-full max-w-[360px] p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-sans flex items-start gap-2 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span className="leading-tight">{photoError}</span>
+          </div>
+        )}
+
+        {/* Photo Personalization Success Alert */}
+        {photoSuccess && (
+          <div className="w-full max-w-[360px] p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-mono flex items-center gap-2 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="leading-tight">{photoSuccess}</span>
+          </div>
+        )}
       </div>
     </div>
   );

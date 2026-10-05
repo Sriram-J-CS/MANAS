@@ -140,7 +140,7 @@ export const SafetyPlanModal: React.FC<SafetyPlanModalProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md">
+      <div className="fixed inset-0 z-60 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md">
         <motion.div
           initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -160,7 +160,7 @@ export const SafetyPlanModal: React.FC<SafetyPlanModalProps> = ({
             </div>
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -194,8 +194,28 @@ export const SafetyPlanModal: React.FC<SafetyPlanModalProps> = ({
           {/* Tab 1: Safety Plan */}
           {activeTab === 'plan' && (
             <div className="space-y-5 text-xs">
-              <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-200 leading-relaxed">
-                <strong>Emergency Priority:</strong> If you or someone you know is in immediate danger or having thoughts of self-harm, call <strong>Tele-MANAS (14416)</strong> or <strong>Emergency (112)</strong> immediately. You do not have to carry this alone.
+              <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-200 leading-relaxed space-y-3">
+                <div>
+                  <strong>Emergency Priority:</strong> If you or someone you know is in immediate danger or having thoughts of self-harm, call <strong>Tele-MANAS (14416)</strong> or <strong>Emergency (112)</strong> immediately. You do not have to carry this alone.
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <a
+                    href="tel:14416"
+                    id="call-tele-manas-btn"
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-2 transition-colors shadow-md cursor-pointer"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>Call Tele-MANAS (14416)</span>
+                  </a>
+                  <a
+                    href="tel:112"
+                    id="call-emergency-112-btn"
+                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center gap-2 transition-colors shadow-md cursor-pointer"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>Call Emergency (112)</span>
+                  </a>
+                </div>
               </div>
 
               {plan && (
@@ -203,7 +223,7 @@ export const SafetyPlanModal: React.FC<SafetyPlanModalProps> = ({
                   {[
                     { key: 'warning_signs', label: '1. My Personal Warning Signs', placeholder: 'e.g. Canceling all plans, staying awake past 3am' },
                     { key: 'internal_coping', label: '2. Internal Coping Strategies (What I can do alone)', placeholder: 'e.g. 5 rounds of 4-7-8 breathing, splash cold water' },
-                    { key: 'distraction_places', label: '3. Calming People & Places for Distraction', placeholder: 'e.g. Campus library, quiet tea stall, terrace' },
+                    { key: 'distraction_places', label: '3. Calming People & Safe Places for Distraction', placeholder: 'e.g. Campus library, quiet tea stall, terrace' },
                     { key: 'safe_environment_steps', label: '4. Making My Environment Safe', placeholder: 'e.g. Step away from balconies, ask a friend to stay over' }
                   ].map((sec) => (
                     <div key={sec.key} className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-2">

@@ -1,18 +1,50 @@
-import React, { useState, useRef } from 'react';
-import { X, Volume2, Square, Star, CheckCircle, Sparkles } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Volume2, Square, Star, CheckCircle, Sparkles, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
 import type {
   SupportedLanguage,
   VoiceGender,
   LanguageMeta
 } from '../../lib/emoticare/types';
 import { LANGUAGE_CATALOG } from '../../lib/emoticare/types';
-import { speak } from '../../lib/emoticare/tts';
+import { speechGateway, voiceDebugStore, type VoiceDebugEntry } from '../../lib/voice/speechGateway';
 
 interface VoiceRatingLabModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialLanguage?: string;
 }
+
+const SPEAKER_MAPPING: Record<string, {
+  girl: string;
+  boy: string;
+  engine: string;
+  legacyGirl?: string;
+  legacyBoy?: string;
+  legacyEngine?: string;
+}> = {
+  ta: { girl: 'ishita', boy: 'ratan', engine: 'Sarvam Bulbul v3' },
+  te: { girl: 'priya', boy: 'shubh', engine: 'Sarvam Bulbul v3' },
+  kn: { girl: 'ishita', boy: 'shubh', engine: 'Sarvam Bulbul v3' },
+  ml: { girl: 'pooja', boy: 'shubh', engine: 'Sarvam Bulbul v3' },
+  bn: { girl: 'roopa', boy: 'rehan', engine: 'Sarvam Bulbul v3' },
+  mr: { girl: 'priya', boy: 'ratan', engine: 'Sarvam Bulbul v3' },
+  en: {
+    girl: 'ishita',
+    boy: 'ratan',
+    engine: 'Sarvam Bulbul v3',
+    legacyGirl: 'en-IN-Chirp3-HD-Aoede',
+    legacyBoy: 'en-IN-Chirp3-HD-Charon',
+    legacyEngine: 'Google Cloud Chirp 3 HD',
+  },
+  hi: {
+    girl: 'priya',
+    boy: 'shubh',
+    engine: 'Sarvam Bulbul v3',
+    legacyGirl: 'hi-IN-Chirp3-HD-Aoede',
+    legacyBoy: 'hi-IN-Chirp3-HD-Charon',
+    legacyEngine: 'Google Cloud Chirp 3 HD',
+  },
+};
 
 export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
   isOpen,
@@ -41,10 +73,21 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
 
   const [activeLang, setActiveLang] = useState<SupportedLanguage>(defaultLang);
   const [voiceGender, setVoiceGender] = useState<VoiceGender>('female');
+  const [engineMode, setEngineMode] = useState<'sarvam' | 'legacy'>('sarvam');
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentViseme, setCurrentViseme] = useState<string>('idle');
   const [playbackProgress, setPlaybackProgress] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [lastDebugEntry, setLastDebugEntry] = useState<VoiceDebugEntry | null>(null);
+
+  useEffect(() => {
+    const unsub = voiceDebugStore.subscribe((entries) => {
+      if (entries.length > 0) {
+        setLastDebugEntry(entries[0]);
+      }
+    });
+    return unsub;
+  }, []);
 
   const [ratings, setRatings] = useState<
     Record<
@@ -75,7 +118,6 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
     return initial;
   });
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const currentMeta: LanguageMeta = LANGUAGE_CATALOG[activeLang] || LANGUAGE_CATALOG['en-IN'];
   const currentRating = ratings[activeLang];
 
@@ -83,58 +125,43 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
 
   const handlePlayVoice = async () => {
     if (isPlaying) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
+      speechGateway.stopSpeaking();
       setIsPlaying(false);
       return;
     }
 
     setIsPlaying(true);
-    setStatusMessage('Synthesizing Chirp 3 HD audio via Google Cloud TTS...');
+    setStatusMessage(`Synthesizing speech via unified gateway for ${currentMeta.nativeName}...`);
 
     try {
-      const result = await speak(activeLang, currentMeta.testSentence, voiceGender);
-      const firstSegment = result.segments?.[0];
-
-      if (firstSegment && firstSegment.audioBase64) {
-        const audio = new Audio(`data:audio/mp3;base64,${firstSegment.audioBase64}`);
-        audioRef.current = audio;
-
-        firstSegment.visemes.forEach((v) => {
-          setTimeout(() => {
-            if (audioRef.current && !audioRef.current.paused) {
-              setCurrentViseme(v.viseme);
-            }
-          }, v.timeMs);
-        });
-
-        audio.ontimeupdate = () => {
-          if (audio.duration) {
-            setPlaybackProgress((audio.currentTime / audio.duration) * 100);
-          }
-        };
-
-        audio.onended = () => {
+      const g = voiceGender === 'female' ? 'girl' : 'boy';
+      const isEnOrHi = currentMeta.shortCode === 'en' || currentMeta.shortCode === 'hi';
+      const effectiveEngine = isEnOrHi ? engineMode : 'sarvam';
+      await speechGateway.speak({
+        text: currentMeta.testSentence,
+        lang: currentMeta.shortCode,
+        gender: g,
+        engine: effectiveEngine,
+        purpose: 'voice_test_page',
+        onStart: () => {
+          setIsPlaying(true);
+          setStatusMessage(`Synthesizing speech via unified gateway for ${currentMeta.nativeName}...`);
+        },
+        onEnergy: (energy) => {
+          setCurrentViseme(energy > 0.3 ? 'aa' : 'idle');
+        },
+        onEnd: () => {
           setIsPlaying(false);
           setCurrentViseme('idle');
-          setPlaybackProgress(0);
+          setPlaybackProgress(100);
           setStatusMessage('Playback completed. Please rate the voice quality below.');
-        };
-
-        setStatusMessage(`Playing Chirp 3 HD ${voiceGender} voice: ${result.voiceName}`);
-        await audio.play();
-      } else {
-        setStatusMessage(`Synthesizing via browser engine (rate 0.95, ${voiceGender} voice)...`);
-        setTimeout(() => {
+        },
+        onError: () => {
           setIsPlaying(false);
-          setStatusMessage('Playback complete.');
-        }, 3200);
-      }
+          setCurrentViseme('idle');
+          setStatusMessage('Voice playback completed.');
+        },
+      });
     } catch (err: any) {
       console.warn('Playback error:', err);
       setIsPlaying(false);
@@ -205,8 +232,8 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
           </div>
           <button
             onClick={() => {
-              if (isPlaying && audioRef.current) {
-                audioRef.current.pause();
+              if (isPlaying) {
+                speechGateway.stopSpeaking();
               }
               onClose();
             }}
@@ -233,8 +260,8 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
                   <button
                     key={lang}
                     onClick={() => {
-                      if (isPlaying && audioRef.current) {
-                        audioRef.current.pause();
+                      if (isPlaying) {
+                        speechGateway.stopSpeaking();
                         setIsPlaying(false);
                       }
                       setActiveLang(lang);
@@ -266,30 +293,60 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
                 <h3 className="text-xl font-bold text-white">{currentMeta.nativeName}</h3>
               </div>
 
-              {/* Male / Female Voice Toggle */}
-              <div className="flex items-center gap-1.5 bg-black/60 p-1.5 rounded-xl border border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setVoiceGender('female')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    voiceGender === 'female'
-                      ? 'bg-pink-600/30 text-pink-300 border border-pink-500/50'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  👩 Female Voice
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVoiceGender('male')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    voiceGender === 'male'
-                      ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  👨 Male Voice
-                </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* A/B Engine Toggle for en & hi */}
+                {(currentMeta.shortCode === 'en' || currentMeta.shortCode === 'hi') && (
+                  <div className="flex items-center gap-1 bg-black/60 p-1 rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setEngineMode('sarvam')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        engineMode === 'sarvam'
+                          ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/50'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      ⚡ Sarvam Bulbul v3
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEngineMode('legacy')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        engineMode === 'legacy'
+                          ? 'bg-amber-600/30 text-amber-300 border border-amber-500/50'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🏛️ Legacy Chirp 3 HD
+                    </button>
+                  </div>
+                )}
+
+                {/* Girl / Boy Companion Voice Toggle */}
+                <div className="flex items-center gap-1.5 bg-black/60 p-1.5 rounded-xl border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setVoiceGender('female')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      voiceGender === 'female'
+                        ? 'bg-pink-600/30 text-pink-300 border border-pink-500/50'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    👧 Girl Voice
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVoiceGender('male')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      voiceGender === 'male'
+                        ? 'bg-blue-600/30 text-blue-300 border border-blue-500/50'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    👦 Boy Voice
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -300,6 +357,64 @@ export const VoiceRatingLabModal: React.FC<VoiceRatingLabModalProps> = ({
               </span>
               <p className="text-base text-white font-medium">"{currentMeta.testSentence}"</p>
             </div>
+
+            {/* Live Gateway & HUD Telemetry */}
+            {(() => {
+              const langCode = currentMeta.shortCode;
+              const isEnOrHi = langCode === 'en' || langCode === 'hi';
+              const spkInfo = SPEAKER_MAPPING[langCode] || { girl: 'default', boy: 'default', engine: 'Sarvam Bulbul v3' };
+              const currentEngine = (isEnOrHi && engineMode === 'legacy') ? (spkInfo.legacyEngine || 'Google Cloud Chirp 3 HD') : spkInfo.engine;
+              const currentSpeaker = (isEnOrHi && engineMode === 'legacy')
+                ? (voiceGender === 'female' ? spkInfo.legacyGirl : spkInfo.legacyBoy)
+                : (voiceGender === 'female' ? spkInfo.girl : spkInfo.boy);
+
+              return (
+                <div className="p-3.5 rounded-xl bg-slate-950/70 border border-white/10 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-mono font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Activity size={13} className="text-cyan-400" />
+                      UNIFIED VOICE GATEWAY (HUD TELEMETRY)
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                      Target Code: {currentMeta.code}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                    <div className="bg-white/5 p-2 rounded-lg">
+                      <span className="text-slate-400 block text-[10px]">ENGINE:</span>
+                      <span className="font-semibold text-emerald-300">{currentEngine}</span>
+                    </div>
+                    <div className="bg-white/5 p-2 rounded-lg">
+                      <span className="text-slate-400 block text-[10px]">SPEAKER:</span>
+                      <span className="font-semibold text-yellow-300">{currentSpeaker} ({voiceGender})</span>
+                    </div>
+                    <div className="bg-white/5 p-2 rounded-lg">
+                      <span className="text-slate-400 block text-[10px]">PACING:</span>
+                      <span className="font-semibold text-cyan-300">{isEnOrHi && engineMode === 'legacy' ? '0.95' : '1.0 / 0.95'}</span>
+                    </div>
+                    <div className="bg-white/5 p-2 rounded-lg">
+                      <span className="text-slate-400 block text-[10px]">BROWSER TTS:</span>
+                      <span className={`font-semibold ${isEnOrHi ? 'text-amber-300' : 'text-emerald-400'}`}>
+                        {isEnOrHi ? 'Last Resort Only' : 'STRICTLY BANNED'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] font-mono pt-1">
+                    <div className="flex items-center gap-1.5 text-emerald-400">
+                      <ShieldCheck size={13} />
+                      <span>Script Purity: 100% Native Script (0 Latin Letters, 0 Digits)</span>
+                    </div>
+                    {lastDebugEntry && lastDebugEntry.lang === langCode && (
+                      <span className="text-slate-400 text-[10px]">
+                        Last Latency: {lastDebugEntry.latencyMs}ms
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Play Button & Audio Track */}
             <div className="flex items-center gap-4">

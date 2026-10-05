@@ -57,6 +57,7 @@ class RefreshRequest(BaseModel):
 class SendMobileOtpRequest(BaseModel):
     phone: str
     name: Optional[str] = None
+    email: Optional[str] = None
 
     @field_validator('phone')
     @classmethod
@@ -71,6 +72,7 @@ class VerifyMobileOtpRequest(BaseModel):
     phone: str
     code: str
     name: Optional[str] = "Friend"
+    email: Optional[str] = None
 
     @field_validator('phone')
     @classmethod
@@ -102,4 +104,25 @@ class AuthUserOut(BaseModel):
     name: str
     email: Optional[str] = ""
     phone: Optional[str] = None
+
+
+class SendOtpRequest(BaseModel):
+    destination: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class VerifyOtpRequest(BaseModel):
+    destination: str
+    code: str
+    name: Optional[str] = "Friend"
+    email: Optional[str] = None
+
+    @field_validator('code')
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        cleaned = v.strip()
+        if len(cleaned) != 6 or not cleaned.isdigit():
+            raise ValueError('OTP must be a 6-digit number')
+        return cleaned
 

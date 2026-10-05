@@ -829,6 +829,7 @@ async def run_chat_pipeline(
 
     # STAGE 8: Post-Reply Persistence (Memory, Mood, Traces without PII)
     duration_ms = (time.time() - start_time) * 1000.0
+    regeneration_count = 0
     post_reply_persistence(
         session_id=session_id,
         user_id=user_id,

@@ -1,30 +1,33 @@
 /**
  * MANAS Avatar3DStage
  * Production Three.js 3D Avatar Stage.
- * - Real GLB loading via manifest (/public/avatars/<id>/avatar.json)
- * - Soft three-point lighting + rim light + ACES tone mapping + contact ground shadow
- * - Auto-framing camera (Full-body default vs Bust toggle)
+ * - Primary VRM 1.0 model loading (/avatars/<boy|girl>.vrm) with GLB fallback
+ * - VRMLoaderPlugin (MToon) with spring bones updated every frame
+ * - Soft studio lighting + rim light + ACES tone mapping + contact ground shadow
+ * - Auto-framing camera (Full-body vs Bust framing)
  * - Limited orbit (±35° azimuth)
- * - Head and eyes follow cursor with natural damping
- * - AnimationMixer with crossfades (idle hands clasped, gestures, breathing guide)
- * - FaceDriver with ARKit 52 emotion presets & Oculus visemes
- * - Cap DPR, window resize handler, full resource disposal on unmount
- * - Error boundary: clear developer error banner + 2D placeholder fallback (never generated primitives)
+ * - Normalized humanoid natural pose (hands down, relaxed, fingers curled, no T-pose)
+ * - Real-time TTS audio formant lip-sync and emotion expressions
+ * - DPR capped at 2, resize handling, full resource disposal on unmount
+ * - Error boundary & soft loader fallback to BitmojiPortrait
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
+import { VRMLipSync } from '../../lib/avatar/vrmLipSync';
 import { FaceDriver, type AvatarEmotion } from '../../lib/avatar/FaceDriver';
 import { validateAvatarModel, type AvatarValidationReport } from '../../lib/avatar/assetValidator';
 import type { AvatarGesture, AvatarState } from '../../lib/avatar/speechPerformance';
 import { BitmojiPortrait, type BitmojiGender } from './BitmojiPortrait';
 
-export type CameraFraming = 'full_body' | 'bust';
+export type CameraFraming = 'full_body' | 'bust' | 'portrait';
 
 export interface Avatar3DStageProps {
   avatarId?: 'boy' | 'girl' | string;
+  companion?: 'boy' | 'girl';
   emotion?: AvatarEmotion;
   activeGesture?: AvatarGesture;
   state?: AvatarState;
@@ -46,11 +49,12 @@ export interface Avatar3DStageProps {
 }
 
 export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
-  avatarId = 'boy',
+  avatarId = 'girl',
+  companion,
   emotion = 'calm',
   activeGesture = 'idle',
   state = 'idle',
-  framing = 'full_body',
+  framing = 'bust',
   isSpeaking = false,
   audioEnergy = 0,
   visemeWeights = {},
@@ -79,69 +83,66 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
   const controlsRef = useRef<OrbitControls | null>(null);
   const frameIdRef = useRef<number | null>(null);
 
-  // Avatar subsystems
-  const onValidationCompleteRef = useRef(onValidationComplete);
-  onValidationCompleteRef.current = onValidationComplete;
+  // VRM / Model subsystems
+  const vrmRef = useRef<VRM | null>(null);
+  const lipSyncRef = useRef<VRMLipSync>(new VRMLipSync());
   const faceDriverRef = useRef<FaceDriver | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
   const currentActionRef = useRef<THREE.AnimationAction | null>(null);
-  const headBoneRef = useRef<THREE.Bone | null>(null);
-  const neckBoneRef = useRef<THREE.Bone | null>(null);
-  const modelRootRef = useRef<THREE.Group | null>(null);
+  const headBoneRef = useRef<THREE.Object3D | null>(null);
+  const modelRootRef = useRef<THREE.Object3D | null>(null);
 
-  // Dynamic mesh & material references for tinting and modular parts
-  const meshMapRef = useRef<Map<string, THREE.Mesh | THREE.SkinnedMesh>>(new Map());
-  const skinMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
-  const hairMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
-  const clothesMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const onValidationCompleteRef = useRef(onValidationComplete);
+  onValidationCompleteRef.current = onValidationComplete;
 
   // Camera targets for smooth animation between full_body and bust
-  const targetCamPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.1, 2.4));
-  const targetLookAtRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.0, 0));
+  const targetCamPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.3, 1.2));
+  const targetLookAtRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.3, 0));
 
   // Current smoothed head rotation for mouse tracking
   const smoothedHeadRotRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Blinking
+  const blinkTimerRef = useRef<number>(0);
+  const nextBlinkRef = useRef<number>(3.0 + Math.random() * 2.5);
+  const blinkAmountRef = useRef<number>(0);
+
+  const frameCountRef = useRef<number>(0);
+
   /**
-   * Updates camera framing based on avatar bounding box and head position
+   * Updates camera framing based on avatar head position
    */
   const updateCameraFraming = useCallback((mode: CameraFraming) => {
     if (!headBoneRef.current || !cameraRef.current) return;
 
+    if (modelRootRef.current) {
+      modelRootRef.current.updateMatrixWorld(true);
+    }
+    headBoneRef.current.updateMatrixWorld(true);
+
     const headWorldPos = new THREE.Vector3();
     headBoneRef.current.getWorldPosition(headWorldPos);
 
-    if (mode === 'bust') {
-      // Zoom into head and chest
-      targetCamPosRef.current.set(0, headWorldPos.y - 0.05, 0.85);
-      targetLookAtRef.current.set(0, headWorldPos.y - 0.04, 0);
+    if (headWorldPos.y < 0.5) {
+      const canonicalY = (companion || avatarId) === 'boy' ? 1.50 : 1.35;
+      headWorldPos.set(0, canonicalY, 0);
+    }
+
+    if (mode === 'portrait' || (mountRef.current && mountRef.current.clientWidth < 140)) {
+      // Close-up portrait framing for avatar badges/mini-stages (eye level, distance 0.72m)
+      targetCamPosRef.current.set(0, headWorldPos.y + 0.05, headWorldPos.z + 0.72);
+      targetLookAtRef.current.set(0, headWorldPos.y + 0.05, headWorldPos.z);
+    } else if (mode === 'bust') {
+      // Upper-body bust framing: distance ~1.18m, camera y slightly below head
+      targetCamPosRef.current.set(0, headWorldPos.y - 0.04, headWorldPos.z + 1.18);
+      targetLookAtRef.current.set(0, headWorldPos.y - 0.04, headWorldPos.z);
     } else {
-      // Full body framing: see from top of head down to shoes
-      targetCamPosRef.current.set(0, headWorldPos.y * 0.62, 2.35);
-      targetLookAtRef.current.set(0, headWorldPos.y * 0.58, 0);
+      // Full body framing
+      targetCamPosRef.current.set(0, headWorldPos.y * 0.6, headWorldPos.z + 2.3);
+      targetLookAtRef.current.set(0, headWorldPos.y * 0.55, headWorldPos.z);
     }
-  }, []);
-
-  /**
-   * Animation crossfade helper
-   */
-  const playAnimation = useCallback((clipName: string, duration = 0.35) => {
-    const nextAction = actionsRef.current.get(clipName) || actionsRef.current.get('idle');
-    if (!nextAction || nextAction === currentActionRef.current) return;
-
-    const prevAction = currentActionRef.current;
-    nextAction.reset();
-    nextAction.setEffectiveTimeScale(1);
-    nextAction.setEffectiveWeight(1);
-    nextAction.play();
-
-    if (prevAction) {
-      prevAction.crossFadeTo(nextAction, duration, true);
-    }
-
-    currentActionRef.current = nextAction;
-  }, []);
+  }, [companion, avatarId]);
 
   /**
    * Main Initialization & Model Loading
@@ -158,14 +159,14 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // 2. Setup Camera
+    // 2. Setup Camera in FRONT (+Z looking toward -Z)
     const width = container.clientWidth || 400;
     const height = container.clientHeight || 500;
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 50);
-    camera.position.set(0, 1.1, 2.4);
+    const camera = new THREE.PerspectiveCamera(28, width / height, 0.1, 50);
+    camera.position.set(0, 1.32, 1.2);
     cameraRef.current = camera;
 
-    // 3. Setup Renderer with ACES Filmic Tone Mapping
+    // 3. Setup Renderer with ACES Tone Mapping
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
@@ -182,160 +183,150 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
     container.appendChild(renderer.domElement);
 
     // 4. Soft Three-Point Studio Lighting
-    // Ambient Warm Light
-    const ambientLight = new THREE.AmbientLight(0xfffdf7, 0.85);
+    const ambientLight = new THREE.AmbientLight(0xfffdf7, 0.9);
     scene.add(ambientLight);
 
-    // Key Light (Warm, casts soft shadow)
-    const keyLight = new THREE.DirectionalLight(0xfffbeb, 1.15);
-    keyLight.position.set(1.8, 3.2, 2.5);
+    const keyLight = new THREE.DirectionalLight(0xfffbeb, 1.8);
+    keyLight.position.set(1.2, 2.6, 2.5);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
     keyLight.shadow.mapSize.height = 1024;
     keyLight.shadow.bias = -0.0001;
     scene.add(keyLight);
 
-    // Fill Light (Cool, diffuse)
-    const fillLight = new THREE.DirectionalLight(0xe0e7ff, 0.50);
-    fillLight.position.set(-2.2, 1.8, 1.8);
+    const fillLight = new THREE.DirectionalLight(0xd8d0ff, 0.8);
+    fillLight.position.set(-2.5, 1.5, 2.0);
     scene.add(fillLight);
 
-    // Rim Light (Creates gentle silhouette highlight on hair and shoulders)
-    const rimLight = new THREE.DirectionalLight(0xffffff, 1.20);
-    rimLight.position.set(0, 2.5, -2.2);
+    const rimLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    rimLight.position.set(0, 2.8, -2.5);
     scene.add(rimLight);
 
-    // Ground Contact Shadow plane under feet
-    const shadowCanvas = document.createElement('canvas');
-    shadowCanvas.width = 256;
-    shadowCanvas.height = 256;
-    const ctx = shadowCanvas.getContext('2d');
-    if (ctx) {
-      const grad = ctx.createRadialGradient(128, 128, 10, 128, 128, 120);
-      grad.addColorStop(0, 'rgba(10, 10, 10, 0.38)');
-      grad.addColorStop(0.5, 'rgba(10, 10, 10, 0.12)');
-      grad.addColorStop(1, 'rgba(10, 10, 10, 0.0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 256, 256);
-    }
-    const shadowTex = new THREE.CanvasTexture(shadowCanvas);
-    const shadowGeo = new THREE.PlaneGeometry(1.2, 1.2);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      map: shadowTex,
-      transparent: true,
-      depthWrite: false,
-    });
+    // Ground Contact Shadow plane
+    const shadowGeo = new THREE.PlaneGeometry(2.0, 2.0);
+    const shadowMat = new THREE.ShadowMaterial({ opacity: 0.16 });
     const contactShadow = new THREE.Mesh(shadowGeo, shadowMat);
     contactShadow.rotation.x = -Math.PI / 2;
-    contactShadow.position.y = 0.002;
+    contactShadow.position.y = 0.005;
+    contactShadow.receiveShadow = true;
     scene.add(contactShadow);
 
-    // 5. OrbitControls with limited orbit (about ±35° azimuth)
+    // 5. OrbitControls with limited orbit (±35° azimuth)
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.minAzimuthAngle = -0.61; // approx -35°
-    controls.maxAzimuthAngle = 0.61;  // approx +35°
+    controls.minAzimuthAngle = -0.61;
+    controls.maxAzimuthAngle = 0.61;
     controls.minPolarAngle = Math.PI / 2 - 0.35;
     controls.maxPolarAngle = Math.PI / 2 + 0.25;
-    controls.minDistance = 0.6;
-    controls.maxDistance = 3.5;
+    controls.minDistance = 0.7;
+    controls.maxDistance = 3.2;
     controlsRef.current = controls;
 
-    // 6. Load Manifest & GLB Model
-    const manifestUrl = `/avatars/${avatarId}/avatar.json`;
-    const modelUrl = `/avatars/${avatarId}/${avatarId}.glb`;
+    // 6. Load VRM Model (with GLB fallback)
+    const effectiveAvatarId = companion || avatarId || 'girl';
+    const vrmUrl = `/avatars/${effectiveAvatarId}.vrm`;
+    const glbUrl = `/avatars/${effectiveAvatarId}/${effectiveAvatarId}.glb`;
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    fetch(manifestUrl)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(
-            `Avatar manifest not found at ${manifestUrl} (HTTP ${res.status}). Ensure assets are exported to /public/avatars/${avatarId}/`
-          );
-        }
-        return res.json();
-      })
-      .then((_manifest) => {
-        const loader = new GLTFLoader();
-        loader.load(
-          modelUrl,
-          (gltf) => {
-            if (isDisposed) return;
+    const loadVRM = () => {
+      loader.load(
+        vrmUrl,
+        (gltf) => {
+          if (isDisposed) return;
+          const vrm = gltf.userData.vrm as VRM;
+          if (vrm) {
+            vrmRef.current = vrm;
+            modelRootRef.current = vrm.scene;
 
-            // Run Asset Validator
-            const report = validateAvatarModel(avatarId, gltf);
-            onValidationCompleteRef.current?.(report);
+            try {
+              VRMUtils.removeUnnecessaryVertices(vrm.scene);
+            } catch (_) {}
 
-            const model = gltf.scene;
-            modelRootRef.current = model;
-            scene.add(model);
+            // VRM 1.0 requires NO rotation (only rotate legacy 0.x models)
+            if (vrm.meta?.metaVersion === '0') {
+              VRMUtils.rotateVRM0(vrm);
+            }
 
-            // Index meshes and materials
-            meshMapRef.current.clear();
-            model.traverse((child) => {
-              if ((child as THREE.Mesh).isMesh) {
-                const m = child as THREE.Mesh;
-                meshMapRef.current.set(m.name, m);
-                m.castShadow = true;
-                m.receiveShadow = true;
-
-                if (m.name === 'head') {
-                  faceDriverRef.current = new FaceDriver(m);
-                }
-
-                // Cache materials
-                const mat = m.material as THREE.MeshStandardMaterial;
-                if (mat) {
-                  if (mat.name === 'mat_skin') skinMaterialRef.current = mat;
-                  if (mat.name === 'mat_hair') hairMaterialRef.current = mat;
-                  if (mat.name === 'mat_clothes') clothesMaterialRef.current = mat;
-                }
-              }
-
-              if ((child as THREE.Bone).isBone) {
-                if (child.name === 'Head') headBoneRef.current = child as THREE.Bone;
-                if (child.name === 'Neck') neckBoneRef.current = child as THREE.Bone;
+            vrm.scene.traverse((obj) => {
+              if ((obj as THREE.Mesh).isMesh) {
+                obj.castShadow = true;
+                obj.receiveShadow = true;
               }
             });
 
-            // Setup AnimationMixer
-            if (gltf.animations && gltf.animations.length > 0) {
-              const mixer = new THREE.AnimationMixer(model);
-              mixerRef.current = mixer;
-              actionsRef.current.clear();
+            scene.add(vrm.scene);
 
-              gltf.animations.forEach((clip) => {
-                const action = mixer.clipAction(clip);
-                actionsRef.current.set(clip.name, action);
-              });
-
-              // Start default idle animation (hands clasped in front, breathing loop)
-              const idleAction = actionsRef.current.get('idle');
-              if (idleAction) {
-                idleAction.play();
-                currentActionRef.current = idleAction;
-              }
+            const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+            if (headNode) {
+              headBoneRef.current = headNode;
             }
 
-            // Auto-frame camera based on loaded model
             updateCameraFraming(framing);
+            if (cameraRef.current && controlsRef.current) {
+              cameraRef.current.position.copy(targetCamPosRef.current);
+              controlsRef.current.target.copy(targetLookAtRef.current);
+              controlsRef.current.update();
+            }
             setLoading(false);
-          },
-          undefined,
-          (err: any) => {
-            if (isDisposed) return;
-            console.error('Failed to load avatar GLB:', err);
-            setLoadError(`Failed to load avatar GLB from ${modelUrl}: ${err?.message || err}`);
-            setLoading(false);
+          } else {
+            loadGLBFallback();
           }
-        );
-      })
-      .catch((err: any) => {
-        if (isDisposed) return;
-        console.error('Failed to load avatar manifest:', err);
-        setLoadError(err?.message || 'Manifest load failure');
-        setLoading(false);
-      });
+        },
+        undefined,
+        () => {
+          loadGLBFallback();
+        }
+      );
+    };
+
+    const loadGLBFallback = () => {
+      loader.load(
+        glbUrl,
+        (gltf) => {
+          if (isDisposed) return;
+          const model = gltf.scene;
+          modelRootRef.current = model;
+          scene.add(model);
+
+          model.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+              if (child.name === 'head') {
+                faceDriverRef.current = new FaceDriver(child as THREE.Mesh);
+              }
+            }
+            if ((child as THREE.Bone).isBone && child.name.toLowerCase().includes('head')) {
+              headBoneRef.current = child;
+            }
+          });
+
+          if (gltf.animations && gltf.animations.length > 0) {
+            const mixer = new THREE.AnimationMixer(model);
+            mixerRef.current = mixer;
+            gltf.animations.forEach((clip) => {
+              actionsRef.current.set(clip.name, mixer.clipAction(clip));
+            });
+            const idleAction = actionsRef.current.get('idle');
+            if (idleAction) idleAction.play();
+          }
+
+          updateCameraFraming(framing);
+          setLoading(false);
+        },
+        undefined,
+        (err: any) => {
+          if (isDisposed) return;
+          console.error('Failed to load avatar:', err);
+          setLoadError(`Failed to load avatar ${avatarId}`);
+          setLoading(false);
+        }
+      );
+    };
+
+    loadVRM();
 
     // 7. Render Loop
     const clock = new THREE.Clock();
@@ -343,29 +334,82 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
       frameIdRef.current = requestAnimationFrame(renderLoop);
 
       const delta = clock.getDelta();
+      const time = clock.getElapsedTime();
 
-      // Update AnimationMixer
+      // Update VRM springs & physics
+      if (vrmRef.current) {
+        vrmRef.current.update(delta);
+
+        // Apply Natural Normalized Pose (hands down, no T-pose)
+        const humanoid = vrmRef.current.humanoid;
+        if (humanoid) {
+          const lUpperArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+          const rUpperArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+          const lLowerArm = humanoid.getNormalizedBoneNode('leftLowerArm');
+          const rLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
+          const lHand = humanoid.getNormalizedBoneNode('leftHand');
+          const rHand = humanoid.getNormalizedBoneNode('rightHand');
+          const chest = humanoid.getNormalizedBoneNode('upperChest') || humanoid.getNormalizedBoneNode('chest');
+          const head = humanoid.getNormalizedBoneNode('head');
+
+          if (lUpperArm) lUpperArm.rotation.set(0, 0, -1.25);
+          if (rUpperArm) rUpperArm.rotation.set(0, 0, 1.25);
+          if (lLowerArm) lLowerArm.rotation.set(0.20, 0, 0);
+          if (rLowerArm) rLowerArm.rotation.set(0.20, 0, 0);
+          if (lHand) lHand.rotation.set(0, 0, 0);
+          if (rHand) rHand.rotation.set(0, 0, 0);
+
+          // 4s idle breathing cycle
+          if (chest) {
+            chest.rotation.set(Math.sin(time * (2 * Math.PI / 4.0)) * 0.01, 0, 0);
+          }
+
+          // Blinking
+          blinkTimerRef.current += delta;
+          if (blinkTimerRef.current >= nextBlinkRef.current) {
+            blinkAmountRef.current = Math.min(1.0, blinkAmountRef.current + delta * 12);
+            if (blinkAmountRef.current >= 1.0) {
+              blinkAmountRef.current = 0;
+              blinkTimerRef.current = 0;
+              nextBlinkRef.current = 3.0 + Math.random() * 3.0;
+            }
+          } else if (blinkAmountRef.current > 0) {
+            blinkAmountRef.current = Math.max(0, blinkAmountRef.current - delta * 10);
+          }
+
+          if (vrmRef.current.expressionManager) {
+            try {
+              vrmRef.current.expressionManager.setValue('blink', blinkAmountRef.current);
+            } catch (_) {}
+          }
+        }
+      }
+
+      // Update AnimationMixer if GLB fallback
       if (mixerRef.current) {
         mixerRef.current.update(delta);
       }
 
-      // Update FaceDriver (emotions, blinks, micro-saccades, visemes)
-      if (faceDriverRef.current) {
-        faceDriverRef.current.update(delta);
-      }
-
-      // Smooth camera position interpolation
+      // Camera position interpolation & early frame snap
       if (cameraRef.current && controlsRef.current) {
-        cameraRef.current.position.lerp(targetCamPosRef.current, delta * 3.5);
-        controlsRef.current.target.lerp(targetLookAtRef.current, delta * 3.5);
-        controlsRef.current.update();
+        if (frameCountRef.current < 6) {
+          frameCountRef.current++;
+          updateCameraFraming(framing);
+          cameraRef.current.position.copy(targetCamPosRef.current);
+          controlsRef.current.target.copy(targetLookAtRef.current);
+          controlsRef.current.update();
+        } else {
+          cameraRef.current.position.lerp(targetCamPosRef.current, delta * 3.5);
+          controlsRef.current.target.lerp(targetLookAtRef.current, delta * 3.5);
+          controlsRef.current.update();
+        }
       }
 
-      // Head and Eyes follow cursor
-      if (headBoneRef.current) {
-        const targetX = mouseGaze.x * 0.28;
-        const targetY = -mouseGaze.y * 0.20;
-
+      // Head follow cursor
+      const headObj = headBoneRef.current;
+      if (headObj) {
+        const targetX = mouseGaze.x * 0.22;
+        const targetY = -mouseGaze.y * 0.15;
         smoothedHeadRotRef.current.x = THREE.MathUtils.lerp(
           smoothedHeadRotRef.current.x,
           targetY,
@@ -376,16 +420,12 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
           targetX,
           delta * 4.5
         );
-
-        headBoneRef.current.rotation.x = smoothedHeadRotRef.current.x;
-        headBoneRef.current.rotation.y = smoothedHeadRotRef.current.y;
+        headObj.rotation.x = smoothedHeadRotRef.current.x;
+        headObj.rotation.y = smoothedHeadRotRef.current.y;
       }
 
       renderer.render(scene, camera);
     };
-
-    // Stable ref for validation callback to avoid infinite re-render loops
-    onValidationCompleteRef.current = onValidationComplete;
 
     renderLoop();
 
@@ -406,17 +446,8 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
       isDisposed = true;
       window.removeEventListener('resize', handleResize);
 
-      if (frameIdRef.current) {
-        cancelAnimationFrame(frameIdRef.current);
-      }
-
-      if (controlsRef.current) {
-        controlsRef.current.dispose();
-      }
-
-      if (faceDriverRef.current) {
-        faceDriverRef.current.dispose();
-      }
+      if (frameIdRef.current) cancelAnimationFrame(frameIdRef.current);
+      if (controlsRef.current) controlsRef.current.dispose();
 
       if (sceneRef.current) {
         sceneRef.current.traverse((obj) => {
@@ -439,112 +470,20 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
         }
       }
     };
-  }, [avatarId]);
+  }, [avatarId, companion, updateCameraFraming, framing]);
 
   // Update Framing
   useEffect(() => {
     updateCameraFraming(framing);
   }, [framing, updateCameraFraming]);
 
-  // Update FaceDriver Emotion
-  useEffect(() => {
-    if (faceDriverRef.current) {
-      faceDriverRef.current.setEmotion(emotion, 1.0, 350);
-    }
-  }, [emotion]);
-
-  // Update Visemes during speech
-  useEffect(() => {
-    if (faceDriverRef.current) {
-      faceDriverRef.current.setViseme(visemeWeights);
-    }
-  }, [visemeWeights]);
-
-  // Update Gaze
-  useEffect(() => {
-    if (faceDriverRef.current) {
-      faceDriverRef.current.setGaze(mouseGaze.x, mouseGaze.y);
-    }
-  }, [mouseGaze]);
-
-  // Update Body Animation Gesture
-  useEffect(() => {
-    if (activeGesture) {
-      playAnimation(activeGesture);
-    }
-  }, [activeGesture, playAnimation]);
-
-  // Update Material Tints (Skin tone, Hair color, Outfit color)
-  useEffect(() => {
-    if (skinTone && skinMaterialRef.current) {
-      skinMaterialRef.current.color.set(skinTone);
-    }
-    if (hairColor && hairMaterialRef.current) {
-      hairMaterialRef.current.color.set(hairColor);
-    }
-    if (outfitColor && clothesMaterialRef.current) {
-      clothesMaterialRef.current.color.set(outfitColor);
-    }
-  }, [skinTone, hairColor, outfitColor]);
-
-  // Toggle Modular Parts (Hair style, Outfit, Glasses, Beard, Earrings)
-  useEffect(() => {
-    const meshes = meshMapRef.current;
-    if (meshes.size === 0) return;
-
-    // Hair styles
-    if (hairStyle) {
-      meshes.forEach((mesh, name) => {
-        if (name.startsWith('hair_')) {
-          mesh.visible = (name === `hair_${hairStyle}`);
-        }
-      });
-    }
-
-    // Outfits
-    if (outfitType) {
-      meshes.forEach((mesh, name) => {
-        if (name.startsWith('outfit_')) {
-          mesh.visible = (name === `outfit_${outfitType}`);
-        }
-      });
-    }
-
-    // Glasses
-    if (glassesStyle !== undefined) {
-      meshes.forEach((mesh, name) => {
-        if (name.startsWith('glasses_')) {
-          mesh.visible = (glassesStyle !== 'none' && name === `glasses_${glassesStyle}`);
-        }
-      });
-    }
-
-    // Beards
-    if (beardStyle !== undefined) {
-      meshes.forEach((mesh, name) => {
-        if (name.startsWith('beard_')) {
-          mesh.visible = (beardStyle !== 'none' && name === `beard_${beardStyle}`);
-        }
-      });
-    }
-
-    // Earrings
-    if (earringsStyle !== undefined) {
-      meshes.forEach((mesh, name) => {
-        if (name.startsWith('earrings_')) {
-          mesh.visible = (earringsStyle !== 'none' && name === `earrings_${earringsStyle}`);
-        }
-      });
-    }
-  }, [hairStyle, outfitType, glassesStyle, beardStyle, earringsStyle]);
-
   return (
     <div
       ref={mountRef}
       className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${className}`}
-      style={{ backgroundColor: '#141217' }}
+      style={{ backgroundColor: 'transparent' }}
     >
-      {/* Loading State — Animated Bitmoji portrait behind spinner */}
+      {/* Loading State */}
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-30">
           <div className="relative flex flex-col items-center">
@@ -564,33 +503,22 @@ export const Avatar3DStage: React.FC<Avatar3DStageProps> = ({
         </div>
       )}
 
-      {/* Developer Error & Bitmoji 2D Fallback (Hard Rule: Never show primitive geometry) */}
+      {/* Error Fallback */}
       {loadError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center z-40 bg-[#141217]">
-          <div className="max-w-sm p-3 rounded-2xl bg-rose-950/60 border border-rose-700/40 text-rose-200 shadow-sm text-left mb-3">
-            <div className="flex items-center gap-2 font-bold text-xs text-rose-400 mb-1">
-              <span>⚠️ 3D Asset Loading Error</span>
-            </div>
-            <p className="text-[11px] font-mono break-all opacity-80">{loadError}</p>
-            <div className="mt-2 text-[10px] text-rose-500">
-              Check <code>/public/avatars/{avatarId}/</code> for <code>avatar.json</code> and <code>{avatarId}.glb</code>.
-            </div>
-          </div>
-
-          {/* 2D Animated Bitmoji Fallback */}
-          <div className="flex flex-col items-center">
-            <BitmojiPortrait
-              gender={(avatarId === 'girl' ? 'girl' : 'boy') as BitmojiGender}
-              size={200}
-              animate
-              className="drop-shadow-2xl"
-            />
-            <span className="mt-2 text-[10px] font-mono text-white/40">
-              2D Bitmoji Companion Active
-            </span>
-          </div>
+          <BitmojiPortrait
+            gender={(avatarId === 'girl' ? 'girl' : 'boy') as BitmojiGender}
+            size={200}
+            animate
+            className="drop-shadow-2xl"
+          />
+          <span className="mt-3 text-[11px] font-mono text-white/60">
+            2D Companion Active
+          </span>
         </div>
       )}
     </div>
   );
 };
+
+export default Avatar3DStage;

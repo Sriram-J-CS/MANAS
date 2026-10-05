@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { speechGateway } from '../../lib/voice/speechGateway';
 
 interface UseMascotAudioLipSyncOptions {
   onVisemeChange?: (energy: number) => void;
@@ -65,7 +66,7 @@ export function useMascotAudioLipSync(options: UseMascotAudioLipSyncOptions = {}
     options.onVisemeChange?.(0);
   }, [options]);
 
-  // Main speech invocation: Calls /api/tts with fallback to Web SpeechSynthesis
+  // Main speech invocation: Routes via speechGateway
   const speakText = useCallback(
     async (text: string, language = 'en') => {
       if (isMuted || !text.trim()) return;
@@ -74,96 +75,59 @@ export function useMascotAudioLipSync(options: UseMascotAudioLipSyncOptions = {}
       options.onSpeakingStateChange?.(true);
 
       try {
-        // 1. Attempt server /api/tts call
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, language }),
+        await speechGateway.speak({
+          text,
+          lang: language,
+          purpose: 'mascot_lipsync',
+          onEnergy: (energy) => {
+            setAudioEnergy(energy);
+            options.onVisemeChange?.(energy);
+          },
+          onStart: () => {
+            setIsSpeaking(true);
+            options.onSpeakingStateChange?.(true);
+          },
+          onEnd: () => {
+            setAudioEnergy(0);
+            options.onVisemeChange?.(0);
+            setIsSpeaking(false);
+            options.onSpeakingStateChange?.(false);
+          },
+          onError: () => {
+            setAudioEnergy(0);
+            options.onVisemeChange?.(0);
+            setIsSpeaking(false);
+            options.onSpeakingStateChange?.(false);
+          },
         });
-
-        if (res.ok) {
-          const data = await res.json();
-          // If server provided streaming audio payload
-          if (!data.fallback && data.audioUrl) {
-            const { ctx, analyser } = getOrCreateAudioContext();
-            const audio = new Audio(data.audioUrl);
-            const source = ctx.createMediaElementSource(audio);
-            source.connect(analyser!);
-            analyser!.connect(ctx.destination);
-
-            startLipSyncLoop();
-            audio.onended = () => {
-              stopLipSyncLoop();
-              setIsSpeaking(false);
-              options.onSpeakingStateChange?.(false);
-            };
-            await audio.play();
-            return;
-          }
-        }
       } catch (err) {
-        console.warn('/api/tts fetch error, falling back to browser SpeechSynthesis:', err);
-      }
-
-      // 2. Reliable Fallback: Browser Web SpeechSynthesis
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 0.95;
-        utterance.pitch = 1.05;
-        utterance.lang = language === 'ta' ? 'ta-IN' : 'en-US';
-
-        // Animate mouth using periodic synthetic energy while utterance is speaking
-        let simInterval: number;
-        utterance.onstart = () => {
-          simInterval = window.setInterval(() => {
-            const simulatedEnergy = 0.25 + Math.random() * 0.55;
-            setAudioEnergy(simulatedEnergy);
-            options.onVisemeChange?.(simulatedEnergy);
-          }, 110);
-        };
-
-        utterance.onend = () => {
-          clearInterval(simInterval);
-          setAudioEnergy(0);
-          setIsSpeaking(false);
-          options.onSpeakingStateChange?.(false);
-        };
-
-        utterance.onerror = () => {
-          clearInterval(simInterval);
-          setAudioEnergy(0);
-          setIsSpeaking(false);
-          options.onSpeakingStateChange?.(false);
-        };
-
-        window.speechSynthesis.speak(utterance);
-      } else {
+        console.warn('speakText error:', err);
+        setAudioEnergy(0);
+        options.onVisemeChange?.(0);
         setIsSpeaking(false);
         options.onSpeakingStateChange?.(false);
       }
     },
-    [isMuted, getOrCreateAudioContext, startLipSyncLoop, stopLipSyncLoop, options]
+    [isMuted, options]
   );
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const next = !prev;
-      if (next && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
+      if (next) {
+        speechGateway.stopSpeaking();
         stopLipSyncLoop();
         setIsSpeaking(false);
+        options.onSpeakingStateChange?.(false);
       }
       return next;
     });
-  }, [stopLipSyncLoop]);
+  }, [options, stopLipSyncLoop]);
 
   useEffect(() => {
     return () => {
       stopLipSyncLoop();
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
+      speechGateway.stopSpeaking();
       if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
         try {
           audioCtxRef.current.close();

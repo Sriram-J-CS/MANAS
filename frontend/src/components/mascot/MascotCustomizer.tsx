@@ -5,6 +5,9 @@ import {
   RotateCcw,
   ShieldCheck,
   Upload,
+  User,
+  Sparkles,
+  Play,
 } from 'lucide-react';
 import { MascotViewer } from './MascotViewer';
 import { MascotUploader } from './MascotUploader';
@@ -17,47 +20,53 @@ import {
 } from '../../lib/mascot/mascotConfig';
 import { clearStoredMascotModel, getStoredMascotModel } from '../../lib/mascot/mascotModelStorage';
 import type { MascotEmotion } from '../../lib/emotion/emotionEngine';
-import { speechEngine } from '../../lib/voice/speechEngine';
+import { speechGateway } from '../../lib/voice/speechGateway';
+import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../../i18n/languages';
+import type { UserProfile } from '../OnboardingModal';
 
-interface MascotCustomizerProps {
+export interface MascotCustomizerProps {
   onClose?: () => void;
   onApply?: (config: MascotConfig) => void;
+  userProfile?: UserProfile;
+  onUpdateProfile?: (updated: Partial<UserProfile>) => void;
 }
+
+const GIRL_TONES = [
+  { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
+  { id: 'diya', name: 'Diya', style: 'Gentle & Soft' },
+  { id: 'meera', name: 'Meera', style: 'Bright & Encouraging' },
+];
+
+const BOY_TONES = [
+  { id: 'aarav', name: 'Aarav', style: 'Calm & Grounding' },
+  { id: 'kabir', name: 'Kabir', style: 'Warm & Steady' },
+  { id: 'arjun', name: 'Arjun', style: 'Soft & Friendly' },
+];
 
 export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
   onClose,
   onApply,
+  userProfile,
+  onUpdateProfile,
 }) => {
   const [config, setConfig] = useState<MascotConfig>(getMascotConfig());
-  const [activeTab, setActiveTab] = useState<'preview' | 'upload' | 'expressions' | 'settings'>('preview');
+  const [activeTab, setActiveTab] = useState<'companion' | 'settings' | 'expressions' | 'upload'>('companion');
   const [previewEmotion, setPreviewEmotion] = useState<MascotEmotion>('calm');
   const [testSpeechEnergy, setTestSpeechEnergy] = useState<number>(0);
   const [isTestSpeaking, setIsTestSpeaking] = useState<boolean>(false);
 
+  // Companion state
+  const initialCompanion = userProfile?.companion === 'boy' || userProfile?.gender === 'boy' ? 'boy' : 'girl';
+  const [companion, setCompanion] = useState<'girl' | 'boy'>(initialCompanion);
+  const [voiceTone, setVoiceTone] = useState<string>(
+    userProfile?.voiceTone || userProfile?.voicePref || (initialCompanion === 'boy' ? 'aarav' : 'ananya')
+  );
+  const [mascotName, setMascotName] = useState<string>(userProfile?.name || config.name || 'Maya');
+  const [language, setLanguage] = useState<string>(userProfile?.language || 'en');
+
   // Uploaded model info
   const [modelUrl, setModelUrl] = useState<string | null>(null);
   const [modelType, setModelType] = useState<'glb' | 'gltf' | 'fbx' | 'obj' | 'image' | null>(null);
-
-  // Compatibility flags (defaults assume full support for procedural 3D model)
-  const [compatibility, setCompatibility] = useState({
-    hasModel: true,
-    hasAnimations: true,
-    hasFacialRig: true,
-    hasExpressions: true,
-    hasTalking: true,
-    explanation: undefined as string | undefined,
-  });
-
-  // Expression testing sliders
-  const [testSliders, setTestSliders] = useState({
-    eyeBlink: 0,
-    eyeOpen: 1.0,
-    eyebrow: 0.5,
-    smile: 0.5,
-    frown: 0,
-    mouthOpen: 0,
-    headTilt: 0,
-  });
 
   // Load custom model if exists
   useEffect(() => {
@@ -69,12 +78,95 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
     });
   }, []);
 
-  const handleSave = () => {
-    const updated = saveMascotConfig(config);
+  const availableTones = companion === 'boy' ? BOY_TONES : GIRL_TONES;
+
+  const handleCompanionChange = (newCompanion: 'girl' | 'boy') => {
+    setCompanion(newCompanion);
+    const validTones = newCompanion === 'boy' ? BOY_TONES : GIRL_TONES;
+    if (!validTones.some((t) => t.id === voiceTone)) {
+      setVoiceTone(validTones[0].id);
+    }
+  };
+
+  const handleTestVoice = () => {
+    setIsTestSpeaking(true);
+    const samples: Record<string, string> = {
+      en: `Hello! I am ${mascotName}, your ${companion === 'girl' ? 'girl' : 'boy'} companion with ${voiceTone} voice tone.`,
+      hi: `नमस्ते! मैं ${mascotName} हूँ, आपका साथी। मैं हमेशा आपके साथ हूँ।`,
+      ta: `வணக்கம்! நான் ${mascotName}, உங்கள் துணை. நான் எப்போதும் உங்களுடன் இருப்பேன்.`,
+      te: `నమస్కారం! నేను ${mascotName}, మీ తోడుగా ఉంటాను.`,
+      kn: `ನಮಸ್ಕಾರ! ನಾನು ${mascotName}, ನಿಮ್ಮ ಗೆಳೆಯ.`,
+      ml: `നമസ്കാരം! ഞാൻ ${mascotName}, നിങ്ങളുടെ കൂടെയുണ്ട്.`,
+      bn: `নমস্কার! আমি ${mascotName}, আপনার বন্ধু।`,
+      mr: `नमस्कार! मी ${mascotName}, तुमचा साथीदार आहे.`,
+    };
+    const text = samples[language] || samples.en;
+
+    speechGateway.speak({
+      text,
+      lang: language,
+      gender: companion,
+      tone: voiceTone,
+      purpose: 'preview',
+      pitch: companion === 'girl' ? 1.15 : 0.9,
+      onEnergy: (energy) => setTestSpeechEnergy(energy),
+      onEnd: () => {
+        setIsTestSpeaking(false);
+        setTestSpeechEnergy(0);
+      },
+      onError: () => {
+        setIsTestSpeaking(false);
+        setTestSpeechEnergy(0);
+      },
+    });
+  };
+
+  const handleSave = async () => {
+    // 1. Save procedural mascot config
+    const updatedMascotConfig = saveMascotConfig({
+      ...config,
+      name: mascotName,
+    });
+
+    // 2. Apply instantly to avatar & voice in userProfile
+    if (onUpdateProfile) {
+      onUpdateProfile({
+        name: mascotName,
+        companion,
+        gender: companion,
+        avatarType: companion,
+        voiceGender: companion,
+        voiceTone,
+        voicePref: voiceTone,
+        language,
+        voicePitch: companion === 'girl' ? 1.15 : 0.9,
+      });
+    }
+
+    // 3. Persist to DB
+    try {
+      const token = localStorage.getItem('manas_access_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          name: mascotName,
+          language,
+          companion,
+          voice_tone: voiceTone,
+        }),
+      });
+    } catch (err) {
+      console.warn('Failed to persist profile:', err);
+    }
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('manas:custom_mascot_uploaded'));
     }
-    onApply?.(updated);
+
+    onApply?.(updatedMascotConfig);
     onClose?.();
   };
 
@@ -82,8 +174,12 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
     await clearStoredMascotModel();
     setModelUrl(null);
     setModelType(null);
+    setCompanion('girl');
+    setVoiceTone('ananya');
+    setMascotName('Maya');
+    setLanguage('en');
     const def = saveMascotConfig({
-      name: 'Luna',
+      name: 'Maya',
       personality: 'friendly',
       isCustomModel: false,
       background: 'warm_cream',
@@ -93,30 +189,6 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
       expressionIntensity: 1.0,
     });
     setConfig(def);
-    setCompatibility({
-      hasModel: true,
-      hasAnimations: true,
-      hasFacialRig: true,
-      hasExpressions: true,
-      hasTalking: true,
-      explanation: undefined,
-    });
-  };
-
-  const handleTestVoice = () => {
-    setIsTestSpeaking(true);
-    speechEngine.speak(
-      `Hello! I am ${config.name}, your ${config.personality} mental health AI mascot. I'm right here with you.`,
-      'en',
-      {
-        voiceSpeed: config.voiceSpeed,
-        onEnergy: (energy) => setTestSpeechEnergy(energy),
-        onEnd: () => {
-          setIsTestSpeaking(false);
-          setTestSpeechEnergy(0);
-        },
-      }
-    );
   };
 
   const emotionsList: MascotEmotion[] = [
@@ -125,10 +197,6 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
     'sad',
     'concerned',
     'empathetic',
-    'surprised',
-    'thinking',
-    'excited',
-    'confused',
     'calm',
     'encouraging',
   ];
@@ -151,8 +219,8 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
 
   return (
     <div className="w-full flex flex-col md:flex-row h-full max-h-[85vh] bg-[#FFFFFF] rounded-3xl overflow-hidden font-sans border border-[#0A0A0A]/10 shadow-2xl">
-      {/* LEFT 50%: LIVE 3D PREVIEW */}
-      <div className="w-full md:w-1/2 h-[340px] md:h-full relative flex flex-col bg-[#FDFBF7] border-b md:border-b-0 md:border-r border-[#0A0A0A]/10">
+      {/* LEFT 45%: 3D AVATAR PREVIEW */}
+      <div className="w-full md:w-[45%] h-[280px] md:h-full relative flex flex-col bg-[#FDFBF7] border-b md:border-b-0 md:border-r border-[#0A0A0A]/10">
         <div className="flex-1 w-full h-full relative">
           <MascotViewer
             emotion={previewEmotion}
@@ -163,71 +231,187 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
           />
         </div>
 
-        {/* Floating Test Voice & Reset pill inside preview */}
+        {/* Floating companion badge & test voice */}
         <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-20 pointer-events-none">
-          <div className="px-3 py-1 rounded-full bg-white/90 backdrop-blur-md border border-[#0A0A0A]/10 text-[11px] font-mono font-bold text-[#0A0A0A] pointer-events-auto">
-            {modelUrl ? 'Custom 3D Model' : 'Default MANAS Mascot'}
+          <div className="px-3 py-1 rounded-full bg-white/90 backdrop-blur-md border border-[#0A0A0A]/10 text-[11px] font-mono font-bold text-[#0A0A0A] pointer-events-auto shadow-2xs">
+            {companion === 'girl' ? '♀ Maya (Girl)' : '♂ Aarav (Boy)'}
           </div>
 
           <button
             type="button"
             onClick={handleTestVoice}
+            disabled={isTestSpeaking}
             className="px-3 py-1 rounded-full bg-[#8B5CF6] text-white hover:bg-[#7C3AED] transition-colors text-xs font-mono font-medium flex items-center gap-1.5 shadow-sm pointer-events-auto cursor-pointer"
           >
             <Volume2 className="w-3.5 h-3.5" />
-            <span>Test Voice</span>
+            <span>{isTestSpeaking ? 'Speaking...' : 'Test Voice'}</span>
           </button>
         </div>
 
-        {/* Bottom Current Emotion Indicator */}
+        {/* Bottom current emotion */}
         <div className="absolute bottom-4 left-4 z-20 pointer-events-none">
           <div className="px-3 py-1 rounded-full bg-white/90 backdrop-blur-md border border-[#0A0A0A]/10 text-[11px] font-mono text-[#0A0A0A]/70 pointer-events-auto">
-            Expression: <span className="font-bold capitalize text-[#8B5CF6]">{previewEmotion}</span>
+            Tone: <span className="font-bold capitalize text-[#8B5CF6]">{voiceTone}</span>
           </div>
         </div>
       </div>
 
-      {/* RIGHT 50%: CONTROLS, COMPATIBILITY, EXPRESSION TEST, UPLOAD */}
-      <div className="w-full md:w-1/2 flex-1 flex flex-col overflow-y-auto p-6 md:p-8 space-y-6">
+      {/* RIGHT 55%: CONTROLS (COMPANION, VOICE, SETTINGS) */}
+      <div className="w-full md:w-[55%] flex-1 flex flex-col overflow-y-auto p-6 space-y-5">
         {/* Navigation Tabs */}
         <div className="flex items-center gap-2 border-b border-[#0A0A0A]/10 pb-3">
-          {(['settings', 'expressions', 'upload'] as const).map((tab) => (
+          {(
+            [
+              { id: 'companion', label: 'COMPANION & VOICE' },
+              { id: 'settings', label: 'SETTINGS' },
+              { id: 'expressions', label: 'EXPRESSIONS' },
+              { id: 'upload', label: '3D MODEL' },
+            ] as const
+          ).map((t) => (
             <button
-              key={tab}
+              key={t.id}
               type="button"
-              onClick={() => setActiveTab(tab)}
+              onClick={() => setActiveTab(t.id)}
               className={`px-3 py-1.5 rounded-xl text-xs font-mono tracking-wider transition-colors cursor-pointer ${
-                activeTab === tab
+                activeTab === t.id
                   ? 'bg-[#0A0A0A] text-white font-bold'
                   : 'text-[#0A0A0A]/60 hover:bg-[#F3F0E6]'
               }`}
             >
-              {tab.toUpperCase()}
+              {t.label}
             </button>
           ))}
         </div>
 
-        {/* TAB 1: SETTINGS (Mascot Name, Personality, Voice, Background) */}
-        {activeTab === 'settings' && (
-          <div className="space-y-5">
-            <div>
-              <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block mb-1.5">
-                Mascot Name
+        {/* TAB 1: COMPANION & VOICE (Core Requirement) */}
+        {activeTab === 'companion' && (
+          <div className="space-y-4">
+            {/* 1. Companion Selection (Girl / Boy) */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block">
+                1. Choose Companion (Applies Instantly)
               </label>
-              <input
-                type="text"
-                value={config.name}
-                onChange={(e) => setConfig({ ...config, name: e.target.value })}
-                className="w-full px-4 py-2 rounded-xl bg-[#FDFBF7] border border-[#0A0A0A]/15 text-sm font-sans focus:outline-none focus:border-[#8B5CF6]"
-                placeholder="e.g. Luna"
-              />
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleCompanionChange('girl')}
+                  className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                    companion === 'girl'
+                      ? 'border-[#8B5CF6] bg-violet-50/80 ring-1 ring-[#8B5CF6]'
+                      : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">♀</span>
+                    <div>
+                      <div className="text-xs font-bold font-mono">Girl Companion</div>
+                      <div className="text-[10px] text-[#0A0A0A]/60">Maya / 3D Model</div>
+                    </div>
+                  </div>
+                  {companion === 'girl' && <Check className="w-4 h-4 text-[#8B5CF6]" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleCompanionChange('boy')}
+                  className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                    companion === 'boy'
+                      ? 'border-[#8B5CF6] bg-violet-50/80 ring-1 ring-[#8B5CF6]'
+                      : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">♂</span>
+                    <div>
+                      <div className="text-xs font-bold font-mono">Boy Companion</div>
+                      <div className="text-[10px] text-[#0A0A0A]/60">Aarav / 3D Model</div>
+                    </div>
+                  </div>
+                  {companion === 'boy' && <Check className="w-4 h-4 text-[#8B5CF6]" />}
+                </button>
+              </div>
             </div>
 
+            {/* 2. Voice Tone (Strictly filtered by Companion Gender) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider">
+                  2. Voice Tone ({companion === 'girl' ? 'Female' : 'Male'})
+                </label>
+                <button
+                  type="button"
+                  onClick={handleTestVoice}
+                  disabled={isTestSpeaking}
+                  className="text-xs font-mono text-[#8B5CF6] hover:text-[#7C3AED] flex items-center gap-1 cursor-pointer font-bold"
+                >
+                  <Volume2 className="w-3.5 h-3.5" />
+                  <span>{isTestSpeaking ? 'Playing...' : 'Test Voice'}</span>
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {availableTones.map((tone) => (
+                  <button
+                    key={tone.id}
+                    type="button"
+                    onClick={() => setVoiceTone(tone.id)}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      voiceTone === tone.id
+                        ? 'border-[#8B5CF6] bg-[#8B5CF6] text-white font-bold shadow-xs'
+                        : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]'
+                    }`}
+                  >
+                    <div className="text-xs font-mono">{tone.name}</div>
+                    <div className={`text-[10px] truncate ${voiceTone === tone.id ? 'text-white/80' : 'text-[#0A0A0A]/50'}`}>
+                      {tone.style}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Name & Language */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="space-y-1">
+                <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider">
+                  Companion Name
+                </label>
+                <input
+                  type="text"
+                  value={mascotName}
+                  onChange={(e) => setMascotName(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-[#FDFBF7] border border-[#0A0A0A]/15 text-xs font-sans focus:outline-none focus:border-[#8B5CF6]"
+                  placeholder="e.g. Maya or Aarav"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider">
+                  Language
+                </label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-[#FDFBF7] border border-[#0A0A0A]/15 text-xs font-sans focus:outline-none focus:border-[#8B5CF6]"
+                >
+                  {SUPPORTED_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.nativeName} ({l.englishName})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: PROCEDURAL SETTINGS */}
+        {activeTab === 'settings' && (
+          <div className="space-y-4">
             <div>
               <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block mb-2">
-                AI Mascot Personality
+                Personality Tone
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {personalities.map((p) => (
                   <button
                     key={p}
@@ -245,12 +429,12 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
               </div>
             </div>
 
-            {/* Speaking & Animations Toggles */}
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <div className="p-3.5 rounded-2xl bg-[#FDFBF7] border border-[#0A0A0A]/10 flex items-center justify-between">
+            {/* Speaking & Animations */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-2xl bg-[#FDFBF7] border border-[#0A0A0A]/10 flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-mono font-bold text-[#0A0A0A]">Voice Speech</div>
-                  <div className="text-[11px] text-[#0A0A0A]/60">Read replies aloud</div>
+                  <div className="text-xs font-mono font-bold text-[#0A0A0A]">Read Aloud</div>
+                  <div className="text-[10px] text-[#0A0A0A]/60">Voice output enabled</div>
                 </div>
                 <input
                   type="checkbox"
@@ -260,10 +444,10 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
                 />
               </div>
 
-              <div className="p-3.5 rounded-2xl bg-[#FDFBF7] border border-[#0A0A0A]/10 flex items-center justify-between">
+              <div className="p-3 rounded-2xl bg-[#FDFBF7] border border-[#0A0A0A]/10 flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-mono font-bold text-[#0A0A0A]">Animations</div>
-                  <div className="text-[11px] text-[#0A0A0A]/60">Breathing & gestures</div>
+                  <div className="text-xs font-mono font-bold text-[#0A0A0A]">Breathing</div>
+                  <div className="text-[10px] text-[#0A0A0A]/60">Sync gestures</div>
                 </div>
                 <input
                   type="checkbox"
@@ -274,29 +458,12 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
               </div>
             </div>
 
-            {/* Voice Speed Slider */}
-            <div>
-              <div className="flex justify-between text-xs font-mono mb-1 text-[#0A0A0A]">
-                <span>Speaking Rate</span>
-                <span>{config.voiceSpeed.toFixed(2)}x</span>
-              </div>
-              <input
-                type="range"
-                min="0.7"
-                max="1.3"
-                step="0.05"
-                value={config.voiceSpeed}
-                onChange={(e) => setConfig({ ...config, voiceSpeed: parseFloat(e.target.value) })}
-                className="w-full accent-[#8B5CF6] cursor-pointer"
-              />
-            </div>
-
-            {/* Stage Background */}
+            {/* Stage Space Background */}
             <div>
               <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block mb-2">
-                Stage Space Tone
+                Space Background Tone
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {backgrounds.map((bg) => (
                   <button
                     key={bg.id}
@@ -320,118 +487,41 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
           </div>
         )}
 
-        {/* TAB 2: EXPRESSIONS TEST (Buttons & Sliders) */}
+        {/* TAB 3: EXPRESSIONS PREVIEW */}
         {activeTab === 'expressions' && (
-          <div className="space-y-5">
-            <div>
-              <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block mb-2">
-                Expression Test
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {emotionsList.map((emo) => (
-                  <button
-                    key={emo}
-                    type="button"
-                    onClick={() => setPreviewEmotion(emo)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-mono capitalize transition-all cursor-pointer ${
-                      previewEmotion === emo
-                        ? 'bg-[#8B5CF6] text-white font-bold shadow-xs'
-                        : 'bg-[#FDFBF7] border border-[#0A0A0A]/15 text-[#0A0A0A] hover:bg-[#F3F0E6]'
-                    }`}
-                  >
-                    {emo}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-[#0A0A0A]/10 space-y-3">
-              <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block">
-                Morph Target Testing Sliders
-              </label>
-
-              {[
-                { label: 'Smile', key: 'smile', min: 0, max: 1 },
-                { label: 'Frown', key: 'frown', min: 0, max: 1 },
-                { label: 'Eyebrow Lift', key: 'eyebrow', min: 0, max: 1 },
-                { label: 'Mouth Open', key: 'mouthOpen', min: 0, max: 1 },
-              ].map((item) => (
-                <div key={item.key}>
-                  <div className="flex justify-between text-xs font-mono text-[#0A0A0A]/70 mb-1">
-                    <span>{item.label}</span>
-                    <span>{(testSliders as any)[item.key].toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={item.min}
-                    max={item.max}
-                    step="0.05"
-                    value={(testSliders as any)[item.key]}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      setTestSliders((prev) => ({ ...prev, [item.key]: val }));
-                    }}
-                    className="w-full accent-[#8B5CF6] cursor-pointer"
-                  />
-                </div>
+          <div className="space-y-4">
+            <label className="text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider block">
+              Preview Mascot Facial Expressions
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {emotionsList.map((emo) => (
+                <button
+                  key={emo}
+                  type="button"
+                  onClick={() => setPreviewEmotion(emo)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-mono capitalize transition-all cursor-pointer ${
+                    previewEmotion === emo
+                      ? 'bg-[#8B5CF6] text-white font-bold shadow-xs'
+                      : 'bg-[#FDFBF7] border border-[#0A0A0A]/15 text-[#0A0A0A] hover:bg-[#F3F0E6]'
+                  }`}
+                >
+                  {emo}
+                </button>
               ))}
             </div>
           </div>
         )}
 
-        {/* TAB 3: UPLOAD 3D MASCOT & COMPATIBILITY CHECK */}
+        {/* TAB 4: 3D MODEL UPLOAD */}
         {activeTab === 'upload' && (
-          <div className="space-y-5">
+          <div className="space-y-4">
             <MascotUploader
-              onUploadSuccess={(res) => {
-                setModelUrl(res.objectUrl);
-                setModelType(res.fileType);
-                setConfig({
-                  ...config,
-                  isCustomModel: true,
-                  customModelName: res.name,
-                  customModelType: res.fileType,
-                });
-                setActiveTab('preview');
+              onUploadSuccess={({ url, fileType }) => {
+                setModelUrl(url);
+                setModelType(fileType as any);
+                setConfig({ ...config, isCustomModel: true });
               }}
             />
-
-            {/* MASCOT COMPATIBILITY REPORT CARD */}
-            <div className="p-4 rounded-2xl bg-[#FDFBF7] border border-[#0A0A0A]/15 space-y-3">
-              <div className="flex items-center gap-2 text-xs font-mono font-bold text-[#0A0A0A] uppercase tracking-wider">
-                <ShieldCheck className="w-4 h-4 text-[#8B5CF6]" />
-                <span>Mascot Compatibility</span>
-              </div>
-
-              <div className="space-y-1.5 text-xs font-mono">
-                <div className="flex justify-between items-center py-1 border-b border-[#0A0A0A]/5">
-                  <span className="text-[#0A0A0A]/70">3D Model</span>
-                  <span className="text-emerald-600 font-bold">✓ Ready</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-[#0A0A0A]/5">
-                  <span className="text-[#0A0A0A]/70">Animations</span>
-                  <span className="text-emerald-600 font-bold">✓ Procedural + Clips</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-[#0A0A0A]/5">
-                  <span className="text-[#0A0A0A]/70">Facial Rig</span>
-                  <span className="text-emerald-600 font-bold">✓ Blendshapes Supported</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-[#0A0A0A]/5">
-                  <span className="text-[#0A0A0A]/70">Expressions</span>
-                  <span className="text-emerald-600 font-bold">✓ 12 Emotional States</span>
-                </div>
-                <div className="flex justify-between items-center py-1">
-                  <span className="text-[#0A0A0A]/70">Talking Lip-Sync</span>
-                  <span className="text-emerald-600 font-bold">✓ Voice Synchronized</span>
-                </div>
-              </div>
-
-              {compatibility.explanation && (
-                <div className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
-                  {compatibility.explanation}
-                </div>
-              )}
-            </div>
 
             {modelUrl && (
               <button
@@ -440,21 +530,20 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
                 className="w-full py-2.5 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-mono transition-colors flex items-center justify-center gap-2 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset to Default 3D Mascot</span>
+                <span>Reset to Default Companion</span>
               </button>
             )}
           </div>
         )}
 
-        {/* BOTTOM ACTION BUTTONS: [ Upload New Mascot ] [ Use This Mascot ] */}
+        {/* FOOTER ACTIONS */}
         <div className="pt-4 border-t border-[#0A0A0A]/10 flex flex-col sm:flex-row gap-2.5">
           <button
             type="button"
-            onClick={() => setActiveTab('upload')}
-            className="flex-1 py-3 px-4 rounded-full border border-[#0A0A0A]/20 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A] text-xs font-mono font-bold tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            onClick={onClose}
+            className="flex-1 py-3 px-4 rounded-full border border-[#0A0A0A]/20 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A] text-xs font-mono font-bold tracking-wider transition-colors cursor-pointer text-center"
           >
-            <Upload className="w-3.5 h-3.5" />
-            Upload New Mascot
+            Cancel
           </button>
 
           <button
@@ -463,10 +552,12 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
             className="flex-1 py-3 px-4 rounded-full bg-[#0A0A0A] hover:bg-[#222222] text-white text-xs font-mono font-bold tracking-wider transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-md"
           >
             <Check className="w-3.5 h-3.5" />
-            Use This Mascot
+            Apply & Save
           </button>
         </div>
       </div>
     </div>
   );
 };
+
+export default MascotCustomizer;

@@ -308,57 +308,7 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
             </button>
           </div>
 
-          {/* Section 0.5: Wardrobe Outfits */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-mono uppercase tracking-wider text-white/80 flex items-center gap-1.5">
-                <Shirt className="w-3.5 h-3.5 text-cyan-400" />
-                <span>3. Wardrobe Outfit (6 Styles)</span>
-              </label>
-              <span className="text-[10px] font-mono text-cyan-300">
-                Active: {userProfile.outfit || 'hoodie'}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {OUTFITS_LIST.map((item) => {
-                const isSelected = (userProfile.outfit || 'hoodie') === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      onUpdateProfile({ outfit: item.id });
-                      fetch('/api/avatar/wardrobe', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          avatar_type: userProfile.avatarType || 'boy',
-                          outfit: item.id,
-                        }),
-                      }).catch(() => {});
-                    }}
-                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
-                      isSelected
-                        ? 'border-cyan-400 bg-white/15 ring-1 ring-cyan-400'
-                        : 'border-white/10 bg-white/5 hover:border-white/30'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: item.color }}
-                      />
-                      {isSelected && <Check className="w-3 h-3 text-cyan-400 stroke-[3]" />}
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-white">{item.label}</p>
-                      <p className="text-[9px] font-mono text-white/50">{item.desc}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+
 
           {/* Section 1: Mascot Companion Selection */}
           <div>

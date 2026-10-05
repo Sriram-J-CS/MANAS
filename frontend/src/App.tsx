@@ -34,6 +34,7 @@ import { NotificationPreferencesModal } from './components/notifications/Notific
 import { registerServiceWorker } from './lib/push/pushService';
 import { PageIntroCurtain } from './components/effects/PageIntroCurtain';
 import { FloatingBackgroundShapes } from './components/effects/FloatingBackgroundShapes';
+import { VoiceDebugHUD } from './components/voice/VoiceDebugHUD';
 
 export function App() {
   const [currentLang, setCurrentLang] = useState<Language>('en');
@@ -72,12 +73,22 @@ export function App() {
 
   // User Profile state (persisted in localStorage)
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
+    const loggedInName = typeof window !== 'undefined' ? localStorage.getItem('manas_user_name') : null;
+    const loggedInId = typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') : null;
     try {
       const saved = localStorage.getItem('manas_twin_profile');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (loggedInName && (!parsed.name || parsed.name === 'Friend' || parsed.name.toLowerCase() === 'akshay')) {
+          parsed.name = loggedInName;
+        }
+        if (loggedInId) parsed.id = loggedInId;
+        return parsed;
+      }
     } catch (_) { }
     return {
-      name: 'Friend',
+      name: loggedInName || 'Friend',
+      id: loggedInId || undefined,
       age: 20,
       isMinor: false,
       guardianConsent: false,
@@ -204,6 +215,9 @@ export function App() {
   };
 
   const handleUpdateProfile = (updated: Partial<UserProfile>) => {
+    if (updated.language) {
+      setCurrentLang(updated.language as Language);
+    }
     setUserProfile((prev) => {
       const next = { ...prev, ...updated };
       try {
@@ -319,7 +333,7 @@ export function App() {
 
 
 
-      <main className="w-full overflow-hidden">
+      <main className="w-full overflow-x-clip">
         {/* Signature Moment 1: Hero with Organic Ink Trail & 3D Glossy Textures Inside Letters */}
         <Hero
           config={config}
@@ -430,13 +444,21 @@ export function App() {
         onClose={() => setIsAuthOpen(false)}
         onAuthSuccess={(u) => {
           setAuthUser(u);
-          setUserProfile((prev) => ({
-            ...prev,
-            id: u.user_id,
-            name: u.name,
-            contactEmail: u.email || prev.contactEmail,
-            contactPhone: u.phone || prev.contactPhone,
-          }));
+          setUserProfile((prev) => {
+            const next = {
+              ...prev,
+              id: u.user_id,
+              name: u.name,
+              contactEmail: u.email || prev.contactEmail,
+              contactPhone: u.phone || prev.contactPhone,
+            };
+            try {
+              localStorage.setItem('manas_twin_profile', JSON.stringify(next));
+              localStorage.setItem('manas_user_name', u.name);
+              localStorage.setItem('manas_user_id', u.user_id);
+            } catch (_) {}
+            return next;
+          });
         }}
       />
 
@@ -506,6 +528,9 @@ export function App() {
         isOpen={isNotificationPrefsOpen}
         onClose={() => setIsNotificationPrefsOpen(false)}
       />
+
+      {/* Voice Gateway Debug HUD (dev only, active when ?voicedebug=1 is present) */}
+      <VoiceDebugHUD />
     </div>
   );
 }

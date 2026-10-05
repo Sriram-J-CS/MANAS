@@ -93,3 +93,6 @@ desktop.ini
 *.sln
 *.sw?
 *.bak
+
+# Large 3D VRM Models
+*.vrm

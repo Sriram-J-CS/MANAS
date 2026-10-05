@@ -53,8 +53,6 @@ export async function speak(
         // Play the returned audio directly and build segment metadata
         const audioBlob = _base64ToBlob(data.audio_base64, 'audio/wav');
         const audioUrl  = URL.createObjectURL(audioBlob);
-        const audio     = new Audio(audioUrl);
-        audio.play().catch(() => {});
 
         const sentences = (speechText.split(/((?<=[.!?।])\s+)/).filter(Boolean));
         const segments: SentenceAudioSegment[] = sentences.map((s, idx) => ({
@@ -107,23 +105,24 @@ function _browserSpeak(
     visemes: _estimateVisemes(s),
   }));
 
+  const nonIndic = ['en-IN', 'hi-IN'];
+  if (!nonIndic.includes(lang)) {
+    console.warn(`[VOICE GATEWAY BAN] Browser speechSynthesis strictly banned for ${lang}. Showing text silently.`);
+    return {
+      lang,
+      voiceGender,
+      voiceName: 'none (banned_fallback)',
+      fullSpeechText: speechText,
+      segments,
+      totalDurationMs: 0,
+    };
+  }
+
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel();
 
     const voices = window.speechSynthesis.getVoices();
     const bestVoice = _pickBestBrowserVoice(voices, lang, voiceGender);
-
-    if (!bestVoice && lang !== 'en-IN') {
-      console.warn(`[TTS] No native browser voice found for ${lang}. Never speaking non-English text with an English voice.`);
-      return {
-        lang,
-        voiceGender,
-        voiceName: 'none',
-        fullSpeechText: speechText,
-        segments,
-        totalDurationMs: 0,
-      };
-    }
 
     const utt   = new SpeechSynthesisUtterance(speechText);
     utt.lang    = lang;

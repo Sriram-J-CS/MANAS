@@ -13,6 +13,7 @@ import os
 import sys
 import uuid
 import io
+import json
 from PIL import Image
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -174,6 +175,26 @@ def _run_phase_3_vision_photo_analysis(access_token: str):
     print(f"[PASS] Vision extracted real palette: skinTone={data['skinTone']}, hairColor={data['hairColor']}, glasses={data.get('glasses')}")
 
 
+def parse_sse(res):
+    if "event:" in res.text:
+        meta = {}
+        tokens = []
+        for line in res.text.split("\n"):
+            if line.startswith("data:"):
+                chunk = line[5:].strip()
+                try:
+                    data = json.loads(chunk)
+                    if "token" in data:
+                        tokens.append(data["token"])
+                    elif "reply" in data or "risk_level" in data:
+                        meta.update(data)
+                except Exception:
+                    pass
+        if "reply" not in meta and tokens:
+            meta["reply"] = "".join(tokens)
+        return meta
+    return res.json()
+
 def test_phase_4_crisis_safety_and_helplines():
     print("\n--- PHASE 4: Crisis Safety & Tele-MANAS 14416 ---")
     crisis_payload = {
@@ -183,7 +204,7 @@ def test_phase_4_crisis_safety_and_helplines():
     }
     res = client.post("/api/chat", json=crisis_payload)
     assert res.status_code == 200
-    data = res.json()
+    data = parse_sse(res)
     assert data.get("risk_level") in ("high", "imminent")
     assert "14416" in data.get("reply", "") or "112" in data.get("reply", "")
     print(f"[PASS] Imminent crisis detected with Tele-MANAS 14416 emergency referral.")
@@ -195,7 +216,8 @@ def test_phase_4_crisis_safety_and_helplines():
     }
     res_med = client.post("/api/chat", json=medical_payload)
     assert res_med.status_code == 200
-    med_reply = res_med.json().get("reply", "")
+    med_data = parse_sse(res_med)
+    med_reply = med_data.get("reply", "")
     assert not any(phrase in med_reply.lower() for phrase in ["take 50mg", "i prescribe", "your dosage is"])
     print("[PASS] Medical boundary maintained: Refused prescription/dosage directives.")
 
@@ -221,15 +243,142 @@ def test_phase_5_multilingual_support():
     print("[PASS] Hindi conversational turn processed successfully.")
 
 
+def test_otp_pipeline_production_security():
+    print("\n--- PHASE 1B: Real Production OTP Security & Non-Leakage ---")
+    conn = get_db()
+    cursor = conn.cursor()
+
+    test_phone = "+919876543299"
+    test_email = "test.otp.user@example.com"
+
+    # 1. Dispatch Mobile OTP
+    res_phone = client.post("/api/auth/send-mobile-otp", json={
+        "phone": test_phone,
+        "name": "OTP Test User",
+        "email": test_email
+    })
+    assert res_phone.status_code == 200, f"Send mobile OTP failed: {res_phone.text}"
+    phone_data = res_phone.json()
+
+    # Rule 29: NEVER expose OTP in API response
+    assert "otp_code" not in phone_data, "CRITICAL SECURITY VIOLATION: Plaintext OTP code leaked in API response!"
+    assert "dev_otp_code" not in phone_data, "CRITICAL SECURITY VIOLATION: dev_otp_code leaked in API response!"
+    assert phone_data.get("masked_phone") is not None
+    assert phone_data.get("expires_in_seconds") == 600
+    print("[PASS] Mobile OTP dispatched with ZERO plaintext code leakage in API response.")
+
+    # 2. Check hashed storage in SQLite
+    cursor.execute("SELECT otp_code, expires_at, attempts FROM mobile_otps WHERE phone = ?", (test_phone,))
+    row = cursor.fetchone()
+    assert row is not None, "OTP record not found in database."
+    assert len(row["otp_code"]) == 64, "OTP must be stored as a 64-character SHA-256 / HMAC hash, NOT plaintext!"
+    stored_hash = row["otp_code"]
+    print("[PASS] OTP is cryptographically hashed with HMAC-SHA256 in database (zero plaintext DB storage).")
+
+    # 3. Test Invalid OTP rejection & brute force attempt counting
+    bad_verify = client.post("/api/auth/verify-mobile-otp", json={
+        "phone": test_phone,
+        "code": "000000"
+    })
+    assert bad_verify.status_code == 400
+    cursor.execute("SELECT attempts FROM mobile_otps WHERE phone = ?", (test_phone,))
+    attempts_row = cursor.fetchone()
+    assert attempts_row["attempts"] >= 1
+    print("[PASS] Invalid OTP rejected and brute-force attempt counter incremented.")
+
+    # 4. Dispatch Email OTP via unified /api/auth/send-otp
+    res_email = client.post("/api/auth/send-otp", json={
+        "destination": test_email,
+        "name": "Email OTP Tester"
+    })
+    assert res_email.status_code == 200
+    email_data = res_email.json()
+    assert "otp_code" not in email_data, "Plaintext OTP code leaked in unified send-otp response!"
+    assert "dev_otp_code" not in email_data
+    print("[PASS] Unified /api/auth/send-otp functions with zero OTP leakage.")
+
+    # 5. Retrieve hash and compute matching code to test single-use verification
+    # We can retrieve the secret key from environment to compute the valid code for this test
+    secret_key = os.environ.get("OTP_HMAC_SECRET", "manas_otp_salt_change_in_production")
+    import hmac, hashlib
+    matched_code = None
+    for candidate in range(100000, 1000000):
+        c_str = str(candidate)
+        h = hmac.new(secret_key.encode(), c_str.encode(), hashlib.sha256).hexdigest()
+        if h == stored_hash:
+            matched_code = c_str
+            break
+
+    assert matched_code is not None, "Failed to find matching test OTP code for HMAC validation."
+
+    # 6. Verify valid OTP
+    good_verify = client.post("/api/auth/verify-mobile-otp", json={
+        "phone": test_phone,
+        "code": matched_code,
+        "name": "OTP Verified User",
+        "email": test_email
+    })
+    assert good_verify.status_code == 200, f"Verify failed: {good_verify.text}"
+    token_data = good_verify.json()
+    assert "access_token" in token_data
+    assert token_data.get("phone") == test_phone
+    print("[PASS] Valid OTP authenticates and issues authenticated JWT session.")
+
+    # 7. Test Single-Use Invalidation: re-submitting the exact same OTP must fail!
+    reuse_verify = client.post("/api/auth/verify-mobile-otp", json={
+        "phone": test_phone,
+        "code": matched_code
+    })
+    assert reuse_verify.status_code == 400, "Replaying an already-used OTP must fail!"
+    cursor.execute("SELECT * FROM mobile_otps WHERE phone = ?", (test_phone,))
+    assert cursor.fetchone() is None, "OTP record must be deleted immediately upon successful verification."
+    print("[PASS] Single-use guarantee enforced: OTP record deleted from DB and replay rejected.")
+    conn.close()
+
+
+def test_phase_6_mascot_assets_and_voices():
+    print("\n--- PHASE 6: 3D Mascot Assets & Voice Mapping ---")
+    # 1. Verify Boy and Girl GLB assets exist
+    boy_glb = os.path.join(ROOT_DIR, "frontend", "public", "avatars", "boy.glb")
+    girl_glb = os.path.join(ROOT_DIR, "frontend", "public", "avatars", "girl.glb")
+    assert os.path.exists(boy_glb), f"Boy GLB asset missing at {boy_glb}"
+    assert os.path.exists(girl_glb), f"Girl GLB asset missing at {girl_glb}"
+    assert os.path.getsize(boy_glb) > 1_000_000, "Boy GLB asset size is unexpectedly small."
+    assert os.path.getsize(girl_glb) > 1_000_000, "Girl GLB asset size is unexpectedly small."
+    print(f"[PASS] 3D Mascot Assets verified: boy.glb ({os.path.getsize(boy_glb):,} bytes), girl.glb ({os.path.getsize(girl_glb):,} bytes).")
+
+    # 2. Verify TTS endpoint responds for both Boy (male) and Girl (female)
+    boy_tts = client.post("/api/voice/tts", json={
+        "text": "Hello, I am Aarav. How are you feeling today?",
+        "language": "en-IN",
+        "gender": "male",
+        "voice": "achal",
+        "emotion": "calm"
+    })
+    assert boy_tts.status_code == 200, f"Boy TTS failed: {boy_tts.text}"
+
+    girl_tts = client.post("/api/voice/tts", json={
+        "text": "வணக்கம்! நான் அனன்யா. நீங்கள் நலமாக இருக்கிறீர்களா?",
+        "language": "ta-IN",
+        "gender": "female",
+        "voice": "ananya",
+        "emotion": "calm"
+    })
+    assert girl_tts.status_code == 200, f"Girl Tamil TTS failed: {girl_tts.text}"
+    print("[PASS] Voice TTS successfully routes Boy (male) and Girl (female) Indic voice profiles.")
+
+
 def run_all_tests():
     print("============================================================")
     print("EMOTICARE AI / MANAS — PRODUCTION AUDIT VERIFICATION SUITE")
     print("============================================================")
     user_id, token = test_phase_1_authentication_and_rbac()
+    test_otp_pipeline_production_security()
     _run_phase_2_zero_mock_mood_journey(user_id, token)
     _run_phase_3_vision_photo_analysis(token)
     test_phase_4_crisis_safety_and_helplines()
     test_phase_5_multilingual_support()
+    test_phase_6_mascot_assets_and_voices()
     print("\n============================================================")
     print("ALL PRODUCTION VERIFICATION CHECKS PASSED (100% SUCCESS)")
     print("============================================================\n")
@@ -237,3 +386,4 @@ def run_all_tests():
 
 if __name__ == "__main__":
     run_all_tests()
+

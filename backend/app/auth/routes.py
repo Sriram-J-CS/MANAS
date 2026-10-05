@@ -23,8 +23,11 @@ from .schemas import (
     AuthUserOut,
     SendMobileOtpRequest,
     VerifyMobileOtpRequest,
+    SendOtpRequest,
+    VerifyOtpRequest,
 )
 from .dependencies import require_auth
+from ..services.email_service import send_welcome_community_email, send_otp_email
 
 logger = logging.getLogger("auth_routes")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -77,6 +80,12 @@ def signup(req: SignupRequest, request: Request):
     )
     conn.commit()
     conn.close()
+
+    # Trigger Welcome to MANAS Community Email
+    try:
+        send_welcome_community_email(req.email, req.name)
+    except Exception as em_err:
+        logger.warning("Welcome community email dispatch note: %s", em_err)
 
     access_token = create_access_token(user_id, req.email)
     refresh_token = create_refresh_token(user_id)
@@ -177,21 +186,58 @@ def get_me(uid: str = Depends(require_auth)):
     return AuthUserOut(user_id=row["id"], email=row["email"] or "", name=row["name"], phone=row["phone"] if "phone" in row.keys() else None)
 
 
+def _dispatch_otp(destination: str, otp_code: str, name: Optional[str] = "Friend", email: Optional[str] = None) -> str:
+    """Dispatches OTP via Twilio SMS, SMTP Email, or local dev logger."""
+    delivery_channel = "console_dev"
+
+    # 1. If email is provided or destination is an email address, dispatch via email
+    target_email = destination if "@" in destination else email
+    if target_email and "@" in target_email:
+        email_res = send_otp_email(target_email, otp_code, name)
+        if email_res.get("channel") == "smtp":
+            delivery_channel = "email_smtp"
+
+    # 2. If destination is a phone number, attempt Twilio SMS dispatch
+    clean_dest = destination.strip().replace(" ", "").replace("-", "")
+    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    twilio_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    twilio_from = os.environ.get("TWILIO_PHONE_NUMBER")
+
+    if twilio_sid and twilio_token and twilio_from and not "@" in destination:
+        try:
+            from twilio.rest import Client
+            client = Client(twilio_sid, twilio_token)
+            client.messages.create(
+                body=f"Your EmotiCare AI / MANAS verification code is: {otp_code}. Valid for 10 minutes. Do not share this code.",
+                from_=twilio_from,
+                to=clean_dest
+            )
+            delivery_channel = "twilio_sms"
+            logger.info("[OTP DISPATCH] SMS successfully delivered to %s via Twilio", clean_dest)
+        except Exception as tw_err:
+            logger.warning("[OTP DISPATCH] Twilio dispatch failed: %s", tw_err)
+
+    if delivery_channel == "console_dev":
+        logger.info("[OTP DISPATCH] Local console delivery for %s", destination)
+        print(f"\n======================================================\n[DEV OTP DISPATCH] Destination: {destination} | OTP: {otp_code}\n[NOTE] Provider unconfigured. To deliver SMS/Email live, configure TWILIO or SMTP in .env.\n======================================================\n", flush=True)
+
+    return delivery_channel
+
+
 @router.post("/send-mobile-otp")
 def send_mobile_otp(req: SendMobileOtpRequest, request: Request):
     """
     Generate and dispatch a 6-digit OTP code to the provided mobile number.
-    Supports Twilio/SMS webhook or returns dev code for testing.
+    CSPRNG generation, HMAC-SHA256 hashed storage, rate limiting, and zero OTP leakage.
     """
     client_ip = request.client.host if request.client else "127.0.0.1"
     _check_auth_rate(f"otp_{client_ip}", max_calls=6, window=300)
 
     clean_phone = req.phone
-    # CSPRNG: generate cryptographically secure 6-digit OTP
     otp_code = f"{secrets.randbelow(900000) + 100000}"
     expires_at = time.time() + 600  # 10 minutes
 
-    # Store only HMAC-SHA256 hash — never store plaintext OTP in DB
+    # Store only HMAC-SHA256 hash — never plaintext OTP
     secret_key = os.environ.get("OTP_HMAC_SECRET", "manas_otp_salt_change_in_production")
     otp_hash = hmac.new(secret_key.encode(), otp_code.encode(), hashlib.sha256).hexdigest()
 
@@ -204,22 +250,60 @@ def send_mobile_otp(req: SendMobileOtpRequest, request: Request):
     conn.commit()
     conn.close()
 
-    # Log OTP plaintext to console so developer/admin can see it (never sent over network)
-    logger.info("[MOBILE OTP] Dispatching code to phone %s", clean_phone)
-    print(f"\n======================================================\n[MOBILE OTP DISPATCH] Phone: {clean_phone} | OTP Code: {otp_code}\n======================================================\n", flush=True)
+    channel = _dispatch_otp(clean_phone, otp_code, req.name, req.email)
 
     masked = clean_phone[:4] + "******" + clean_phone[-2:] if len(clean_phone) > 6 else clean_phone
-    res = {
+    return {
         "success": True,
-        "message": f"Verification code sent to {masked}",
+        "message": f"Verification code dispatched to {masked}",
         "phone": clean_phone,
         "masked_phone": masked,
-        "expires_in_seconds": 600
+        "expires_in_seconds": 600,
+        "delivery_channel": channel,
     }
-    is_dev = os.environ.get("ENV", "production").lower() in ("dev", "development", "local") and os.environ.get("EXPOSE_DEV_OTP", "0") == "1"
-    if is_dev:
-        res["dev_otp_code"] = otp_code
-    return res
+
+
+@router.post("/send-otp")
+def send_otp(req: SendOtpRequest, request: Request):
+    """
+    Unified OTP dispatch supporting either Phone or Email.
+    """
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    _check_auth_rate(f"otp_{client_ip}", max_calls=6, window=300)
+
+    destination = req.destination.strip().lower() if "@" in req.destination else req.destination.strip().replace(" ", "").replace("-", "")
+    otp_code = f"{secrets.randbelow(900000) + 100000}"
+    expires_at = time.time() + 600
+
+    secret_key = os.environ.get("OTP_HMAC_SECRET", "manas_otp_salt_change_in_production")
+    otp_hash = hmac.new(secret_key.encode(), otp_code.encode(), hashlib.sha256).hexdigest()
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO mobile_otps (phone, otp_code, expires_at, attempts)
+        VALUES (?, ?, ?, 0)
+    """, (destination, otp_hash, expires_at))
+    conn.commit()
+    conn.close()
+
+    channel = _dispatch_otp(destination, otp_code, req.name, req.email)
+
+    if "@" in destination:
+        parts = destination.split("@")
+        masked = parts[0][:2] + "***@" + parts[1]
+    else:
+        masked = destination[:4] + "******" + destination[-2:] if len(destination) > 6 else destination
+
+    return {
+        "success": True,
+        "message": f"Verification code dispatched to {masked}",
+        "destination": destination,
+        "masked_destination": masked,
+        "expires_in_seconds": 600,
+        "delivery_channel": channel,
+    }
+
 
 
 @router.post("/verify-mobile-otp", response_model=TokenResponse)
@@ -282,14 +366,16 @@ def verify_mobile_otp(req: VerifyMobileOtpRequest, request: Request):
     user_row = cursor.fetchone()
 
     display_name = req.name or "Friend"
+    user_email = req.email.strip().lower() if req.email and "@" in req.email else ""
+
     if not user_row:
         user_id = str(uuid.uuid4())
         dummy_pw_hash = hash_password(str(uuid.uuid4()))
-        dummy_email = f"user_{clean_phone.replace('+', '')}@manas.local"
+        effective_email = user_email or f"user_{clean_phone.replace('+', '')}@manas.local"
         cursor.execute("""
             INSERT INTO auth_users (id, phone, email, password_hash, name, created_at)
             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        """, (user_id, clean_phone, dummy_email, dummy_pw_hash, display_name))
+        """, (user_id, clean_phone, effective_email, dummy_pw_hash, display_name))
         
         # Also ensure profile exists in users table
         cursor.execute("""
@@ -297,14 +383,23 @@ def verify_mobile_otp(req: VerifyMobileOtpRequest, request: Request):
             VALUES (?, ?, CURRENT_TIMESTAMP)
         """, (user_id, display_name))
         user_name = display_name
-        email = dummy_email
+        email = effective_email
     else:
         user_id = user_row["id"]
         user_name = user_row["name"] or display_name
-        email = user_row["email"] or ""
+        email = user_email or user_row["email"] or ""
+        if user_email and user_row["email"] != user_email:
+            cursor.execute("UPDATE auth_users SET email = ? WHERE id = ?", (user_email, user_id))
 
     conn.commit()
     conn.close()
+
+    # Trigger Welcome to MANAS Community Email if valid email available
+    if email and "@" in email and not email.endswith("@manas.local"):
+        try:
+            send_welcome_community_email(email, user_name)
+        except Exception as em_err:
+            logger.warning("Welcome community email dispatch note: %s", em_err)
 
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
@@ -317,4 +412,113 @@ def verify_mobile_otp(req: VerifyMobileOtpRequest, request: Request):
         email=email,
         phone=clean_phone
     )
+
+
+@router.post("/verify-otp", response_model=TokenResponse)
+def verify_otp(req: VerifyOtpRequest, request: Request):
+    """
+    Unified OTP verification supporting either Email or Mobile phone.
+    Authenticates or creates the user and returns JWT access & refresh tokens.
+    """
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    _check_auth_rate(f"verify_otp_{client_ip}", max_calls=10, window=300)
+
+    dest = req.destination.strip().lower() if "@" in req.destination else req.destination.strip().replace(" ", "").replace("-", "")
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT otp_code, expires_at, attempts FROM mobile_otps WHERE phone = ?", (dest,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="No OTP requested for this destination. Please click 'Send OTP' first."
+        )
+
+    if time.time() > row["expires_at"]:
+        cursor.execute("DELETE FROM mobile_otps WHERE phone = ?", (dest,))
+        conn.commit()
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="Verification code has expired. Please request a new code."
+        )
+
+    if row["attempts"] >= 5:
+        cursor.execute("DELETE FROM mobile_otps WHERE phone = ?", (dest,))
+        conn.commit()
+        conn.close()
+        raise HTTPException(
+            status_code=429,
+            detail="Too many invalid attempts. Please request a fresh OTP."
+        )
+
+    secret_key = os.environ.get("OTP_HMAC_SECRET", "manas_otp_salt_change_in_production")
+    expected_hash = hmac.new(secret_key.encode(), req.code.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_hash, row["otp_code"]):
+        cursor.execute("UPDATE mobile_otps SET attempts = attempts + 1 WHERE phone = ?", (dest,))
+        conn.commit()
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid verification code. Please check and try again."
+        )
+
+    # Clear OTP immediately upon verification (single-use guarantee)
+    cursor.execute("DELETE FROM mobile_otps WHERE phone = ?", (dest,))
+
+    # Find or create user
+    is_email = "@" in dest
+    if is_email:
+        cursor.execute("SELECT id, name, email, phone FROM auth_users WHERE email = ?", (dest,))
+    else:
+        cursor.execute("SELECT id, name, email, phone FROM auth_users WHERE phone = ?", (dest,))
+    user_row = cursor.fetchone()
+
+    display_name = req.name or "Friend"
+    if not user_row:
+        user_id = str(uuid.uuid4())
+        dummy_pw_hash = hash_password(str(uuid.uuid4()))
+        user_phone = dest if not is_email else None
+        user_email = dest if is_email else (req.email.strip().lower() if req.email else f"user_{dest.replace('+', '')}@manas.local")
+        cursor.execute("""
+            INSERT INTO auth_users (id, phone, email, password_hash, name, created_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (user_id, user_phone, user_email, dummy_pw_hash, display_name))
+
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (id, name, created_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        """, (user_id, display_name))
+        email = user_email
+        phone = user_phone
+        user_name = display_name
+    else:
+        user_id = user_row["id"]
+        user_name = user_row["name"] or display_name
+        email = user_row["email"] or ""
+        phone = user_row["phone"]
+
+    conn.commit()
+    conn.close()
+
+    if email and "@" in email and not email.endswith("@manas.local"):
+        try:
+            send_welcome_community_email(email, user_name)
+        except Exception as em_err:
+            logger.warning("Welcome community email dispatch note: %s", em_err)
+
+    access_token = create_access_token(user_id, email)
+    refresh_token = create_refresh_token(user_id)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user_id=user_id,
+        name=user_name,
+        email=email,
+        phone=phone
+    )
+
 

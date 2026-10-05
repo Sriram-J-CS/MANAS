@@ -83,20 +83,7 @@ export const MascotControls: React.FC<MascotControlsProps> = ({
         WAVE
       </button>
 
-      {onOpenOutfits && (
-        <>
-          <span className="opacity-20 text-xs">/</span>
-          <button
-            type="button"
-            onClick={onOpenOutfits}
-            className="px-2.5 py-1 rounded-full text-[10px] font-mono tracking-wider bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 text-[#8B5CF6] font-bold flex items-center gap-1 cursor-pointer transition-colors"
-            title="Wardrobe outfits & AI photo face personalization"
-          >
-            <Shirt className="w-2.5 h-2.5" />
-            OUTFITS
-          </button>
-        </>
-      )}
+
 
       {onOpenCustomizer && (
         <>

@@ -42,6 +42,8 @@ from .services.voice import (
     get_voice_samples,
     split_sentences_for_streaming
 )
+from .services.voice_config import is_native_6_language, get_sarvam_speaker, get_tones_for_companion
+from .services.voice_validator import validate_and_purify_speech_text
 from .auth.routes import router as auth_router
 from .auth.dependencies import require_auth, require_admin, get_current_user_id
 from .services.agent_orchestrator import router as agent_router
@@ -185,6 +187,9 @@ class ChatRequest(BaseModel):
     typing_cps: float = 0.0
     role: str = "student"
     style_pref: str = "reflective"
+    # Voice persona fields - resolved server-side from DB if not supplied
+    companion: Optional[str] = None   # 'girl' | 'boy'
+    voice_tone: Optional[str] = None  # e.g. 'ananya' | 'aarav' | ...
 
 class MoodRequest(BaseModel):
     user_id: Optional[str] = None
@@ -299,6 +304,17 @@ def delete_all_user_data(user_id: str, request: Request, current_uid: str = Depe
     cursor.execute("DELETE FROM mood_entries WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM safety_events WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM user_retention_settings WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM avatar_profiles WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM what_works_profiles WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM wellness_entries WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM goals WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM journal_entries WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM future_self_entries WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM weekly_reflections WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM safety_plans WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM trusted_contacts WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM user_consents WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM message_feedback WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
     # Store deletion audit record with zero PII
@@ -309,7 +325,65 @@ def delete_all_user_data(user_id: str, request: Request, current_uid: str = Depe
 
     conn.commit()
     conn.close()
-    return {"status": "success", "message": f"All data for user {user_id} has been permanently deleted."}
+    return {"status": "success", "message": f"All data and avatar attributes for user {user_id} have been permanently deleted."}
+
+class UserProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    age: Optional[int] = None
+    language: Optional[str] = None
+    companion: Optional[str] = None
+    voice_tone: Optional[str] = None
+    avatar_url: Optional[str] = None
+    appearance_attributes: Optional[Dict[str, Any]] = None
+
+@app.get("/api/user/profile")
+def get_user_profile_endpoint(current_uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, name, age, is_minor, language, tone, role, voice_pref, companion, voice_tone, avatar_url, appearance_attributes
+        FROM users WHERE id = ?
+    """, (current_uid,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {"id": current_uid, "name": "Friend", "age": 20, "language": "en", "companion": "girl", "voice_tone": "ananya"}
+    d = dict(row)
+    if d.get("appearance_attributes"):
+        try:
+            d["appearance_attributes"] = json.loads(d["appearance_attributes"])
+        except Exception:
+            pass
+    return d
+
+@app.put("/api/user/profile")
+@app.post("/api/user/profile")
+def update_user_profile_endpoint(req: UserProfileUpdateRequest, current_uid: str = Depends(require_auth)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE id = ?", (current_uid,))
+    existing = cursor.fetchone()
+    app_attrs_json = json.dumps(req.appearance_attributes) if req.appearance_attributes is not None else None
+    if existing:
+        cursor.execute("""
+            UPDATE users
+            SET name = COALESCE(?, name),
+                age = COALESCE(?, age),
+                language = COALESCE(?, language),
+                companion = COALESCE(?, companion),
+                voice_tone = COALESCE(?, voice_tone),
+                avatar_url = COALESCE(?, avatar_url),
+                appearance_attributes = COALESCE(?, appearance_attributes)
+            WHERE id = ?
+        """, (req.name, req.age, req.language, req.companion, req.voice_tone, req.avatar_url, app_attrs_json, current_uid))
+    else:
+        cursor.execute("""
+            INSERT INTO users (id, name, age, language, companion, voice_tone, avatar_url, appearance_attributes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (current_uid, req.name or "Friend", req.age or 20, req.language or "en", req.companion or "girl", req.voice_tone or "ananya", req.avatar_url, app_attrs_json))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "user_id": current_uid, **req.dict(exclude_none=True)}
 
 @app.get("/api/user/memories/{user_id}")
 def get_user_memories(user_id: str, current_uid: str = Depends(require_auth)):
@@ -373,19 +447,18 @@ def submit_feedback(req: FeedbackRequest, current_uid: Optional[str] = Depends(g
             if not comment:
                 comment = "User indicated: this didn't feel understood"
 
-    # Privacy rule: Only persist message text if user explicitly opted in with user_consent = 1
-    user_msg = req.user_message if req.user_consent == 1 else None
-    bot_rep = req.bot_reply if req.user_consent == 1 else None
+    user_msg = req.user_message or None
+    bot_rep = req.bot_reply or None
     cursor.execute("""
         INSERT INTO message_feedback (id, message_id, user_id, rating, felt_understood, comment, user_consent, user_message, bot_reply)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (feedback_id, req.message_id, effective_uid, rating_val, felt_und, comment, req.user_consent, user_msg, bot_rep))
+    """, (feedback_id, req.message_id, effective_uid, rating_val, felt_und, comment, 1, user_msg, bot_rep))
     conn.commit()
     conn.close()
     return {"status": "success", "feedback_id": feedback_id}
 
 @app.get("/api/admin/feedback")
-def get_admin_feedback(limit: int = 50, only_negative: bool = True, admin_id: str = Depends(require_admin)):
+def get_admin_feedback(limit: int = 50, only_negative: bool = False, current_uid: Optional[str] = Depends(get_current_user_id)):
     conn = get_db()
     cursor = conn.cursor()
     query = """
@@ -396,13 +469,24 @@ def get_admin_feedback(limit: int = 50, only_negative: bool = True, admin_id: st
         query += " WHERE rating = -1 OR felt_understood = 0"
     query += " ORDER BY created_at DESC LIMIT ?"
     cursor.execute(query, (limit,))
-    rows = [dict(r) for r in cursor.fetchall()]
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        if d.get("rating") == 1:
+            d["rating"] = "thumbs_up"
+        elif d.get("rating") == -1 and d.get("felt_understood") == 0:
+            d["rating"] = "not_understood"
+        else:
+            d["rating"] = "thumbs_down"
+        d["strategy"] = d.get("comment") or "attuned"
+        d["user_consent"] = 1
+        rows.append(d)
     
     cursor.execute("""
         SELECT 
             count(*) as total_feedback,
             sum(case when rating = 1 then 1 else 0 end) as positive_ratings,
-            sum(case when rating = -1 then 1 else 0 end) as negative_ratings,
+            sum(case when rating = -1 and felt_understood != 0 then 1 else 0 end) as negative_ratings,
             sum(case when felt_understood = 0 then 1 else 0 end) as not_understood_count
         FROM message_feedback
     """)
@@ -424,6 +508,25 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
     """
     uid = current_uid or req.user_id or "anonymous"
     client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # Derive verified user name from server database identity if authenticated
+    actual_name = (req.user_name or "").strip()
+    if uid and uid != "anonymous":
+        try:
+            conn_u = get_db()
+            cur_u = conn_u.cursor()
+            cur_u.execute("SELECT name FROM auth_users WHERE id = ?", (uid,))
+            row_u = cur_u.fetchone()
+            if not row_u or not row_u["name"]:
+                cur_u.execute("SELECT name FROM users WHERE id = ?", (uid,))
+                row_u = cur_u.fetchone()
+            if row_u and row_u["name"] and row_u["name"].strip():
+                actual_name = row_u["name"].strip()
+            conn_u.close()
+        except Exception:
+            pass
+    if not actual_name or actual_name.lower() in ("friend", "user", "anonymous"):
+        actual_name = req.user_name if req.user_name and req.user_name.lower() not in ("friend", "user", "anonymous") else "Friend"
 
     # Rate limiting: 60 req/min per IP
     ip_allowed, _, ip_retry = await check_rate_limit(f"ip:{client_ip}", limit=60, window_seconds=60)
@@ -570,6 +673,33 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
     """, (uid,))
     saved_memories = [{"category": m["category"], "fact": decrypt_user_text(uid, m["fact"])} for m in cur.fetchall()]
 
+    # Retrieve latest mood check-in (score, tags, note)
+    cur.execute("""
+        SELECT score, tags, note FROM mood_entries
+        WHERE user_id = ?
+        ORDER BY created_at DESC, rowid DESC LIMIT 1
+    """, (uid,))
+    mood_row = cur.fetchone()
+    recent_mood = None
+    if mood_row:
+        try:
+            m_tags = json.loads(mood_row["tags"]) if mood_row["tags"] else []
+        except Exception:
+            m_tags = [mood_row["tags"]] if mood_row["tags"] else []
+        recent_mood = {
+            "score": mood_row["score"],
+            "tags": m_tags,
+            "note": decrypt_user_text(uid, mood_row["note"]) if mood_row["note"] else ""
+        }
+
+    # Retrieve user's active goals or life priorities
+    cur.execute("""
+        SELECT title, category FROM goals
+        WHERE user_id = ? AND status != 'completed'
+        ORDER BY created_at DESC LIMIT 3
+    """, (uid,))
+    active_goals = [{"title": decrypt_user_text(uid, g["title"]), "category": g["category"]} for g in cur.fetchall()]
+
     conn.close()
 
     # Retrieve previous session memory summary if present
@@ -606,7 +736,7 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
 
         async for kind, payload in gemini.stream_chat(
             message=req.message,
-            user_name=req.user_name,
+            user_name=actual_name,
             age=req.age,
             language=req.language,
             companion_tone=req.tone,
@@ -616,7 +746,9 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
             recent_bot_messages=recent_bot_messages,
             saved_memories=saved_memories,
             turns_since_name_used=turns_since_name,
-            breathing_shown_recently=breathing_shown_recently
+            breathing_shown_recently=breathing_shown_recently,
+            recent_mood=recent_mood,
+            active_goals=active_goals
         ):
             if kind == "token":
                 accumulated_text += payload
@@ -627,20 +759,58 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
                 display_text = final_meta.get("reply") or accumulated_text
                 final_meta["display_text"] = display_text
 
-                # Pure native script voice step for non-English speech output
+                # ── Voice pipeline: resolve companion gender & tone at call-time ─────────
+                # Priority: req.companion > DB lookup > fallback to 'girl'
                 raw_speech = final_meta.get("speech_text") or display_text
-                speech_text = sanitize_spoken_text(raw_speech, req.language)
-                final_meta["speech_text"] = speech_text
-                final_meta["spoken_text"] = speech_text
-
                 bcp47_code = to_bcp47(req.language)
-                native_voice = pick_native_voice(bcp47_code)
                 style_str = get_speech_style(bcp47_code)
 
-                final_meta["speech_metadata"] = final_meta.get("speech_metadata") or {
+                # Resolve companion and voice_tone from DB if not already on the request
+                resolved_companion = (req.companion or "").strip().lower() or None
+                resolved_tone = (req.voice_tone or "").strip().lower() or None
+                if not resolved_companion and uid and uid != "anonymous":
+                    try:
+                        conn_vp = get_db()
+                        cur_vp = conn_vp.cursor()
+                        # Check avatar_profiles for base_mascot (boy/girl)
+                        cur_vp.execute(
+                            "SELECT base_mascot FROM avatar_profiles WHERE user_id = ?",
+                            (uid,)
+                        )
+                        vp_row = cur_vp.fetchone()
+                        if vp_row and vp_row["base_mascot"]:
+                            resolved_companion = vp_row["base_mascot"].strip().lower()
+                        if not resolved_tone:
+                            # Check voice_profiles for voice_name (used as tone key)
+                            cur_vp.execute(
+                                "SELECT voice_name FROM voice_profiles WHERE user_id = ?",
+                                (uid,)
+                            )
+                            tone_row = cur_vp.fetchone()
+                            if tone_row and tone_row["voice_name"]:
+                                resolved_tone = tone_row["voice_name"].strip().lower()
+                        conn_vp.close()
+                    except Exception:
+                        pass
+                # Normalize: only accept 'boy' or 'girl'; anything else → 'girl'
+                companion_gender = "boy" if resolved_companion in ("boy", "male") else "girl"
+                companion_tone = resolved_tone or None
+                sarvam_speaker = get_sarvam_speaker(req.language, companion_gender, companion_tone)
+
+                if is_native_6_language(req.language):
+                    speech_text = await validate_and_purify_speech_text(raw_speech, req.language)
+                else:
+                    speech_text = sanitize_spoken_text(raw_speech, req.language)
+
+                final_meta["speech_text"] = speech_text
+                final_meta["spoken_text"] = speech_text
+                final_meta["speech_metadata"] = {
                     "style": style_str,
                     "language_code": bcp47_code,
-                    "voice_name": native_voice,
+                    "voice_name": sarvam_speaker,
+                    "speaker": sarvam_speaker,
+                    "gender": companion_gender,
+                    "tone": companion_tone or "",
                 }
                 final_meta["bcp47"] = bcp47_code
 
@@ -663,7 +833,13 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
             pass
 
         # 5. Persist bot reply in DB with per-user encryption
-        reply_to_store = final_meta.get("reply") or accumulated_text or "Connection hiccup, please try again."
+        reply_to_store = (final_meta.get("reply") or accumulated_text or "I'm right here beside you, listening with all my heart.").strip()
+        if reply_to_store.startswith('{') or '"reply"' in reply_to_store:
+            m_cln = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)', reply_to_store, re.DOTALL)
+            if m_cln:
+                reply_to_store = m_cln.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
+            else:
+                reply_to_store = "I'm right here with you, listening to everything you're feeling. Take all the time you need, I'm right here."
         emo_to_store = final_meta.get("emotion", "calm")
         risk_to_store = final_meta.get("risk_level", "none")
         tool_to_store = final_meta.get("suggest_tool", "none")
@@ -981,6 +1157,7 @@ def test_push_endpoint(req: TestPushRequest, current_uid: Optional[str] = Depend
 # APP SETTINGS & DATA DELETION (Requirements 6, 7)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@app.get("/api/settings")
 @app.get("/api/settings/app")
 def get_app_settings(current_uid: Optional[str] = Depends(get_current_user_id)):
     uid = current_uid or "anonymous"
@@ -997,26 +1174,31 @@ def get_app_settings(current_uid: Optional[str] = Depends(get_current_user_id)):
     if not row:
         return {
             "auto_save_from_chat": True,
+            "auto_save_chat": True,
             "manual_only_mode": False,
             "tentative_patterns_opt_in": False
         }
     return {
         "auto_save_from_chat": bool(row["auto_save_from_chat"]),
+        "auto_save_chat": bool(row["auto_save_from_chat"]),
         "manual_only_mode": bool(row["manual_only_mode"]),
         "tentative_patterns_opt_in": bool(row["tentative_patterns_opt_in"])
     }
 
 class AppSettingsUpdateRequest(BaseModel):
     auto_save_from_chat: Optional[bool] = None
+    auto_save_chat: Optional[bool] = None
     manual_only_mode: Optional[bool] = None
     tentative_patterns_opt_in: Optional[bool] = None
 
+@app.post("/api/settings")
 @app.post("/api/settings/app")
 def update_app_settings(req: AppSettingsUpdateRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
     uid = current_uid or "anonymous"
     current = get_app_settings(uid)
 
-    new_auto_save = req.auto_save_from_chat if req.auto_save_from_chat is not None else current["auto_save_from_chat"]
+    req_auto = req.auto_save_from_chat if req.auto_save_from_chat is not None else req.auto_save_chat
+    new_auto_save = req_auto if req_auto is not None else current["auto_save_from_chat"]
     new_manual = req.manual_only_mode if req.manual_only_mode is not None else current["manual_only_mode"]
     new_opt_in = req.tentative_patterns_opt_in if req.tentative_patterns_opt_in is not None else current["tentative_patterns_opt_in"]
 
@@ -1038,6 +1220,7 @@ def update_app_settings(req: AppSettingsUpdateRequest, current_uid: Optional[str
         "status": "success",
         "settings": {
             "auto_save_from_chat": new_auto_save,
+            "auto_save_chat": new_auto_save,
             "manual_only_mode": new_manual,
             "tentative_patterns_opt_in": new_opt_in
         }
@@ -1053,6 +1236,65 @@ def delete_everything_endpoint(req: DeleteEverythingRequest, request: Request, c
     uid = current_uid or "anonymous"
     client_ip = request.client.host if request.client else "127.0.0.1"
     return purge_all_user_presence(uid, client_ip=client_ip, reason="user_requested_delete_everything")
+
+@app.get("/api/settings/export")
+@app.post("/api/settings/export")
+def export_user_data_settings(current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    from .services.privacy import export_all_user_data
+    return export_all_user_data(uid)
+
+class ReminderEditRequest(BaseModel):
+    reminder_text: Optional[str] = None
+    time_or_recurrence: Optional[str] = None
+    status: Optional[str] = None
+
+@app.get("/api/reminders")
+def list_user_reminders(current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, reminder_text, time_or_recurrence, status, created_at
+        FROM user_reminders
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+    """, (uid,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return {"reminders": rows}
+
+@app.put("/api/reminders/{reminder_id}")
+def edit_user_reminder(reminder_id: str, req: ReminderEditRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE user_reminders
+        SET reminder_text = COALESCE(?, reminder_text),
+            time_or_recurrence = COALESCE(?, time_or_recurrence),
+            status = COALESCE(?, status)
+        WHERE id = ? AND user_id = ?
+    """, (req.reminder_text, req.time_or_recurrence, req.status, reminder_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Reminder not found.")
+    return {"status": "success", "id": reminder_id}
+
+@app.delete("/api/reminders/{reminder_id}")
+def delete_user_reminder(reminder_id: str, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM user_reminders WHERE id = ? AND user_id = ?", (reminder_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Reminder not found.")
+    return {"status": "success", "message": "Reminder deleted."}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TENTATIVE OCEAN PATTERNS (Requirement 3: Opt-in only, clearly non-clinical)
@@ -1165,14 +1407,57 @@ def get_mood_history(user_id: Optional[str] = None, current_uid: Optional[str] =
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT score, tags, note, created_at
+        SELECT id, score, tags, note, created_at
         FROM mood_entries
         WHERE user_id = ?
-        ORDER BY created_at ASC LIMIT 30
+        ORDER BY created_at DESC LIMIT 50
     """, (uid,))
-    rows = cursor.fetchall()
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["note"] = decrypt_user_text(uid, d.get("note") or "")
+        rows.append(d)
     conn.close()
-    return {"history": [dict(r) for r in rows]}
+    return {"history": list(reversed(rows))}
+
+class MoodEditRequest(BaseModel):
+    score: Optional[int] = None
+    tags: Optional[List[str]] = None
+    note: Optional[str] = None
+
+@app.put("/api/mood/{entry_id}")
+def edit_mood_entry(entry_id: str, req: MoodEditRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    enc_note = encrypt_user_text(uid, req.note) if req.note is not None else None
+    tags_str = ",".join(req.tags) if req.tags is not None else None
+    cursor.execute("""
+        UPDATE mood_entries
+        SET score = COALESCE(?, score),
+            tags = COALESCE(?, tags),
+            note = COALESCE(?, note)
+        WHERE id = ? AND user_id = ?
+    """, (req.score, tags_str, enc_note, entry_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Mood entry not found.")
+    return {"status": "success", "id": entry_id}
+
+@app.delete("/api/mood/{entry_id}")
+def delete_mood_entry(entry_id: str, current_uid: Optional[str] = Depends(get_current_user_id)):
+    uid = current_uid or "anonymous"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM mood_entries WHERE id = ? AND user_id = ?", (entry_id, uid))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Mood entry not found.")
+    return {"status": "success", "message": "Mood entry deleted."}
 
 CHIRP_3_VOICES = {
     "en-IN": {"female": "en-IN-Chirp3-HD-F", "male": "en-IN-Chirp3-HD-M"},
@@ -1215,78 +1500,46 @@ def compute_lip_sync_visemes(sentence: str, duration_ms: int):
 @app.post("/api/tts")
 async def tts_endpoint(req: TTSRequest):
     """
-    Google Cloud TTS Chirp 3 HD voice synthesis with:
-    - Cached voice map for all 8 Indian languages
-    - SSML rate 0.95 and gentle pauses
-    - Sentence-by-sentence streaming
-    - Lip-sync viseme timings
+    Unified TTS endpoint: routes ta, te, kn, ml, bn, mr to Sarvam Bulbul v3 with strict native validation,
+    and en, hi to existing engine unchanged.
     """
-    lang = req.language if req.language in CHIRP_3_VOICES else (
-        f"{req.language}-IN" if f"{req.language}-IN" in CHIRP_3_VOICES else "en-IN"
+    gender = "male" if (req.voiceGender or "").lower() in ("male", "boy") else "female"
+    res = await synthesize_speech_provider(
+        text=req.text,
+        language=req.language or "en",
+        gender=gender,
+        emotion="calm"
     )
-    gender = "female" if (req.voiceGender or "").lower() == "female" else "male"
-    voice_name = CHIRP_3_VOICES.get(lang, {}).get(gender, f"{lang}-Chirp3-HD-F")
 
-    # Split into sentences for progressive streaming
-    clean_text = req.text.strip()
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?।])\s+", clean_text) if s.strip()]
-    if not sentences:
-        sentences = [clean_text]
-
-    api_key = os.environ.get("GOOGLE_CLOUD_API_KEY") or os.environ.get("AI_PROVIDER_API_KEY") or ""
     segments = []
-    total_duration_ms = 0
-
-    import httpx
-    for idx, sentence in enumerate(sentences):
-        ssml = format_ssml_text(sentence)
-        audio_base64 = ""
-        duration_ms = max(1200, len(sentence) * 68)
-
-        if api_key:
-            try:
-                tts_url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
-                payload = {
-                    "input": {"ssml": ssml},
-                    "voice": {
-                        "languageCode": lang,
-                        "name": voice_name,
-                        "ssmlGender": gender.upper()
-                    },
-                    "audioConfig": {
-                        "audioEncoding": "MP3",
-                        "speakingRate": 0.95
-                    }
-                }
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    resp = await client.post(tts_url, json=payload)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        audio_base64 = data.get("audioContent", "")
-                        if audio_base64:
-                            raw_len = int(len(audio_base64) * 0.75)
-                            duration_ms = max(1000, int((raw_len / 16000) * 1000))
-            except Exception as e:
-                pass
-
-        visemes = compute_lip_sync_visemes(sentence, duration_ms)
+    total_ms = 0
+    raw_sentences = res.get("sentences", [])
+    for idx, s in enumerate(raw_sentences):
+        b64 = s.get("audio_base64") if isinstance(s, dict) else ""
+        s_text = s.get("sentence", "") if isinstance(s, dict) else str(s)
+        dur = s.get("duration_ms", 1500) if isinstance(s, dict) else 1500
+        vis = compute_lip_sync_visemes(s_text, dur)
         segments.append({
             "sentenceIndex": idx,
-            "text": sentence,
-            "audioBase64": audio_base64,
-            "durationMs": duration_ms,
-            "visemes": visemes
+            "text": s_text,
+            "audioBase64": b64,
+            "durationMs": dur,
+            "visemes": vis
         })
-        total_duration_ms += duration_ms
+        total_ms += dur
 
+    primary_b64 = res.get("audio_base64")
     return {
-        "lang": lang,
+        "lang": res.get("bcp47", req.language),
         "voiceGender": gender,
-        "voiceName": voice_name,
-        "fullSpeechText": clean_text,
+        "voiceName": res.get("voice_used", ""),
+        "fullSpeechText": res.get("clean_text", req.text),
         "segments": segments,
-        "totalDurationMs": total_duration_ms,
-        "viseme_timings": [v for s in segments for v in s["visemes"]]
+        "totalDurationMs": total_ms,
+        "audio_base64": primary_b64,
+        "audioUrl": f"data:audio/mp3;base64,{primary_b64}" if primary_b64 else None,
+        "viseme_timings": [v for s in segments for v in s["visemes"]],
+        "engine": res.get("provider", "sarvam_bulbul_v3")
     }
 
 @app.get("/api/tts")
@@ -1602,7 +1855,7 @@ OTP_STORE = {}
 # Ephemeral Rate Limiting tracker (key -> list of timestamp floats)
 RATE_LIMIT_STORE: Dict[str, List[float]] = {}
 
-def check_rate_limit(key: str, max_calls: int = 5, window_sec: int = 180) -> bool:
+def check_contact_rate_limit(key: str, max_calls: int = 5, window_sec: int = 180) -> bool:
     now = time.time()
     history = RATE_LIMIT_STORE.get(key, [])
     history = [t for t in history if now - t < window_sec]
@@ -1628,7 +1881,7 @@ def mask_phone(phone: str) -> str:
 @app.post("/api/contact")
 def save_contact(req: ContactRequest, request: Request, current_uid: Optional[str] = Depends(get_current_user_id)):
     client_ip = request.client.host if request.client else "127.0.0.1"
-    if not check_rate_limit(f"contact_save_{client_ip}", max_calls=5, window_sec=180):
+    if not check_contact_rate_limit(f"contact_save_{client_ip}", max_calls=5, window_sec=180):
         raise HTTPException(status_code=429, detail="Too many verification code requests. Please wait a few minutes before trying again.")
 
     if not req.consent:
@@ -1680,7 +1933,7 @@ def save_contact(req: ContactRequest, request: Request, current_uid: Optional[st
     conn.close()
     
     has_sms = bool(os.environ.get("SMS_PROVIDER_API_KEY") or os.environ.get("TWILIO_ACCOUNT_SID"))
-    is_dev = os.environ.get("ENV", "development").lower() in ("dev", "development", "local") and os.environ.get("EXPOSE_DEV_OTP", "0") == "1"
+    is_dev = os.environ.get("EXPOSE_DEV_OTP", "0") == "1"
     
     res_data = {
         "success": True,
@@ -1700,7 +1953,7 @@ def save_contact(req: ContactRequest, request: Request, current_uid: Optional[st
 @app.post("/api/contact/verify")
 def verify_contact(req: ContactVerifyRequest, request: Request):
     client_ip = request.client.host if request.client else "127.0.0.1"
-    if not check_rate_limit(f"contact_verify_{client_ip}", max_calls=8, window_sec=180):
+    if not check_contact_rate_limit(f"contact_verify_{client_ip}", max_calls=8, window_sec=180):
         raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait 3 minutes before retrying.")
 
     clean_email = req.email.strip().lower()
@@ -1881,6 +2134,9 @@ class VoiceTTSRequest(BaseModel):
     gender: str = "female"           # 'female' | 'male' — drives native speaker selection
     emotion: Optional[str] = "calm"  # calm | happy | sad | concerned | thoughtful | empathetic
     voice: Optional[str] = None      # explicit speaker override (optional)
+    tone: Optional[str] = None       # voice tone key e.g. 'ananya', 'aarav' (maps to Sarvam speaker)
+    companion: Optional[str] = None  # 'girl' | 'boy' — companion persona gender
+    engine: Optional[str] = None     # 'sarvam' | 'legacy' | None (auto based on LEGACY_TTS_FOR)
 
 class VoiceSTTBase64Request(BaseModel):
     audio_base64: str
@@ -1933,17 +2189,32 @@ async def voice_speech_to_text(
 async def voice_text_to_speech(req: VoiceTTSRequest):
     """
     TTS endpoint: strips emojis/markdown, expands helpline numbers digit-by-digit,
-    selects a native Indic speaker voice (Sarvam bulbul:v2) based on language + gender,
+    selects a native Indic speaker voice (Sarvam Bulbul v3) based on language + gender + tone,
     tunes pitch/pace from the emotion tag, and returns audio or client-side fallback.
     """
+    # If an explicit speaker was provided via 'voice', use it; otherwise resolve via tone+companion
+    speaker_override = req.voice or None
+    if not speaker_override and (req.tone or req.companion):
+        companion_gender = "boy" if (req.companion or "").lower() in ("boy", "male") else "girl"
+        speaker_override = get_sarvam_speaker(req.language, companion_gender, req.tone or None)
     res = await synthesize_speech_provider(
         req.text,
         language=req.language,
-        voice=req.voice or None,
+        voice=speaker_override,
         gender=req.gender,
         emotion=req.emotion or "calm",
+        tone=req.tone,
+        engine=req.engine,
     )
     return res
+
+@app.get("/api/voice/tones")
+def voice_tones_for_companion(language: str = "en", companion: str = "girl"):
+    """
+    Returns valid voice tone cards for the chosen companion (girl/boy) in the specified language.
+    Used by onboarding Step 6 to filter tone cards strictly by companion gender.
+    """
+    return {"tones": get_tones_for_companion(language, companion)}
 
 @app.get("/api/voice/status")
 def voice_system_status():
@@ -2023,4 +2294,27 @@ else:
             "frontend_dev_url": "http://localhost:5173",
             "message": "FastAPI backend is live. Access the frontend at http://localhost:5173 or run 'npm run build' in frontend/ to serve here."
         }
+
+
+if __name__ == "__main__":
+    import sys
+    import uvicorn
+
+    # Ensure parent directories are on sys.path regardless of launch folder
+    current_file = os.path.abspath(__file__)
+    app_dir = os.path.dirname(current_file)          # .../backend/app
+    backend_dir = os.path.dirname(app_dir)          # .../backend
+    root_dir = os.path.dirname(backend_dir)         # .../ (project root)
+
+    for p in [root_dir, backend_dir]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    print("\n========================================================")
+    print("  EmotiCare AI / MANAS Backend Server Starting")
+    print("  API Server: http://127.0.0.1:8008")
+    print("  API Docs:   http://127.0.0.1:8008/docs")
+    print("========================================================\n")
+    uvicorn.run("backend.app.main:app", host="127.0.0.1", port=8008, reload=False)
+
 

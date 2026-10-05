@@ -11,6 +11,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Avatar3DStage, type CameraFraming } from '../components/avatar/Avatar3DStage';
 import { LipSyncEngine, type VisemeWeights, EMPTY_VISEMES } from '../lib/avatar/lipSyncEngine';
+import { speechGateway } from '../lib/voice/speechGateway';
 import {
   Play,
   Square,
@@ -123,15 +124,10 @@ export const DevLipSyncPage: React.FC = () => {
   }, []);
 
   /**
-   * Synthesize test audio using Web SpeechSynthesis and stream via Web Audio oscillator/analysis
+   * Synthesize test audio using speechGateway with shared AudioContext and lip-sync
    */
   const playSampleSpeech = async () => {
-    if (!('speechSynthesis' in window)) {
-      alert('SpeechSynthesis not supported in this browser.');
-      return;
-    }
-
-    window.speechSynthesis.cancel();
+    speechGateway.stopSpeaking();
     const engine = lipSyncRef.current;
     if (!engine) return;
 
@@ -140,54 +136,33 @@ export const DevLipSyncPage: React.FC = () => {
     engine.start(handleFrame);
     setIsPlaying(true);
 
-    const utterance = new SpeechSynthesisUtterance(customText);
-    utterance.lang = selectedSample.code;
-    utterance.rate = 0.95;
-
-    // Simulate phoneme frequency modulations into Web Audio for live analysis
-    const ctx = engine.getOrCreateContext().ctx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    gain.gain.value = 0.001; // Silent tone sent to analyser for FFT triggers
-    osc.connect(gain);
-    gain.connect(engine.getOrCreateContext().analyser);
-    osc.start();
-
-    let phonemeTimer: number;
-    utterance.onstart = () => {
-      // Modulate frequency to simulate vowel/consonant formants
-      phonemeTimer = window.setInterval(() => {
-        const freqs = [350, 750, 1400, 2200, 3400, 5200];
-        osc.frequency.setValueAtTime(
-          freqs[Math.floor(Math.random() * freqs.length)],
-          ctx.currentTime
-        );
-      }, 120);
-    };
-
-    const cleanup = () => {
-      clearInterval(phonemeTimer);
-      try {
-        osc.stop();
-        osc.disconnect();
-      } catch (_) {}
-      engine.stop();
-      setIsPlaying(false);
-      setVisemeWeights({ ...EMPTY_VISEMES });
-      setAudioEnergy(0);
-      setDominantViseme('viseme_sil');
-    };
-
-    utterance.onend = cleanup;
-    utterance.onerror = cleanup;
-
-    window.speechSynthesis.speak(utterance);
+    speechGateway.speak({
+      text: customText,
+      lang: selectedSample.code,
+      gender: selectedAvatar,
+      purpose: 'dev_lipsync_test',
+      onEnergy: (energy) => {
+        setAudioEnergy(energy);
+      },
+      onEnd: () => {
+        engine.stop();
+        setIsPlaying(false);
+        setVisemeWeights({ ...EMPTY_VISEMES });
+        setAudioEnergy(0);
+        setDominantViseme('viseme_sil');
+      },
+      onError: () => {
+        engine.stop();
+        setIsPlaying(false);
+        setVisemeWeights({ ...EMPTY_VISEMES });
+        setAudioEnergy(0);
+        setDominantViseme('viseme_sil');
+      },
+    });
   };
 
   const stopAudio = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    speechGateway.stopSpeaking();
     lipSyncRef.current?.stop();
     setIsPlaying(false);
     setVisemeWeights({ ...EMPTY_VISEMES });

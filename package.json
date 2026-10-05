@@ -10,7 +10,8 @@
     "lint": "npm --prefix frontend run lint",
     "test": "python -m pytest tests/ backend/tests/",
     "test:crisis": "python tests/test_crisis.py",
-    "test:prod": "python tests/test_emoticare_production.py"
+    "test:prod": "python tests/test_emoticare_production.py",
+    "gen:voices": "python scripts/gen_voices.py"
   },
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.5",

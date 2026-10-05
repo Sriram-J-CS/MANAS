@@ -9,6 +9,30 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Cache-first strategy for large 3D VRM avatar models (17-20MB)
+const VRM_CACHE_NAME = 'manas-vrm-models-v1';
+
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.pathname.endsWith('.vrm')) {
+    event.respondWith(
+      caches.open(VRM_CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          return fetch(event.request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          });
+        });
+      })
+    );
+  }
+});
+
 self.addEventListener('push', (event) => {
   let data = {};
   if (event.data) {

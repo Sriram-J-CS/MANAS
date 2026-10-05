@@ -114,6 +114,11 @@ export async function streamChatMessage(
     onAutoSave,
   } = options;
 
+  const storedName = typeof window !== 'undefined' ? localStorage.getItem('manas_user_name') : null;
+  const resolvedName = (userName && userName !== 'Friend' && userName.toLowerCase() !== 'akshay')
+    ? userName
+    : (storedName || userName || 'Friend');
+
   const toneMap: Record<MascotPersonality, string> = {
     friendly: 'gentle',
     calm: 'gentle',
@@ -134,7 +139,7 @@ export async function streamChatMessage(
       headers: streamHeaders,
       body: JSON.stringify({
         message,
-        user_name: userName,
+        user_name: resolvedName,
         user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || 'default_user' : 'default_user',
         language,
         tone: toneMap[personality] || 'gentle',
@@ -204,7 +209,7 @@ export async function streamChatMessage(
     }
 
     const finalEmotion = normalizeEmotion(metaData.emotion || metaData.expression || 'calm');
-    const finalReply = accumulatedText || metaData.reply || 'Connection hiccup, please try again.';
+    const finalReply = metaData.reply || accumulatedText || 'Connection hiccup, please try again.';
 
     return {
       message: finalReply,

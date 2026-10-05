@@ -95,12 +95,6 @@ export const Hero: React.FC<HeroProps> = ({
         />
       )}
 
-      {/* Bottom-Left: Creative studio info (offset to not collide with music player) */}
-      <div className="absolute bottom-[22px] left-[20px] md:left-[36px] z-20 pointer-events-none hidden sm:block">
-        <p className="text-[11px] font-mono uppercase tracking-[0.08em] text-[#000000] opacity-80 pl-[290px] lg:pl-[330px]">
-          Creative studio in Chennai · AI Mental Health Computing Lab
-        </p>
-      </div>
 
       {/* Bottom-Right: Language Switch & Links */}
       <div className="absolute bottom-[22px] right-[20px] md:right-[36px] z-20 flex items-center gap-4 text-[11px] font-mono uppercase tracking-[0.08em] text-[#000000] pointer-events-auto select-none">

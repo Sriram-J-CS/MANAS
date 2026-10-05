@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, TrendingUp, Activity, ShieldCheck, Heart, Sparkles, Calendar } from 'lucide-react';
+import { X, TrendingUp, Activity, ShieldCheck, Heart, Sparkles, Calendar, Trash2, Edit3, Check } from 'lucide-react';
 
-interface MoodLogItem {
+export interface MoodLogItem {
+  id?: string;
   score: number;
   tags?: string;
+  note?: string;
   created_at: string;
 }
 
@@ -14,6 +16,8 @@ interface MoodJourneyDrawerProps {
   moodHistory: MoodLogItem[];
   currentMood: number | null;
   onSelectMood: (score: number) => void;
+  onDeleteMood?: (id: string) => Promise<void> | void;
+  onEditMood?: (id: string, newScore: number) => Promise<void> | void;
 }
 
 export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
@@ -22,7 +26,13 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
   moodHistory,
   currentMood,
   onSelectMood,
+  onDeleteMood,
+  onEditMood,
 }) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editScore, setEditScore] = useState<number>(3);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const triggerHaptic = (ms = 15) => {
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
@@ -111,7 +121,7 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="fixed inset-0 z-60 flex justify-end">
         {/* Backdrop overlay */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -316,21 +326,101 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                     <p className="text-[10px] text-white/30 font-mono mt-1">Select an emoji above to record your first mood entry.</p>
                   </div>
                 ) : (
-                  moodHistory.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="p-2.5 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between text-xs font-mono"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                        <span className="text-white/80 font-bold">
-                          Score: {item.score} / 5
-                        </span>
-                        <span className="text-white/40">· {item.tags || 'General'}</span>
+                  moodHistory.map((item, idx) => {
+                    const isEditing = Boolean(item.id && editingId === item.id);
+                    const isDeleting = Boolean(item.id && deletingId === item.id);
+
+                    return (
+                      <div
+                        key={item.id || idx}
+                        className="p-2.5 rounded-xl bg-white/[0.03] border border-white/10 flex flex-col gap-2 text-xs font-mono"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                            <span className="text-white/80 font-bold">
+                              Score: {item.score} / 5
+                            </span>
+                            <span className="text-white/40 truncate max-w-[120px]">
+                              · {item.tags || 'General'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-white/40">{item.created_at}</span>
+                            {item.id && (
+                              <div className="flex items-center gap-1 ml-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (isEditing) {
+                                      setEditingId(null);
+                                    } else {
+                                      setEditingId(item.id!);
+                                      setEditScore(item.score);
+                                    }
+                                  }}
+                                  className="p-1 rounded hover:bg-white/10 text-white/60 hover:text-cyan-300 transition-colors cursor-pointer"
+                                  title="Edit score"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={async () => {
+                                    if (!item.id || !onDeleteMood) return;
+                                    setDeletingId(item.id);
+                                    try {
+                                      await onDeleteMood(item.id);
+                                    } finally {
+                                      setDeletingId(null);
+                                    }
+                                  }}
+                                  className="p-1 rounded hover:bg-rose-500/20 text-white/60 hover:text-rose-400 transition-colors cursor-pointer"
+                                  title="Delete check-in"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Inline score editor */}
+                        {isEditing && (
+                          <div className="pt-1.5 border-t border-white/10 flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-cyan-300">Update score:</span>
+                            <div className="flex items-center gap-1.5">
+                              {[1, 2, 3, 4, 5].map((s) => (
+                                <button
+                                  key={s}
+                                  type="button"
+                                  onClick={() => setEditScore(s)}
+                                  className={`w-5 h-5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                                    editScore === s ? 'bg-cyan-400 text-black' : 'bg-white/10 text-white/70 hover:bg-white/20'
+                                  }`}
+                                >
+                                  {s}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!item.id || !onEditMood) return;
+                                  await onEditMood(item.id, editScore);
+                                  setEditingId(null);
+                                }}
+                                className="ml-1 p-1 rounded bg-cyan-500 hover:bg-cyan-400 text-black cursor-pointer"
+                                title="Save updated score"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <span className="text-[10px] text-white/40">{item.created_at}</span>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>

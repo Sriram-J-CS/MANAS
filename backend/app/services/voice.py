@@ -31,9 +31,28 @@ import logging
 import os
 import re
 import urllib.request
+import urllib.parse
 import urllib.error
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
+
+from .voice_config import (
+    is_native_6_language,
+    get_sarvam_speaker,
+    get_chirp3_fallback_voice,
+    should_use_legacy_tts,
+    SARVAM_DEFAULT_SPEAKERS,
+    SARVAM_CONFIG
+)
+from .voice_validator import (
+    validate_and_purify_speech_text,
+    convert_digits_to_words,
+    apply_script_loanwords
+)
+from .sarvam_tts import (
+    sarvamTts,
+    synthesize_single_sarvam_chunk
+)
 
 logger = logging.getLogger("manas.voice")
 
@@ -254,56 +273,56 @@ DIGIT_WORDS: Dict[str, Dict[int, str]] = {
     "mr": {0: "शून्य", 1: "एक", 2: "दोन", 3: "तीन", 4: "चार", 5: "पाच", 6: "सहा", 7: "सात", 8: "आठ", 9: "नऊ", 10: "दहा", 11: "अकरा", 12: "बारा", 15: "पंधरा", 20: "वीस", 30: "तीस", 40: "चाळीस", 50: "पन्नास", 100: "शंभर"},
 }
 
-# Common English loanword transliterations into authentic native scripts
+# Common English loanword replacements into native script phonetic loanwords
 LOANWORD_TRANSLITERATIONS: Dict[str, Dict[str, str]] = {
     "ta": {
         "stress": "ஸ்ட்ரெஸ்", "tension": "டென்ஷன்", "anxiety": "ஆன்ஸைட்டி", "breathe": "மூச்சு விடுங்க",
         "deep breath": "ஆழ்ந்த மூச்சு", "relax": "ரிலாக்ஸ்", "ok": "சரி", "okay": "சரி",
-        "doctor": "டாக்டர்", "problem": "பிரச்சனை", "time": "நேரம்", "sleep": "தூக்கம்",
-        "mind": "மனசு", "session": "செஷன்", "help": "உதவி", "friend": "தோழா",
-        "music": "இசை", "walk": "நடைப்பயிற்சி", "meditation": "தியானம்"
+        "doctor": "டாக்டர்", "problem": "ப்ராப்ளம்", "time": "நேரம்", "sleep": "தூக்கம்",
+        "mind": "மனசு", "session": "செஷன்", "help": "ஹெல்ப்", "friend": "தோழா",
+        "exam": "எக்ஸாம்", "phone": "போன்"
     },
     "hi": {
-        "stress": "स्ट्रेस", "tension": "टेंशन", "anxiety": "एंग्जायटी", "breathe": "सांस लीजिए",
+        "stress": "स्ट्रेस", "tension": "टेंशन", "anxiety": "घबराहट", "breathe": "सांस लीजिए",
         "deep breath": "गहरी सांस", "relax": "रिलैक्स", "ok": "ठीक है", "okay": "ठीक है",
-        "doctor": "डॉक्टर", "problem": "समस्या", "time": "समय", "sleep": "नींद",
-        "mind": "मन", "session": "सत्र", "help": "मदद", "friend": "दोस्त",
-        "music": "संगीत", "walk": "टहलना", "meditation": "ध्यान"
+        "doctor": "डॉक्टर", "problem": "मुश्किल", "time": "समय", "sleep": "नींद",
+        "mind": "मन", "session": "बातचीत", "help": "मदद", "friend": "दोस्त",
+        "exam": "एग्जाम", "phone": "फोन"
     },
     "te": {
-        "stress": "స్ట్రెస్", "tension": "టెన్షన్", "anxiety": "యాంగ్జైటీ", "breathe": "శ్వాస తీసుకోండి",
+        "stress": "స్ట్రెస్", "tension": "టెన్షన్", "anxiety": "కంగారు", "breathe": "శ్వాస తీసుకోండి",
         "deep breath": "దీర్ఘ శ్వాస", "relax": "రిలాక్స్", "ok": "సరే", "okay": "సరే",
         "doctor": "డాక్టర్", "problem": "సమస్య", "time": "సమయం", "sleep": "నిద్ర",
-        "mind": "మనసు", "session": "సెషన్", "help": "సహాయం", "friend": "నేస్తం",
-        "music": "సంగీతం", "walk": "నడక", "meditation": "ధ్యానం"
+        "mind": "మనసు", "session": "మాటామంతీ", "help": "సహాయం", "friend": "నేస్తం",
+        "exam": "ఎగ్జామ్", "phone": "ఫోన్"
     },
     "ml": {
-        "stress": "സ്ട്രെസ്സ്", "tension": "ടെൻഷൻ", "anxiety": "ആങ്സൈറ്റി", "breathe": "ശ്വാസമെടുക്കൂ",
+        "stress": "സ്ട്രെസ്സ്", "tension": "ടെൻഷൻ", "anxiety": "ആകുലത", "breathe": "ശ്വാസമെടുക്കൂ",
         "deep breath": "ദീർഘശ്വാസം", "relax": "റിലാക്സ്", "ok": "ശരി", "okay": "ശരി",
-        "doctor": "ഡോക്ടർ", "problem": "പ്രശ്നം", "time": "സമയം", "sleep": "ഉറക്കം",
-        "mind": "മനസ്സ്", "session": "സെഷൻ", "help": "സഹായം", "friend": "കൂട്ടുകാരാ",
-        "music": "സംഗീതം", "walk": "നടത്തം", "meditation": "ധ്യാനം"
+        "doctor": "ഡോക്ടർ", "problem": "ബുദ്ധിമുട്ട്", "time": "സമയം", "sleep": "ഉറക്കം",
+        "mind": "മനസ്സ്", "session": "സംസാരം", "help": "സഹായം", "friend": "കൂട്ടുകാരാ",
+        "exam": "എക്സാം", "phone": "ഫോൺ"
     },
     "kn": {
-        "stress": "ಸ್ಟ್ರೆಸ್", "tension": "ಟೆನ್ಷನ್", "anxiety": "ಆಂಗ್ಸೈಟಿ", "breathe": "ಉಸಿರಾಟ ಮಾಡಿ",
+        "stress": "ಸ್ಟ್ರೆಸ್", "tension": "ಟೆನ್ಷನ್", "anxiety": "ಕಳವಳ", "breathe": "ಉಸಿರಾಟ ಮಾಡಿ",
         "deep breath": "ದೀರ್ಘ ಉಸಿರು", "relax": "ರಿಲ್ಯಾಕ್ಸ್", "ok": "ಸರಿ", "okay": "ಸರಿ",
-        "doctor": "ಡಾಕ್ಟರ್", "problem": "ಸಮಸ್ಯೆ", "time": "ಸಮಯ", "sleep": "ನಿದ್ರೆ",
-        "mind": "ಮನಸ್ಸು", "session": "ಸೆಷನ್", "help": "ಸಹಾಯ", "friend": "ಗೆಳೆಯ",
-        "music": "ಸಂಗೀತ", "walk": "ವಾಕಿಂಗ್", "meditation": "ಧ್ಯಾನ"
+        "doctor": "ಡಾಕ್ಟರ್", "problem": "ತೊಂದರೆ", "time": "ಸಮಯ", "sleep": "ನಿದ್ರೆ",
+        "mind": "ಮನಸ್ಸು", "session": "ಮಾತುಕತೆ", "help": "ಸಹಾಯ", "friend": "ಗೆಳೆಯ",
+        "exam": "ಎಕ್ಸಾಂ", "phone": "ಫೋನ್"
     },
     "bn": {
-        "stress": "স্ট্রেস", "tension": "টেনশন", "anxiety": "অ্যাংজাইটি", "breathe": "শ্বাস নিন",
+        "stress": "স্ট্রেস", "tension": "টেনশন", "anxiety": "উদ্বেগ", "breathe": "শ্বাস নিন",
         "deep breath": "গভীর শ্বাস", "relax": "রিল্যাক্স", "ok": "ঠিক আছে", "okay": "ঠিক আছে",
-        "doctor": "ডাক্তার", "problem": "সমস্যা", "time": "সময়", "sleep": "ঘুম",
-        "mind": "মন", "session": "সেশন", "help": "সাহায্য", "friend": "বন্ধু",
-        "music": "গান", "walk": "হাঁটা", "meditation": "ধ্যান"
+        "doctor": "ডাক্তার", "problem": "কষ্ট", "time": "সময়", "sleep": "ঘুম",
+        "mind": "মন", "session": "কথাবার্তা", "help": "সাহায্য", "friend": "বন্ধু",
+        "exam": "এক্সাম", "phone": "ফোন"
     },
     "mr": {
-        "stress": "स्ट्रेस", "tension": "टेंशन", "anxiety": "अँग्झायटी", "breathe": "श्वास घ्या",
+        "stress": "स्ट्रेस", "tension": "टेंशन", "anxiety": "चिंता", "breathe": "श्वास घ्या",
         "deep breath": "दीर्घ श्वास", "relax": "रिलॅक्स", "ok": "ठीक आहे", "okay": "ठीक आहे",
-        "doctor": "डॉक्टर", "problem": "समस्या", "time": "वेळ", "sleep": "झोप",
-        "mind": "मन", "session": "सत्र", "help": "मदत", "friend": "दोस्त",
-        "music": "संगीत", "walk": "चालणे", "meditation": "ध्यान"
+        "doctor": "डॉक्टर", "problem": "अडचण", "time": "वेळ", "sleep": "झोप",
+        "mind": "मन", "session": "संवाद", "help": "मदत", "friend": "दोस्त",
+        "exam": "एक्झाम", "phone": "फोन"
     }
 }
 
@@ -557,6 +576,35 @@ async def synthesize_single_sentence(
     style = get_speech_style(bcp47)
     cache_key = compute_tts_cache_key(sentence, bcp47, speaker, style)
 
+    # DIAGNOSTIC LOGGING (Step 0)
+    latin_matches = re.findall(r"[A-Za-z]", sentence)
+    has_latin = bool(latin_matches)
+    engine_used = "pending_resolution"
+
+    logger.info(
+        "[DIAGNOSTIC TTS] Lang: %s | Voice: %s | Has Latin: %s (%s) | Sentence: '%s'",
+        bcp47,
+        speaker,
+        "FLAGGED_LATIN" if has_latin else "CLEAN_NATIVE",
+        "".join(sorted(set(latin_matches))) if has_latin else "None",
+        sentence
+    )
+
+    # Route native 6 Indic languages to Sarvam Bulbul v3 (English and Hindi stay untouched)
+    if is_native_6_language(bcp47):
+        purified_sentence = await validate_and_purify_speech_text(sentence, bcp47)
+        sarvam_speaker = voice_name or get_sarvam_speaker(bcp47, gender)
+        _, audio_b64 = await synthesize_single_sarvam_chunk(
+            chunk=purified_sentence,
+            target_lang_code=bcp47,
+            speaker=sarvam_speaker,
+            pace=0.92,
+            gender=gender
+        )
+        if audio_b64:
+            TTS_MEMORY_CACHE[cache_key] = audio_b64
+            return audio_b64
+
     # 1. Memory Cache
     if cache_key in TTS_MEMORY_CACHE:
         return TTS_MEMORY_CACHE[cache_key]
@@ -600,6 +648,7 @@ async def synthesize_single_sentence(
                 if audio_content:
                     TTS_MEMORY_CACHE[cache_key] = audio_content
                     cache_file.write_text(json.dumps({"audio_base64": audio_content}), encoding="utf-8")
+                    logger.info("[DIAGNOSTIC TTS RESOLVED] Lang: %s | Engine: Google Cloud Chirp 3 HD | Voice: %s | Has Latin: %s | Text: '%s'", bcp47, speaker, has_latin, sentence)
                     return audio_content
         except Exception as e:
             logger.debug("Google Cloud TTS chirp call failed for %s: %s", speaker, e)
@@ -633,9 +682,35 @@ async def synthesize_single_sentence(
                     b64 = audios[0]
                     TTS_MEMORY_CACHE[cache_key] = b64
                     cache_file.write_text(json.dumps({"audio_base64": b64}), encoding="utf-8")
+                    logger.info("[DIAGNOSTIC TTS RESOLVED] Lang: %s | Engine: Sarvam Bulbul v2 | Voice: %s | Has Latin: %s | Text: '%s'", bcp47, sarvam_speaker, has_latin, sentence)
                     return b64
         except Exception as e:
             logger.debug("Sarvam TTS failed for %s: %s", bcp47, e)
+
+    # 5. Universal Indic & Global Native Audio Fallback (Native Google Audio Synthesis)
+    try:
+        lang_short = bcp47.split("-")[0].lower()
+        clean_sentence = sentence.strip()
+        if clean_sentence:
+            encoded = urllib.parse.quote(clean_sentence)
+            fallback_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl={lang_short}&q={encoded}"
+            req = urllib.request.Request(fallback_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://translate.google.com/"
+            })
+            with urllib.request.urlopen(req, timeout=6) as response:
+                audio_bytes = response.read()
+                if audio_bytes and len(audio_bytes) > 200:
+                    b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                    TTS_MEMORY_CACHE[cache_key] = b64
+                    try:
+                        cache_file.write_text(json.dumps({"audio_base64": b64}), encoding="utf-8")
+                    except Exception:
+                        pass
+                    logger.info("[DIAGNOSTIC TTS RESOLVED] Lang: %s | Engine: Universal Fallback | Voice: native_%s | Has Latin: %s | Text: '%s'", bcp47, lang_short, has_latin, sentence)
+                    return b64
+    except Exception as e:
+        logger.debug("Universal native TTS fallback failed for %s: %s", bcp47, e)
 
     return None
 
@@ -645,25 +720,66 @@ async def synthesize_speech_provider(
     voice: Optional[str] = None,
     gender: str = "female",
     emotion: Optional[str] = "calm",
+    tone: Optional[str] = None,
+    engine: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Main speech synthesis provider:
-    - Normalizes text (emojis/markdown stripped, numbers/times to words, English loanwords to native script).
-    - Splits text into short sentences for progressive streaming.
-    - Synthesizes sentence-by-sentence with disk & memory caching.
-    - Returns structured payload with BCP-47 code, native voice, and sentence segments.
+    - Routes ALL 8 Indian languages to Sarvam Bulbul v3 by default.
+    - Legacy Google Cloud Chirp 3 HD engine reserved behind LEGACY_TTS_FOR=en,hi flag or explicit engine='legacy'.
+    - Applies pace 0.95 for empathetic/calming/sad replies, 1.0 normally.
+    - Groups 2-3 sentences (max ~220 chars) per request for gapless prosody.
+    - Resolves speaker strictly by language, companion gender (boy/girl), and tone.
     """
     bcp47 = to_bcp47(language)
+    style = get_speech_style(bcp47)
+    lang_clean = language.split("-")[0].lower()
+    pace = 0.95 if (emotion or "").lower() in ("empathetic", "calm", "sad") else 1.0
+
+    use_legacy = (engine == "legacy") or (engine != "sarvam" and should_use_legacy_tts(language))
+
+    # Primary Route: Sarvam Bulbul v3 for all 8 languages
+    if not use_legacy:
+        if is_native_6_language(language):
+            speech_text = await validate_and_purify_speech_text(text, language)
+        else:
+            speech_text = sanitize_spoken_text(text, language)
+
+        sarvam_speaker = voice or get_sarvam_speaker(language, gender, tone)
+        sarvam_res = await sarvamTts(
+            text=speech_text,
+            langCode=bcp47,
+            speaker=sarvam_speaker,
+            pace=pace,
+            gender=gender,
+            tone=tone
+        )
+        sarvam_res["speech_metadata"] = {
+            "style": style,
+            "language_code": bcp47,
+            "voice_name": sarvam_speaker,
+            "speaker": sarvam_speaker,
+            "gender": gender,
+            "tone": tone or "default",
+            "engine": "sarvam_bulbul_v3"
+        }
+        sarvam_res["bcp47"] = bcp47
+        sarvam_res["gender"] = gender
+        sarvam_res["tone"] = tone
+        return sarvam_res
+
     clean_text = sanitize_spoken_text(text, language)
     sentences = split_sentences_for_streaming(clean_text)
     speaker = voice or pick_native_voice(bcp47, gender)
-    style = get_speech_style(bcp47)
 
     speech_metadata = {
         "style": style,
         "language_code": bcp47,
         "voice_name": speaker,
-        "gender": gender
+        "speaker": speaker,
+        "gender": gender,
+        "tone": tone or "default",
+        "engine": "google_chirp_legacy",
     }
 
     if not sentences:

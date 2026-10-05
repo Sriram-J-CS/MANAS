@@ -75,11 +75,20 @@ def init_db():
         ("reasons", "TEXT DEFAULT '[]'"),
         ("tone", "TEXT DEFAULT 'gentle'"),
         ("consent_timestamp", "TEXT"),
+        ("companion", "TEXT DEFAULT 'girl'"),
+        ("voice_tone", "TEXT DEFAULT 'ananya'"),
+        ("avatar_url", "TEXT"),
+        ("appearance_attributes", "TEXT"),
     ]:
         try:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
         except Exception:
             pass
+
+    try:
+        cursor.execute("ALTER TABLE user_memories ADD COLUMN source TEXT DEFAULT 'Manual'")
+    except Exception:
+        pass
 
     # Access Audit Log Table (Tracking all contact operations without storing PII)
     cursor.execute("""
@@ -100,6 +109,23 @@ def init_db():
         retention_days INTEGER DEFAULT 365,
         auto_purge_enabled INTEGER DEFAULT 1,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Voice ratings table for native speaker test ratings
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS voice_ratings (
+        id TEXT PRIMARY KEY,
+        language TEXT NOT NULL,
+        voice_gender TEXT NOT NULL,
+        voice_name TEXT,
+        overall_rating INTEGER DEFAULT 5,
+        naturalness INTEGER DEFAULT 5,
+        pronunciation INTEGER DEFAULT 5,
+        pacing INTEGER DEFAULT 5,
+        native_speaker INTEGER DEFAULT 1,
+        feedback_text TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 

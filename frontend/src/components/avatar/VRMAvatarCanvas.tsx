@@ -1,16 +1,105 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+/**
+ * VRMAvatarCanvas.tsx
+ *
+ * Primary 3D Companion Avatar Canvas for MANAS.
+ * - Renders sample VRM 1.0 models (/avatars/girl.vrm and /avatars/boy.vrm).
+ * - Uses @pixiv/three-vrm v3 + @react-three/fiber + Three.js.
+ * - VRM 1.0: No rotation (faces +Z). Spring bones updated every frame via vrm.update(delta).
+ * - Front camera (+Z looking toward -Z), auto-framed at head with fov ~28, bust framing.
+ * - Natural hands-down normalized humanoid pose (no T-pose ever).
+ * - Real-time TTS audio formant lip-sync (aa/ih/ou/ee/oh) with 40ms attack, 90ms release smoothing.
+ * - Natural idle: 4s breathing cycle, blinks every 3-6s (incl. double blinks), micro-saccades lookAt.
+ * - Conversational states: idle, listening, thinking (gaze up-left), speaking (nods & gestures).
+ * - Tab visibility detection, WebGL error boundary, 15s load timeout fallback to 2D avatar.
+ * - Proper disposal of geometry, textures, and materials.
+ */
+
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { VRMLipSync } from '../../lib/avatar/vrmLipSync';
 import { speechEngine } from '../../lib/voice/speechEngine';
+import { AvatarFallback2D } from './AvatarFallback2D';
 
-export type MascotEmotion = 'calm' | 'empathetic' | 'encouraging' | 'concerned' | 'happy' | 'sad' | 'surprised' | 'neutral' | string;
+export type MascotEmotion =
+  | 'calm'
+  | 'empathetic'
+  | 'encouraging'
+  | 'concerned'
+  | 'happy'
+  | 'sad'
+  | 'surprised'
+  | 'relaxed'
+  | 'neutral'
+  | string;
+
 export type MascotGesture = 'idle' | 'wave' | 'nod' | 'breathe' | 'thumbs_up' | 'base';
+
+export interface AvatarAppearanceAttributes {
+  skin_tone_hex?: string;
+  hair_color_hex?: string;
+  hair_length?: 'short' | 'medium' | 'long';
+  hair_style?: string;
+  eye_color_hex?: string;
+  glasses?: boolean;
+  facial_hair?: 'none' | 'stubble' | 'beard' | 'moustache';
+  face_shape?: string;
+  age_range?: string;
+  confidence?: number;
+}
+
+export const PHOTO_AVATAR_ENABLED = true;
+
+/**
+ * Applies procedural appearance attributes to any VRM instance via MToon materials
+ * and optional accessory overlays. Respects sample model license by only applying to
+ * custom VRM models when provided.
+ */
+export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttributes | null): void {
+  if (!vrm || !attrs) return;
+
+  vrm.scene.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh) {
+      const mesh = obj as THREE.Mesh;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+      materials.forEach((mat: any) => {
+        if (!mat) return;
+        const name = (mat.name || '').toLowerCase();
+
+        // 1. Skin tone
+        if (
+          attrs.skin_tone_hex &&
+          (name.includes('skin') || name.includes('face') || name.includes('body')) &&
+          !name.includes('eye') &&
+          !name.includes('mouth') &&
+          !name.includes('brow')
+        ) {
+          if (mat.color?.set) mat.color.set(attrs.skin_tone_hex);
+        }
+
+        // 2. Hair color
+        if (attrs.hair_color_hex && name.includes('hair')) {
+          if (mat.color?.set) mat.color.set(attrs.hair_color_hex);
+        }
+
+        // 3. Eye Iris color
+        if (
+          attrs.eye_color_hex &&
+          (name.includes('iris') || name.includes('eyeiris') || name.includes('eye_iris'))
+        ) {
+          if (mat.color?.set) mat.color.set(attrs.eye_color_hex);
+        }
+      });
+    }
+  });
+}
 
 export interface VRMAvatarProps {
   gender?: 'boy' | 'girl';
+  companion?: 'boy' | 'girl';
   outfit?: string;
   emotion?: MascotEmotion;
   gesture?: MascotGesture | string;
@@ -19,28 +108,20 @@ export interface VRMAvatarProps {
   isThinking?: boolean;
   audioEnergy?: number;
   mousePos?: { x: number; y: number };
+  appearanceAttributes?: AvatarAppearanceAttributes | null;
+  framing?: 'bust' | 'portrait';
   onLoaded?: () => void;
   onError?: (err: any) => void;
   onWaveEnd?: () => void;
+  className?: string;
 }
 
-// Preset outfit color palettes for clothing material customization
-const OUTFIT_COLOR_THEMES: Record<string, { main: number; accent: number; roughness: number }> = {
-  yellow_tshirt: { main: 0xf59e0b, accent: 0xd97706, roughness: 0.6 },
-  hoodie: { main: 0x8b5cf6, accent: 0x7c3aed, roughness: 0.7 },
-  formal: { main: 0x1e293b, accent: 0x334155, roughness: 0.4 },
-  kurta_saree: { main: 0x0d9488, accent: 0x0f766e, roughness: 0.5 },
-  sports: { main: 0xe11d48, accent: 0xbe123c, roughness: 0.5 },
-  pyjamas: { main: 0x64748b, accent: 0x475569, roughness: 0.8 },
-  festive: { main: 0xd97706, accent: 0xb45309, roughness: 0.35 },
-};
-
 /**
- * Inner 3D VRM Model component rendered inside R3F Canvas
+ * Inner 3D VRM Model component rendered inside R3F Canvas.
  */
 function VRMModelInner({
-  gender = 'boy',
-  outfit = 'yellow_tshirt',
+  gender = 'girl',
+  companion,
   emotion = 'calm',
   gesture = 'idle',
   isSpeaking = false,
@@ -48,6 +129,8 @@ function VRMModelInner({
   isThinking = false,
   audioEnergy = 0,
   mousePos = { x: 0, y: 0 },
+  appearanceAttributes,
+  framing = 'bust',
   onLoaded,
   onError,
   onWaveEnd,
@@ -55,494 +138,420 @@ function VRMModelInner({
   const { scene, camera } = useThree();
   const vrmRef = useRef<VRM | null>(null);
   const lipSyncRef = useRef<VRMLipSync>(new VRMLipSync());
+  const headPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.35, 0));
 
-  const headHeightRef = useRef<number>(1.35);
+  const activeGender = companion || gender || 'girl';
 
-  // Upper-body framing: aimed at head bone at head height, FOV ~30
-  useEffect(() => {
-    const headY = headHeightRef.current;
-    camera.position.set(0, headY - 0.02, 1.48);
-    camera.lookAt(0, headY - 0.02, 0);
-    if ('fov' in camera) {
-      (camera as THREE.PerspectiveCamera).fov = 30;
-      camera.updateProjectionMatrix();
-    }
-  }, [camera]);
-
-  // Original materials cache for outfit swapping and clean resets
-  const originalMaterialsRef = useRef<Map<string, THREE.Material>>(new Map());
-
-  // Expression crossfade state (400ms transition)
-  const currentExprWeights = useRef<{
-    happy: number;
-    sad: number;
-    relaxed: number;
-    surprised: number;
-  }>({ happy: 0, sad: 0, relaxed: 0, surprised: 0 });
-
-  const targetExprWeights = useRef<{
-    happy: number;
-    sad: number;
-    relaxed: number;
-    surprised: number;
-  }>({ happy: 0, sad: 0, relaxed: 0, surprised: 0 });
-
-  // Blinking state
+  // Blinking state (random blinks every 3-6s, with 20% double blinks)
   const blinkTimerRef = useRef<number>(0);
   const nextBlinkRef = useRef<number>(3.0 + Math.random() * 3.0);
-  const blinkAmountRef = useRef<number>(0);
+  const isDoubleBlinkRef = useRef<boolean>(false);
+  const blinkProgressRef = useRef<number>(0);
+  const blinkPhaseRef = useRef<'idle' | 'first' | 'pause' | 'second'>('idle');
 
-  // Procedural wave state
+  // Waving gesture timer
+  const waveTimerRef = useRef<number>(0);
   const isWavingRef = useRef<boolean>(false);
-  const waveTimeRef = useRef<number>(0);
-  const waveDuration = 2.4;
+  const onWaveEndRef = useRef(onWaveEnd);
+  onWaveEndRef.current = onWaveEnd;
 
-  // Trigger wave when gesture changes to 'wave'
-  useEffect(() => {
-    if (gesture === 'wave') {
-      isWavingRef.current = true;
-      waveTimeRef.current = 0;
-    } else if (gesture === 'base') {
-      isWavingRef.current = false;
-      waveTimeRef.current = 0;
-    }
-  }, [gesture]);
+  // Expression crossfade state (400ms transition, max intensity <= 0.5)
+  const currentExprWeights = useRef<{
+    relaxed: number;
+    sad: number;
+    happy: number;
+    surprised: number;
+  }>({ relaxed: 0.5, sad: 0, happy: 0, surprised: 0 });
 
-  // Compute target expression weights based on LLM emotion
+  const targetExprWeights = useRef<{
+    relaxed: number;
+    sad: number;
+    happy: number;
+    surprised: number;
+  }>({ relaxed: 0.5, sad: 0, happy: 0, surprised: 0 });
+
+  // Map chat emotion to VRM expressions (intensity <= 0.5, never angry)
   useEffect(() => {
-    const e = emotion.toLowerCase();
-    const t = { happy: 0, sad: 0, relaxed: 0, surprised: 0 };
+    const e = (emotion || '').toLowerCase();
+    const t = { relaxed: 0, sad: 0, happy: 0, surprised: 0 };
 
     if (e === 'empathetic') {
-      t.relaxed = 0.45;
-      t.happy = 0.35;
+      // empathetic -> sad 0.25 + relaxed 0.3
+      t.sad = 0.25;
+      t.relaxed = 0.3;
     } else if (e === 'encouraging') {
-      t.happy = 0.75;
-      t.surprised = 0.15;
+      // encouraging -> happy 0.45
+      t.happy = 0.45;
     } else if (e === 'concerned') {
-      t.sad = 0.4;
-      t.relaxed = 0.2;
+      // concerned -> sad 0.3 + surprised 0.1
+      t.sad = 0.3;
+      t.surprised = 0.1;
     } else if (e === 'happy') {
-      t.happy = 0.7;
+      t.happy = 0.45;
     } else if (e === 'sad') {
-      t.sad = 0.55;
+      t.sad = 0.4;
     } else if (e === 'surprised') {
-      t.surprised = 0.65;
+      t.surprised = 0.35;
+      t.relaxed = 0.15;
     } else {
-      // 'calm' / neutral default
-      t.relaxed = 0.35;
-      t.happy = 0.1;
+      // calm / neutral -> relaxed 0.5
+      t.relaxed = 0.5;
     }
 
     targetExprWeights.current = t;
   }, [emotion]);
+
+  // Handle gesture trigger
+  useEffect(() => {
+    if (gesture === 'wave') {
+      isWavingRef.current = true;
+      waveTimerRef.current = 0;
+    } else if (gesture === 'idle' || gesture === 'base') {
+      isWavingRef.current = false;
+    }
+  }, [gesture]);
+
+  // Immediate speech stop handler
+  useEffect(() => {
+    if (!isSpeaking && vrmRef.current) {
+      lipSyncRef.current.reset(vrmRef.current);
+    }
+  }, [isSpeaking]);
 
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
-  // Primary model loader
+  // Primary VRM Loader: loads /avatars/girl.vrm or /avatars/boy.vrm
   useEffect(() => {
     let isDisposed = false;
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    const modelPath = `/avatar/${gender}.vrm`;
-    const fallbackPath = '/avatars/mental%20health%20chatbot%203d%20avtar.vrm';
+    const modelUrl = `/avatars/${activeGender}.vrm`;
 
-    const loadModel = (url: string, isFallback = false) => {
-      console.log('[VRMAvatar] loadModel start:', url);
-      loader.load(
-        url,
-        (gltf) => {
-          console.log('[VRMAvatar] gltf received for:', url);
-          if (isDisposed) return;
-          const vrm = gltf.userData.vrm as VRM;
-          console.log('[VRMAvatar] vrm instance exists:', !!vrm, 'metaVersion:', vrm?.meta?.metaVersion);
-          if (!vrm) {
-            console.warn('[VRMAvatar] Not a valid VRM, trying fallback...');
-            if (!isFallback) {
-              loadModel(fallbackPath, true);
-            } else {
-              onErrorRef.current?.(new Error('Loaded asset is not a valid VRM.'));
-            }
-            return;
-          }
-
-          try {
-            VRMUtils.removeUnnecessaryVertices(gltf.scene);
-          } catch (_) {}
-
-          // 1. Model orientation check:
-          // If VRM is v0.x, call VRMUtils.rotateVRM0(vrm).
-          // Else rotate the scene by Math.PI if it faces away from the camera (+Z).
-          if (vrm.meta?.metaVersion === '0') {
-            VRMUtils.rotateVRM0(vrm);
-          } else {
-            vrm.scene.updateMatrixWorld(true);
-            const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
-            if (headNode) {
-              const headQuat = new THREE.Quaternion();
-              headNode.getWorldQuaternion(headQuat);
-              const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(headQuat);
-              if (forward.z < 0) {
-                vrm.scene.rotation.y += Math.PI;
-              }
-            }
-          }
-
-          // Auto-calculate bounds and center the avatar
-          const box = new THREE.Box3().setFromObject(vrm.scene);
-          const size = box.getSize(new THREE.Vector3());
-          // Standard human avatar height (1.55m) for perfect portrait chest-up framing
-          const targetHeight = 1.55;
-          if (size.y > 0) {
-            vrm.scene.scale.setScalar(targetHeight / size.y);
-          }
-
-          const scaledBox = new THREE.Box3().setFromObject(vrm.scene);
-          const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
-          vrm.scene.position.x -= scaledCenter.x;
-          vrm.scene.position.y -= scaledBox.min.y;
-          vrm.scene.position.z -= scaledCenter.z;
-
-          vrm.scene.updateMatrixWorld(true);
-
-          // 2. Camera upper-body framing aimed at head bone
-          const headBone = vrm.humanoid?.getNormalizedBoneNode('head');
-          if (headBone) {
-            const headPos = new THREE.Vector3();
-            headBone.getWorldPosition(headPos);
-            headHeightRef.current = headPos.y;
-            camera.position.set(0, headPos.y - 0.02, 1.48);
-            camera.lookAt(0, headPos.y - 0.02, 0);
-            if ('fov' in camera) {
-              (camera as THREE.PerspectiveCamera).fov = 30;
-              camera.updateProjectionMatrix();
-            }
-          }
-
-          // Enable shadows and cache original materials
-          originalMaterialsRef.current.clear();
-          vrm.scene.traverse((obj) => {
-            if ((obj as THREE.Mesh).isMesh) {
-              const mesh = obj as THREE.Mesh;
-              mesh.castShadow = true;
-              mesh.receiveShadow = true;
-              if (mesh.material) {
-                if (Array.isArray(mesh.material)) {
-                  mesh.material.forEach((mat, idx) => {
-                    originalMaterialsRef.current.set(`${mesh.uuid}_${idx}`, mat.clone());
-                  });
-                } else {
-                  originalMaterialsRef.current.set(mesh.uuid, mesh.material.clone());
-                }
-              }
-            }
-          });
-
-          // Remove any previous model from scene
-          if (vrmRef.current) {
-            scene.remove(vrmRef.current.scene);
-          }
-
-          vrmRef.current = vrm;
-          scene.add(vrm.scene);
-          console.log('[VRMAvatar] Model added to scene successfully!');
-          onLoadedRef.current?.();
-        },
-        undefined,
-        (err) => {
-          console.error('[VRMAvatar] loadModel error:', err, 'url:', url);
-          if (!isFallback) {
-            loadModel(fallbackPath, true);
-          } else {
-            console.error('Failed to load VRM model:', err);
-            onErrorRef.current?.(err);
-          }
+    loader.load(
+      modelUrl,
+      (gltf) => {
+        if (isDisposed) return;
+        const vrm = gltf.userData.vrm as VRM;
+        if (!vrm) {
+          onErrorRef.current?.(new Error(`Failed to parse VRM metadata from ${modelUrl}`));
+          return;
         }
-      );
-    };
 
-    loadModel(modelPath);
+        vrmRef.current = vrm;
+
+        // Strip unnecessary vertices if needed
+        try {
+          VRMUtils.removeUnnecessaryVertices(vrm.scene);
+        } catch (_) {}
+
+        // VRM 1.0 requires NO rotation (it already faces +Z).
+        // Only rotate legacy VRM 0.x models.
+        if (vrm.meta?.metaVersion === '0') {
+          VRMUtils.rotateVRM0(vrm);
+        }
+
+        // Enable shadows and optimize materials
+        vrm.scene.traverse((obj) => {
+          if ((obj as THREE.Mesh).isMesh) {
+            obj.castShadow = true;
+            obj.receiveShadow = true;
+          }
+        });
+
+        // Auto-frame camera based on head bone position
+        const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+        if (headNode) {
+          vrm.scene.updateMatrixWorld(true);
+          const worldPos = new THREE.Vector3();
+          headNode.getWorldPosition(worldPos);
+          headPosRef.current.copy(worldPos);
+
+          // Camera in FRONT (+Z) looking toward -Z at the head.
+          // For portrait / square containers: focus directly on face.
+          // For bust framing: distance ~1.18m, FOV ~28.
+          const isSquare = (camera as THREE.PerspectiveCamera).aspect >= 0.95 || framing === 'portrait';
+          const targetY = isSquare ? worldPos.y - 0.01 : worldPos.y - 0.04;
+          const targetDist = isSquare ? 0.72 : 1.18;
+          camera.position.set(0, targetY, worldPos.z + targetDist);
+          camera.lookAt(0, targetY, worldPos.z);
+          if ('fov' in camera) {
+            (camera as THREE.PerspectiveCamera).fov = isSquare ? 25 : 28;
+            camera.updateProjectionMatrix();
+          }
+        } else {
+          camera.position.set(0, 1.30, 1.25);
+          camera.lookAt(0, 1.30, 0);
+        }
+
+        // Apply appearance attributes if custom attributes provided
+        if (appearanceAttributes) {
+          applyAppearance(vrm, appearanceAttributes);
+        }
+
+        scene.add(vrm.scene);
+        onLoadedRef.current?.();
+      },
+      undefined,
+      (err: any) => {
+        if (isDisposed) return;
+        console.error('[VRMAvatarCanvas] Failed to load VRM model:', err);
+        onErrorRef.current?.(err);
+      }
+    );
 
     return () => {
       isDisposed = true;
       if (vrmRef.current) {
         scene.remove(vrmRef.current.scene);
+        // Clean disposal of geometries, materials, and textures
+        vrmRef.current.scene.traverse((obj) => {
+          if ((obj as THREE.Mesh).isMesh) {
+            const m = obj as THREE.Mesh;
+            m.geometry?.dispose();
+            if (Array.isArray(m.material)) {
+              m.material.forEach((mat) => mat.dispose());
+            } else if (m.material) {
+              m.material.dispose();
+            }
+          }
+        });
         vrmRef.current = null;
       }
     };
-  }, [gender, scene]);
+  }, [activeGender, scene, camera, appearanceAttributes]);
 
-  // Handle outfit material swapper
-  useEffect(() => {
-    const vrm = vrmRef.current;
-    if (!vrm) return;
-
-    if (gesture === 'base' || outfit === 'base' || outfit === 'yellow_tshirt') {
-      // Restore pristine base materials
-      vrm.scene.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh) {
-          const mesh = obj as THREE.Mesh;
-          if (Array.isArray(mesh.material)) {
-            const mats = mesh.material;
-            mesh.material = mats.map((mat, idx) => {
-              const orig = originalMaterialsRef.current.get(`${mesh.uuid}_${idx}`);
-              return orig ? orig.clone() : mat;
-            });
-          } else if (mesh.material) {
-            const orig = originalMaterialsRef.current.get(mesh.uuid);
-            if (orig) {
-              mesh.material = orig.clone();
-            }
-          }
-        }
-      });
-      return;
-    }
-
-    const theme = OUTFIT_COLOR_THEMES[outfit];
-    if (!theme) return;
-
-    // Apply themed clothing material tint to clothing meshes & materials while preserving face/skin/eyes/hair
-    vrm.scene.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        const meshName = (mesh.name || '').toLowerCase();
-
-        const updateMaterial = (mat: any, origKey?: string) => {
-          if (!mat) return mat;
-          const matName = (mat.name || '').toLowerCase();
-          const isClothing =
-            matName.includes('cloth') ||
-            matName.includes('top') ||
-            matName.includes('bottom') ||
-            matName.includes('hoodie') ||
-            matName.includes('shirt') ||
-            matName.includes('pant') ||
-            matName.includes('dress') ||
-            matName.includes('jacket') ||
-            matName.includes('outfit') ||
-            meshName.includes('cloth');
-
-          const isExcluded =
-            matName.includes('skin') ||
-            matName.includes('face') ||
-            matName.includes('eye') ||
-            matName.includes('hair') ||
-            meshName.includes('face') ||
-            meshName.includes('hair');
-
-          if (isClothing && !isExcluded) {
-            const orig = origKey ? originalMaterialsRef.current.get(origKey) : null;
-            const newMat = (orig ? orig.clone() : mat.clone());
-            if ('color' in newMat && newMat.color?.setHex) {
-              newMat.color.setHex(theme.main);
-            }
-            if ('shadeColorFactor' in newMat && newMat.shadeColorFactor?.setHex) {
-              newMat.shadeColorFactor.setHex(theme.accent);
-            }
-            if ('roughness' in newMat) {
-              newMat.roughness = theme.roughness;
-            }
-            return newMat;
-          }
-          return mat;
-        };
-
-        if (Array.isArray(mesh.material)) {
-          mesh.material = mesh.material.map((mat, idx) => updateMaterial(mat, `${mesh.uuid}_${idx}`));
-        } else if (mesh.material) {
-          mesh.material = updateMaterial(mesh.material, mesh.uuid);
-        }
-      }
-    });
-  }, [outfit, gesture]);
-
-  // Main animation frame loop (60fps)
+  // Main 60fps Animation, Posing, and Lip-Sync Loop
   useFrame((_, delta) => {
     const vrm = vrmRef.current;
     if (!vrm) return;
 
     const time = performance.now() * 0.001;
 
-    // Update VRM springs, physics, and constraints
+    // 1. VRM Physics & Spring Bone Update (hair, clothes, ties)
     vrm.update(delta);
 
-    // 1. Procedural Humanoid Bone Animation (Idle, Breathing, Weight Shift, Arm Rig, Wave, Expressions)
     const humanoid = vrm.humanoid;
-    if (humanoid) {
-      const head = humanoid.getNormalizedBoneNode('head');
-      const neck = humanoid.getNormalizedBoneNode('neck');
-      const chest = humanoid.getNormalizedBoneNode('chest');
-      const spine = humanoid.getNormalizedBoneNode('spine');
-      const hips = humanoid.getNormalizedBoneNode('hips');
-      const leftUpperArm = humanoid.getNormalizedBoneNode('leftUpperArm');
-      const leftLowerArm = humanoid.getNormalizedBoneNode('leftLowerArm');
-      const leftHand = humanoid.getNormalizedBoneNode('leftHand');
-      const rightUpperArm = humanoid.getNormalizedBoneNode('rightUpperArm');
-      const rightLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
-      const rightHand = humanoid.getNormalizedBoneNode('rightHand');
+    if (!humanoid) return;
 
-      // Small breathing motion & weight shift
-      const breath = Math.sin(time * 1.5);
-      const sway = Math.sin(time * 0.7);
-      const swayCos = Math.cos(time * 0.5);
+    // 2. POSE (Hands down, natural). No T-pose, ever!
+    // Set every frame AFTER vrm.update() on NORMALIZED humanoid bones:
+    const leftUpperArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+    const rightUpperArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+    const leftLowerArm = humanoid.getNormalizedBoneNode('leftLowerArm');
+    const rightLowerArm = humanoid.getNormalizedBoneNode('rightLowerArm');
+    const leftHand = humanoid.getNormalizedBoneNode('leftHand');
+    const rightHand = humanoid.getNormalizedBoneNode('rightHand');
+    const leftShoulder = humanoid.getNormalizedBoneNode('leftShoulder');
+    const rightShoulder = humanoid.getNormalizedBoneNode('rightShoulder');
+    const chest = humanoid.getNormalizedBoneNode('upperChest') || humanoid.getNormalizedBoneNode('chest');
+    const spine = humanoid.getNormalizedBoneNode('spine');
+    const head = humanoid.getNormalizedBoneNode('head');
+    const neck = humanoid.getNormalizedBoneNode('neck');
 
-      // Natural breathing on chest
-      if (chest) {
-        chest.rotation.x = breath * 0.022;
+    // Auto-frame camera centered dynamically on companion head height (Boy: 1.50m, Girl: 1.35m)
+    if (head) {
+      const isPortrait = framing === 'portrait';
+      const targetY = isPortrait ? headPosRef.current.y + 0.05 : headPosRef.current.y - 0.04;
+      const targetDist = isPortrait ? 0.78 : 1.22;
+      camera.position.set(0, targetY, headPosRef.current.z + targetDist);
+      camera.lookAt(0, targetY, headPosRef.current.z);
+    }
+
+    // Shoulders slightly down
+    if (leftShoulder) leftShoulder.rotation.set(0, 0, 0.05);
+    if (rightShoulder) rightShoulder.rotation.set(0, 0, -0.05);
+
+    // Default Hands Down Natural Resting Pose
+    // Left upper arm: rotation.z ~ -1.25 (down by side)
+    // Right upper arm: rotation.z ~ +1.25 (down by side)
+    if (leftUpperArm) {
+      leftUpperArm.rotation.set(0, 0, -1.25);
+    }
+    if (rightUpperArm && !isWavingRef.current) {
+      rightUpperArm.rotation.set(0, 0, 1.25);
+    }
+
+    // Lower arms bent forward 0.15 - 0.25 rad
+    if (leftLowerArm) {
+      leftLowerArm.rotation.set(0.20, 0, 0);
+    }
+    if (rightLowerArm && !isWavingRef.current) {
+      rightLowerArm.rotation.set(0.20, 0, 0);
+    }
+
+    // Hands relaxed
+    if (leftHand) leftHand.rotation.set(0, 0, 0);
+    if (rightHand && !isWavingRef.current) rightHand.rotation.set(0, 0, 0);
+
+    // Fingers slightly curled (0.25 - 0.38 rad on proximal/intermediate bones)
+    const curledFingers = [
+      'leftIndexProximal', 'leftIndexIntermediate',
+      'leftMiddleProximal', 'leftMiddleIntermediate',
+      'leftRingProximal', 'leftRingIntermediate',
+      'leftLittleProximal', 'leftLittleIntermediate',
+      'rightIndexProximal', 'rightIndexIntermediate',
+      'rightMiddleProximal', 'rightMiddleIntermediate',
+      'rightRingProximal', 'rightRingIntermediate',
+      'rightLittleProximal', 'rightLittleIntermediate',
+    ];
+    for (const fName of curledFingers) {
+      const b = humanoid.getNormalizedBoneNode(fName as any);
+      if (b) b.rotation.set(0.32, 0, 0);
+    }
+    const leftThumb = humanoid.getNormalizedBoneNode('leftThumbProximal');
+    const rightThumb = humanoid.getNormalizedBoneNode('rightThumbProximal');
+    if (leftThumb) leftThumb.rotation.set(0.15, 0.22, 0);
+    if (rightThumb) rightThumb.rotation.set(0.15, -0.22, 0);
+
+    // 3. Waving Action (Right Arm Welcoming Wave)
+    if (isWavingRef.current) {
+      waveTimerRef.current += delta;
+      const wT = waveTimerRef.current;
+
+      if (rightUpperArm && rightLowerArm && rightHand) {
+        // Raise arm to greeting position
+        rightUpperArm.rotation.set(-0.4, 0.2, 0.45);
+        rightLowerArm.rotation.set(0.1, 1.1, 0.2);
+        // Gentle side-to-side hand wave
+        rightHand.rotation.set(0, 0, Math.sin(wT * 9.0) * 0.38);
       }
 
-      // Small weight shift and breathing on spine & hips
-      if (spine) {
-        spine.rotation.z = sway * 0.012;
-        spine.rotation.y = swayCos * 0.015;
-        spine.rotation.x = breath * 0.008;
+      // Wave lasts 1.8 seconds
+      if (wT >= 1.8) {
+        isWavingRef.current = false;
+        waveTimerRef.current = 0;
+        onWaveEndRef.current?.();
       }
-      if (hips) {
-        hips.rotation.z = sway * 0.006;
-        hips.position.x = sway * 0.004;
-      }
+    }
 
-      // Natural Head Gaze Tracking & Microsaccades
-      const gazeX = mousePos.x * 0.18;
-      const gazeY = -mousePos.y * 0.12;
+    // Subtle conversational forearm motion near waist during speech (never rises above chest)
+    if (isSpeaking && !isWavingRef.current) {
+      const speechSway = Math.sin(time * 3.2) * 0.05;
+      if (leftLowerArm) leftLowerArm.rotation.x = 0.20 + speechSway;
+      if (rightLowerArm) rightLowerArm.rotation.x = 0.20 - speechSway;
+    }
 
-      if (head) {
-        if (isThinking) {
-          // Thinking state: looks away slightly (up and to the side)
-          head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, -0.18, delta * 4);
-          head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, -0.08, delta * 4);
-          head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0.04, delta * 4);
-        } else if (isUserTyping) {
-          // Listening state: attentive forward tilt and gentle micro-nod
-          const listenNod = Math.sin(time * 3.2) * 0.035;
-          head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeX, delta * 5);
-          head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, 0.07 + listenNod, delta * 5);
-          head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0.04, delta * 5);
-        } else if (isSpeaking) {
-          // Speaking state: subtle rhythmic head inflections
-          const speechBob = Math.sin(time * 4.5) * 0.02 * Math.min(1, audioEnergy * 2);
-          head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeX + Math.sin(time * 2.2) * 0.02, delta * 6);
-          head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, gazeY + speechBob, delta * 6);
-          head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0, delta * 4);
-        } else {
-          // Idle state: gentle gaze tracking and small head movement
-          const idleHeadX = Math.sin(time * 0.6) * 0.02;
-          const idleHeadY = Math.cos(time * 0.45) * 0.025;
-          head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeX + idleHeadY, delta * 4);
-          head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, gazeY + idleHeadX, delta * 4);
-          head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0, delta * 4);
-        }
-      }
+    // 4. Idle Organic Motion:
+    // Breathing: 4s cycle on chest/upperChest (0.01 rad)
+    if (chest) {
+      const breath = Math.sin(time * (2 * Math.PI / 4.0)) * 0.01;
+      chest.rotation.set(breath, 0, 0);
+    }
 
-      if (neck) {
-        neck.rotation.y = head ? head.rotation.y * 0.35 : 0;
-      }
+    // Slow weight shift on spine
+    if (spine) {
+      const sway = Math.sin(time * 0.45) * 0.008;
+      spine.rotation.set(0, 0, sway);
+    }
 
-      // Natural Idle Pose:
-      // Left Arm: rotate upperArm ~70 deg down (z ~ -1.2 rad), slight elbow bend, relaxed hand
-      if (leftUpperArm) {
-        leftUpperArm.rotation.z = -1.22 + breath * 0.008;
-        leftUpperArm.rotation.x = 0.08 + breath * 0.01;
-        leftUpperArm.rotation.y = 0.05;
-      }
-      if (leftLowerArm) {
-        leftLowerArm.rotation.y = -0.32;
-        leftLowerArm.rotation.z = -0.06;
-      }
-      if (leftHand) {
-        leftHand.rotation.z = -0.06;
-        leftHand.rotation.x = 0.06;
-        leftHand.rotation.y = -0.04;
-      }
+    // 5. Gaze, Head Drift & Conversational States
+    const gazeX = THREE.MathUtils.clamp(mousePos.x * 0.16, -0.25, 0.25);
+    const gazeY = THREE.MathUtils.clamp(-mousePos.y * 0.12, -0.2, 0.2);
 
-      // Procedural Wave Animation (Right Arm) or Natural Idle Pose
-      if (isWavingRef.current) {
-        waveTimeRef.current += delta;
-        const progress = waveTimeRef.current / waveDuration;
-
-        if (progress < 1.0) {
-          const envelope = Math.sin(progress * Math.PI); // Smooth in and out
-          if (rightUpperArm) {
-            rightUpperArm.rotation.z = THREE.MathUtils.lerp(1.22, -1.45, envelope);
-            rightUpperArm.rotation.x = THREE.MathUtils.lerp(0.08, 0.28, envelope);
-            rightUpperArm.rotation.y = THREE.MathUtils.lerp(-0.05, 0, envelope);
-          }
-          if (rightLowerArm) {
-            rightLowerArm.rotation.y = THREE.MathUtils.lerp(0.32, 1.25, envelope);
-            rightLowerArm.rotation.z = THREE.MathUtils.lerp(0.06, 0, envelope);
-          }
-          if (rightHand) {
-            // Fast hand oscillation
-            rightHand.rotation.z = Math.sin(time * 12) * 0.35 * envelope;
-          }
-        } else {
-          isWavingRef.current = false;
-          waveTimeRef.current = 0;
-          onWaveEnd?.();
-        }
+    if (head) {
+      if (isThinking) {
+        // Thinking: eyes up-left, tiny head tilt
+        head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, -0.14, delta * 3.5);
+        head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, -0.09, delta * 3.5);
+        head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0.05, delta * 3.5);
+      } else if (isUserTyping) {
+        // Listening: slight nod, attentive posture
+        const listenNod = Math.sin(time * 2.8) * 0.02;
+        head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeX, delta * 4);
+        head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, 0.06 + listenNod, delta * 4);
+        head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0, delta * 4);
+      } else if (isSpeaking) {
+        // Speaking: head nods synced to rhythm
+        const speechBob = Math.sin(time * 4.5) * 0.018 * Math.min(1, (audioEnergy || 0.3) * 2.2);
+        head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeX + Math.sin(time * 1.8) * 0.015, delta * 5);
+        head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, gazeY + speechBob, delta * 5);
+        head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0, delta * 5);
       } else {
-        // Right Arm Idle Pose: rotate upperArm ~70 deg down (z ~ +1.2 rad), slight elbow bend, relaxed hand
-        if (rightUpperArm) {
-          rightUpperArm.rotation.z = 1.22 - breath * 0.008;
-          rightUpperArm.rotation.x = 0.08 + breath * 0.01;
-          rightUpperArm.rotation.y = -0.05;
-        }
-        if (rightLowerArm) {
-          rightLowerArm.rotation.y = 0.32;
-          rightLowerArm.rotation.z = 0.06;
-        }
-        if (rightHand) {
-          rightHand.rotation.z = 0.06;
-          rightHand.rotation.x = 0.06;
-          rightHand.rotation.y = 0.04;
-        }
+        // Idle: tiny organic head drift
+        const idleX = Math.sin(time * 0.55) * 0.012;
+        const idleY = Math.cos(time * 0.42) * 0.015;
+        head.rotation.y = THREE.MathUtils.lerp(head.rotation.y, gazeX + idleY, delta * 3);
+        head.rotation.x = THREE.MathUtils.lerp(head.rotation.x, gazeY + idleX, delta * 3);
+        head.rotation.z = THREE.MathUtils.lerp(head.rotation.z, 0, delta * 3);
       }
     }
 
-    // 2. Random Blinking (every 3-6s, 150ms duration)
+    if (neck && head) {
+      neck.rotation.y = head.rotation.y * 0.35;
+      neck.rotation.x = head.rotation.x * 0.35;
+    }
+
+    // VRM lookAt toward camera with micro-saccades
+    if (vrm.lookAt) {
+      const saccade = Math.sin(time * 0.25) > 0.85 ? Math.sin(time * 12) * 0.04 : 0;
+      vrm.lookAt.lookAt(new THREE.Vector3(gazeX * 2 + saccade, headPosRef.current.y - 0.04, headPosRef.current.z + 2.0));
+    }
+
+    // 6. Natural Blinking (every 3-6s, 20% double blinks)
     blinkTimerRef.current += delta;
-    if (blinkTimerRef.current >= nextBlinkRef.current) {
-      blinkAmountRef.current = Math.min(1.0, blinkAmountRef.current + delta * 12);
-      if (blinkAmountRef.current >= 1.0) {
-        blinkAmountRef.current = 0;
-        blinkTimerRef.current = 0;
-        nextBlinkRef.current = 3.0 + Math.random() * 3.5;
+    if (blinkPhaseRef.current === 'idle') {
+      if (blinkTimerRef.current >= nextBlinkRef.current) {
+        blinkPhaseRef.current = 'first';
+        blinkProgressRef.current = 0;
+        isDoubleBlinkRef.current = Math.random() < 0.22;
       }
-    } else if (blinkAmountRef.current > 0) {
-      blinkAmountRef.current = Math.max(0, blinkAmountRef.current - delta * 10);
+    } else if (blinkPhaseRef.current === 'first') {
+      blinkProgressRef.current += delta * 12;
+      if (blinkProgressRef.current >= 1.0) {
+        blinkProgressRef.current = 1.0;
+        if (isDoubleBlinkRef.current) {
+          blinkPhaseRef.current = 'pause';
+          blinkTimerRef.current = 0;
+        } else {
+          blinkPhaseRef.current = 'idle';
+          blinkTimerRef.current = 0;
+          nextBlinkRef.current = 3.0 + Math.random() * 3.0;
+        }
+      }
+    } else if (blinkPhaseRef.current === 'pause') {
+      blinkProgressRef.current = Math.max(0, blinkProgressRef.current - delta * 14);
+      if (blinkTimerRef.current > 0.08) {
+        blinkPhaseRef.current = 'second';
+        blinkProgressRef.current = 0;
+      }
+    } else if (blinkPhaseRef.current === 'second') {
+      blinkProgressRef.current += delta * 14;
+      if (blinkProgressRef.current >= 1.0) {
+        blinkPhaseRef.current = 'idle';
+        blinkTimerRef.current = 0;
+        nextBlinkRef.current = 3.0 + Math.random() * 3.0;
+      }
     }
 
-    if (vrm.expressionManager) {
-      try {
-        vrm.expressionManager.setValue('blink', blinkAmountRef.current);
-      } catch (_) {}
-    }
+    const blinkVal = blinkProgressRef.current > 0.5
+      ? (1.0 - blinkProgressRef.current) * 2
+      : blinkProgressRef.current * 2;
 
-    // 3. 400ms Expression Crossfade
-    const exprFactor = 1 - Math.exp(-delta * 7.5); // ~400ms transition
+    // 7. Expressions Crossfade (400ms transition)
+    const exprFactor = 1 - Math.exp(-delta * 7.5);
     const cur = currentExprWeights.current;
     const tgt = targetExprWeights.current;
 
-    cur.happy = THREE.MathUtils.lerp(cur.happy, tgt.happy, exprFactor);
-    cur.sad = THREE.MathUtils.lerp(cur.sad, tgt.sad, exprFactor);
     cur.relaxed = THREE.MathUtils.lerp(cur.relaxed, tgt.relaxed, exprFactor);
+    cur.sad = THREE.MathUtils.lerp(cur.sad, tgt.sad, exprFactor);
+    cur.happy = THREE.MathUtils.lerp(cur.happy, tgt.happy, exprFactor);
     cur.surprised = THREE.MathUtils.lerp(cur.surprised, tgt.surprised, exprFactor);
 
     if (vrm.expressionManager) {
       try {
-        vrm.expressionManager.setValue('happy', cur.happy);
-        vrm.expressionManager.setValue('sad', cur.sad);
+        vrm.expressionManager.setValue('blink', THREE.MathUtils.clamp(blinkVal, 0, 1));
         vrm.expressionManager.setValue('relaxed', cur.relaxed);
+        vrm.expressionManager.setValue('sad', cur.sad);
+        vrm.expressionManager.setValue('happy', cur.happy);
         vrm.expressionManager.setValue('surprised', cur.surprised);
       } catch (_) {}
     }
 
-    // 4. Web Audio AnalyserNode Damped Lip-Sync
+    // 8. Real TTS Audio Analyser Lip-Sync (A/I/U/E/O mapped to aa/ih/ou/ee/oh)
     const analyser = speechEngine.getAnalyserNode();
     lipSyncRef.current.update(vrm, delta, isSpeaking, audioEnergy, analyser, time);
   });
@@ -551,16 +560,35 @@ function VRMModelInner({
 }
 
 /**
- * Main VRMAvatarCanvas wrapper
+ * Main VRMAvatarCanvas wrapper with responsive studio lighting, fallback handling,
+ * and tab visibility optimizations.
  */
 export const VRMAvatarCanvas: React.FC<VRMAvatarProps> = (props) => {
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isTabVisible, setIsTabVisible] = useState<boolean>(
     typeof document !== 'undefined' ? !document.hidden : true
   );
+  const [hasLoaded, setHasLoaded] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Tab visibility listener: pause render loop when tab is hidden
+  const activeCompanion = props.companion || props.gender || 'girl';
+
+  // 15-second load timeout fallback to 2D avatar
+  useEffect(() => {
+    if (hasLoaded || loadError) return;
+    const timer = setTimeout(() => {
+      if (!hasLoaded) {
+        console.warn('[VRMAvatarCanvas] 15s load timeout reached, falling back to 2D.');
+        setLoadError(true);
+        props.onError?.(new Error('Model loading timed out after 15s'));
+      }
+    }, 15000);
+
+    return () => clearTimeout(timer);
+  }, [hasLoaded, loadError, props]);
+
+  // Tab visibility: pause render loop when tab is hidden
   useEffect(() => {
     const handleVisibility = () => {
       setIsTabVisible(!document.hidden);
@@ -582,62 +610,100 @@ export const VRMAvatarCanvas: React.FC<VRMAvatarProps> = (props) => {
     setMousePos({ x: 0, y: 0 });
   }, []);
 
+  const handleLoaded = useCallback(() => {
+    setHasLoaded(true);
+    setLoadError(false);
+    props.onLoaded?.();
+  }, [props]);
+
+  const handleError = useCallback(
+    (err: any) => {
+      setLoadError(true);
+      props.onError?.(err);
+    },
+    [props]
+  );
+
   return (
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      className="relative w-full h-full min-h-[340px] select-none overflow-hidden"
-      aria-label="3D AI Companion Avatar Canvas"
+      className={`relative w-full h-full ${
+        props.framing === 'portrait' ? '' : 'min-h-[340px]'
+      } select-none overflow-hidden ${props.className || ''}`}
+      aria-label="3D AI Companion VRM Avatar Canvas"
     >
-      <Canvas
-        camera={{ position: [0, 1.33, 1.48], fov: 30 }}
-        dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 2)]}
-        frameloop={isTabVisible ? 'always' : 'never'}
-        gl={{
-          alpha: true,
-          antialias: true,
-          powerPreference: 'high-performance',
-        }}
-        shadows
-        style={{
-          width: '100%',
-          height: '100%',
-          background: 'transparent',
-          pointerEvents: 'auto',
-        }}
-      >
-        {/* Studio Lighting */}
-        <hemisphereLight args={['#FFFFFF', '#D8D0C4', 1.8]} />
+      {/* 2D Fallback + Soft Loader until 3D VRM is fully loaded */}
+      {(!hasLoaded || loadError) && (
+        <div className="absolute inset-0 z-20 pointer-events-none">
+          <AvatarFallback2D
+            companion={activeCompanion}
+            gender={activeCompanion}
+            emotion={props.emotion}
+            isSpeaking={props.isSpeaking}
+            isLoading={!hasLoaded && !loadError}
+            statusText="Preparing 3D Companion..."
+          />
+        </div>
+      )}
 
-        {/* Warm Key Light directly illuminating face and shoulders */}
-        <directionalLight
-          position={[1.2, 2.5, 2.8]}
-          intensity={2.2}
-          castShadow
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-          shadow-bias={-0.0001}
-        />
-
-        {/* Soft Violet/Lavender Fill Light */}
-        <directionalLight position={[-3, 1.5, 2]} intensity={0.9} color="#CFC5FF" />
-
-        {/* Rim / Back Light for silhouette definition */}
-        <directionalLight position={[0, 3, -3]} intensity={1.2} color="#FCE7F3" />
-
-        {/* Soft Contact Shadow Plane */}
-        <mesh
-          position={[0, 0.01, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          receiveShadow
+      {/* R3F 3D Canvas */}
+      {!loadError && (
+        <Canvas
+          camera={{ position: [0, 1.32, 1.2], fov: 28 }}
+          dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 2)]}
+          frameloop={isTabVisible ? 'always' : 'never'}
+          gl={{
+            alpha: true,
+            antialias: true,
+            powerPreference: 'high-performance',
+            outputColorSpace: THREE.SRGBColorSpace,
+          }}
+          shadows
+          style={{
+            width: '100%',
+            height: '100%',
+            background: 'transparent',
+            pointerEvents: 'auto',
+            opacity: hasLoaded ? 1 : 0,
+            transition: 'opacity 0.6s ease-in-out',
+          }}
         >
-          <planeGeometry args={[2.5, 2.5]} />
-          <shadowMaterial opacity={0.18} />
-        </mesh>
+          {/* Soft Studio Lighting */}
+          <hemisphereLight args={['#FFFFFF', '#E2DCD5', 1.7]} />
 
-        <VRMModelInner {...props} mousePos={mousePos} />
-      </Canvas>
+          {/* Warm Key Light */}
+          <directionalLight
+            position={[1.2, 2.6, 2.5]}
+            intensity={2.1}
+            castShadow
+            shadow-mapSize-width={1024}
+            shadow-mapSize-height={1024}
+            shadow-bias={-0.0001}
+          />
+
+          {/* Soft Lavender Fill Light */}
+          <directionalLight position={[-2.5, 1.5, 2]} intensity={0.85} color="#D8D0FF" />
+
+          {/* Subtle Silhouette Rim Light */}
+          <directionalLight position={[0, 2.8, -2.5]} intensity={1.15} color="#FFE8F0" />
+
+          {/* Contact Shadow Ground Plane */}
+          <mesh position={[0, 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[2.5, 2.5]} />
+            <shadowMaterial opacity={0.15} />
+          </mesh>
+
+          <VRMModelInner
+            {...props}
+            companion={activeCompanion}
+            mousePos={mousePos}
+            onLoaded={handleLoaded}
+            onError={handleError}
+          />
+        </Canvas>
+      )}
     </div>
   );
 };

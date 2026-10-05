@@ -22,9 +22,12 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { RealMascot } from './RealMascot';
+import { VRMAvatarCanvas } from './avatar/VRMAvatarCanvas';
 import { useI18n, SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import type { Language, MascotExpression } from '../types';
 import { speechEngine } from '../lib/voice/speechEngine';
+import { speechGateway } from '../lib/voice/speechGateway';
+import { ONBOARDING_FIXED_LINES } from '../lib/voice/onboardingVoiceLines';
 
 export interface UserProfile {
   id?: string;
@@ -33,6 +36,7 @@ export interface UserProfile {
   isMinor: boolean;
   guardianConsent: boolean;
   language: string;
+  companion?: 'girl' | 'boy';
   contactEmail?: string;
   contactPhone?: string;
   emailVerified?: boolean;
@@ -45,6 +49,7 @@ export interface UserProfile {
   mascotPosition?: 'left' | 'right';
   voicePref?: string;
   voiceGender?: 'boy' | 'girl';
+  voiceTone?: string;
   voicePitch?: number;
   micGranted?: boolean;
   stylePref?: 'reflective' | 'brief' | 'warm';
@@ -105,6 +110,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   // Step 1: Name
   const [name, setName] = useState<string>(existingProfile?.name || '');
   const [nameError, setNameError] = useState<string>('');
+  const [companion, setCompanion] = useState<'girl' | 'boy'>(() => {
+    if (existingProfile?.companion) return existingProfile.companion;
+    if (existingProfile?.gender === 'boy') return 'boy';
+    return 'girl'; // default is Girl
+  });
+  const [mascotGesture, setMascotGesture] = useState<string>('idle');
 
   // Step 2: Age
   const [age, setAge] = useState<number>(existingProfile?.age || 20);
@@ -152,14 +163,64 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   const [micStatus, setMicStatus] = useState<'idle' | 'testing' | 'granted' | 'denied'>('idle');
   const [audioLevel, setAudioLevel] = useState<number>(0);
   const [selectedVoice, setSelectedVoice] = useState<string>(
-    existingProfile?.voicePref || 'ananya'
+    existingProfile?.voicePref || ''
   );
   const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState<boolean>(false);
+
+  // Voice tone cards per companion gender
+  const GIRL_TONES = [
+    { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
+    { id: 'diya',   name: 'Diya',   style: 'Gentle & Soft' },
+    { id: 'meera',  name: 'Meera',  style: 'Bright & Encouraging' },
+  ];
+  const BOY_TONES = [
+    { id: 'aarav', name: 'Aarav', style: 'Calm & Grounding' },
+    { id: 'kabir', name: 'Kabir', style: 'Warm & Steady' },
+    { id: 'arjun', name: 'Arjun', style: 'Soft & Friendly' },
+  ];
+  const availableTones = companion === 'boy' ? BOY_TONES : GIRL_TONES;
 
   // Mascot Guide & Speech Synthesis
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [mascotSpeaking, setMascotSpeaking] = useState<boolean>(false);
   const [mascotExpression, setMascotExpression] = useState<MascotExpression>('happy');
+
+  // Choose companion handler: waves once + speaks short greeting in user's language with lip-sync
+  // When companion gender changes, reset voiceTone to the first valid tone for new gender
+  const handleSelectCompanion = (picked: 'girl' | 'boy') => {
+    setCompanion(picked);
+    setMascotGesture('wave');
+    // Reset voice selection to first tone of new companion
+    const firstTone = picked === 'boy' ? 'aarav' : 'ananya';
+    setSelectedVoice(firstTone);
+
+    const cleanLang = (selectedLanguage || 'en').split('-')[0].toLowerCase();
+    const lineId = 'greeting_companion';
+    const speechText =
+      ONBOARDING_FIXED_LINES[cleanLang]?.[picked]?.[lineId] ||
+      ONBOARDING_FIXED_LINES.en[picked][lineId];
+
+    setMascotSpeaking(true);
+    setMascotExpression('happy');
+    speechGateway.speak({
+      text: speechText,
+      lang: selectedLanguage,
+      gender: picked,
+      companion: picked,
+      purpose: 'onboarding_greeting',
+      lineId,
+      pitch: picked === 'girl' ? 1.15 : 0.9,
+      onStart: () => setMascotSpeaking(true),
+      onEnd: () => {
+        setMascotSpeaking(false);
+        setMascotExpression('calm');
+      },
+      onError: () => {
+        setMascotSpeaking(false);
+        setMascotExpression('calm');
+      },
+    });
+  };
 
   // Cooldown countdown
   useEffect(() => {
@@ -176,74 +237,64 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     } catch (_) {}
   }, [step]);
 
-  // Dynamic step speech text from active locale
-  const getStepGuideText = (currentStep: number): string => {
+  const getStepLineId = (currentStep: number): string => {
     switch (currentStep) {
       case 1:
-        return t.steps.language.mascotGuide;
+        return 'step_1_language';
       case 2:
-        return t.steps.name.mascotGuide;
+        return 'step_2_name';
       case 3:
-        return isMinor
-          ? `${t.steps.age.mascotGuide} ${t.steps.age.minorSafeDesc}`
-          : t.steps.age.mascotGuide;
+        return 'step_3_age';
       case 4:
-        return t.steps.contact.mascotGuide;
+        return 'step_4_contact';
       case 5:
-        return t.steps.photo.mascotGuide;
+        return 'step_5_photo';
       case 6:
-        return t.steps.voice.mascotGuide;
+        return 'step_6_voice';
       default:
-        return 'I am right here with you.';
+        return 'step_1_language';
     }
   };
 
-  const currentGuideText = getStepGuideText(step);
+  const currentLineId = getStepLineId(step);
+  const cleanSelectedLang = (selectedLanguage || 'en').split('-')[0].toLowerCase();
+  const companionKey = companion === 'boy' ? 'boy' : 'girl';
+  const currentGuideText =
+    ONBOARDING_FIXED_LINES[cleanSelectedLang]?.[companionKey]?.[currentLineId] ||
+    ONBOARDING_FIXED_LINES.en[companionKey][currentLineId] ||
+    'I am right here with you.';
 
-  // Speak step instruction via SpeechSynthesis
+  // Speak step instruction via unified speechGateway with pre-generated audio
   useEffect(() => {
-    if (isMuted || !('speechSynthesis' in window)) {
+    if (isMuted) {
       setMascotSpeaking(false);
       return;
     }
 
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(currentGuideText);
-    utterance.rate = 0.95;
-    utterance.pitch = 1.05;
-
-    // Pick appropriate BCP-47 tag
-    const langMap: Record<string, string> = {
-      en: 'en-IN',
-      ta: 'ta-IN',
-      hi: 'hi-IN',
-      te: 'te-IN',
-      kn: 'kn-IN',
-      ml: 'ml-IN',
-      bn: 'bn-IN',
-      mr: 'mr-IN'
-    };
-    utterance.lang = langMap[selectedLanguage] || 'en-IN';
-
-    utterance.onstart = () => {
-      setMascotSpeaking(true);
-      setMascotExpression('encouraging');
-    };
-    utterance.onend = () => {
-      setMascotSpeaking(false);
-      setMascotExpression('calm');
-    };
-    utterance.onerror = () => {
-      setMascotSpeaking(false);
-      setMascotExpression('calm');
-    };
-
-    window.speechSynthesis.speak(utterance);
+    speechGateway.speak({
+      text: currentGuideText,
+      lang: selectedLanguage,
+      gender: companion || 'girl',
+      purpose: 'onboarding_step',
+      lineId: currentLineId,
+      onStart: () => {
+        setMascotSpeaking(true);
+        setMascotExpression('encouraging');
+      },
+      onEnd: () => {
+        setMascotSpeaking(false);
+        setMascotExpression('calm');
+      },
+      onError: () => {
+        setMascotSpeaking(false);
+        setMascotExpression('calm');
+      }
+    });
 
     return () => {
-      window.speechSynthesis.cancel();
+      speechGateway.stopSpeaking();
     };
-  }, [step, selectedLanguage, isMuted, currentGuideText]);
+  }, [step, selectedLanguage, isMuted, companion, currentGuideText, currentLineId]);
 
   // Clean up camera on unmount or step change
   useEffect(() => {
@@ -340,7 +391,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
   };
 
-  // Step 6: Voice Preview
+  // Step 6: Voice Preview — uses exact companion+tone so user hears real speaker
   const playVoiceSample = () => {
     setIsAudioPreviewPlaying(true);
 
@@ -348,7 +399,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       selectedLanguage === 'ta'
         ? 'வணக்கம், நான் எப்போதும் உங்களுடன் துணை நிற்பேன்.'
         : selectedLanguage === 'hi'
-        ? 'नमस्ते, मैं हमेशा आपकी बात सुनने کے लिए उपस्थित हूँ।'
+        ? 'नमस्ते, मैं हमेशा आपकी बात सुनने के लिए उपस्थित हूँ।'
         : selectedLanguage === 'te'
         ? 'నమస్కారం, నేను ఎల్లప్పుడూ మీకు తోడుగా ఉంటాను.'
         : selectedLanguage === 'kn'
@@ -359,12 +410,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         ? 'নমস্কার, আমি সর্বদা আপনার পাশে আছি।'
         : selectedLanguage === 'mr'
         ? 'नमस्कार, मी नेहमी तुमच्या पाठीशी आहे.'
-        : 'Hello, I am right here beside you whenever you need to talk.';
+        : companion === 'boy'
+        ? 'Hey, I am always right here whenever you need to talk or just unwind.'
+        : 'Hi there, I am always right here beside you whenever you need to talk.';
 
-    const isBoyVoice = selectedVoice === 'aarav';
-    speechEngine.speak(sampleText, selectedLanguage, {
-      gender: isBoyVoice ? 'boy' : 'girl',
-      pitch: isBoyVoice ? 0.88 : 1.18,
+    // Use the exact companion gender and selected tone so user hears the real speaker
+    speechGateway.speak({
+      text: sampleText,
+      lang: selectedLanguage,
+      gender: companion,
+      companion,
+      tone: selectedVoice || undefined,
+      purpose: 'voice_sample',
       onEnd: () => setIsAudioPreviewPlaying(false),
       onError: () => setIsAudioPreviewPlaying(false),
     });
@@ -528,6 +585,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       phoneVerified: emailVerified,
       avatarUrl: photoDataUrl || undefined,
       voicePref: selectedVoice,
+      voiceTone: selectedVoice,   // persisted so speechGateway can use it at call-time
       micGranted: micStatus === 'granted',
       consentDisclaimer: true,
       consentChat: true,
@@ -536,9 +594,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       consentTimestamp: new Date().toISOString(),
       tone: existingProfile?.tone || 'gentle',
       role: existingProfile?.role || 'student',
-      gender: selectedVoice === 'aarav' ? 'boy' : selectedVoice === 'diya' ? 'girl' : existingProfile?.gender || 'boy',
-      voiceGender: selectedVoice === 'aarav' ? 'boy' : selectedVoice === 'diya' ? 'girl' : 'boy',
-      voicePitch: selectedVoice === 'aarav' ? 0.88 : selectedVoice === 'diya' ? 1.18 : 1.02,
+      companion,
+      gender: companion,
+      avatarType: companion,
+      voiceGender: companion,
+      voicePitch: companion === 'girl' ? 1.15 : 0.9,
       reasons: existingProfile?.reasons || ['Stress & Pressure']
     };
 
@@ -650,12 +710,16 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         {/* Mascot Speech Bubble Guide */}
         <div className="px-6 pt-5 pb-2 flex items-start gap-4 bg-[#FBF9F5] dark:bg-[#151C2C]/50 border-b border-[#0A0A0A]/5 dark:border-[#FFFFFF]/5">
           <div className="shrink-0 relative">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#8B5CF6]/20 to-[#EC4899]/20 flex items-center justify-center border border-[#8B5CF6]/30 overflow-hidden shadow-sm">
-              <RealMascot
-                expression={mascotExpression}
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#8B5CF6]/20 to-[#EC4899]/20 flex items-center justify-center border border-[#8B5CF6]/30 overflow-hidden shadow-sm">
+              <VRMAvatarCanvas
+                companion={companion}
+                gender={companion}
+                emotion={mascotExpression}
+                gesture={mascotGesture}
                 isSpeaking={mascotSpeaking}
-                size="sm"
-                interactive={false}
+                onWaveEnd={() => setMascotGesture('idle')}
+                framing="portrait"
+                className="w-full h-full"
               />
             </div>
             {mascotSpeaking && (
@@ -777,6 +841,81 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 <p className="text-xs text-[#0A0A0A]/50 dark:text-[#FFFFFF]/50">
                   {t.steps.name.helpText}
                 </p>
+
+                {/* Choose your companion: Girl / Boy */}
+                <div className="pt-2">
+                  <label className="block text-xs font-mono font-bold uppercase tracking-wider text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 mb-2">
+                    Choose your companion
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Girl Option (Default) */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectCompanion('girl')}
+                      className={`relative p-3 rounded-2xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
+                        companion === 'girl'
+                          ? 'border-pink-500 bg-pink-500/10 ring-2 ring-pink-500/30'
+                          : 'border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 hover:border-pink-500/40 bg-[#FBF9F5] dark:bg-[#1E2638]/50'
+                      }`}
+                    >
+                      <div className="w-12 h-14 rounded-xl overflow-hidden bg-pink-100/50 dark:bg-pink-950/30 shrink-0 border border-pink-200/50 flex items-center justify-center">
+                        <img
+                          src="/avatars/girl.png"
+                          alt="Girl Companion"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-[#0A0A0A] dark:text-[#FFFFFF]">
+                            Girl
+                          </span>
+                          {companion === 'girl' && (
+                            <span className="text-pink-500 text-xs font-bold font-mono">✓ Selected</span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60 block truncate">
+                          gentle & empathetic
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* Boy Option */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectCompanion('boy')}
+                      className={`relative p-3 rounded-2xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
+                        companion === 'boy'
+                          ? 'border-cyan-500 bg-cyan-500/10 ring-2 ring-cyan-500/30'
+                          : 'border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 hover:border-cyan-500/40 bg-[#FBF9F5] dark:bg-[#1E2638]/50'
+                      }`}
+                    >
+                      <div className="w-12 h-14 rounded-xl overflow-hidden bg-cyan-100/50 dark:bg-cyan-950/30 shrink-0 border border-cyan-200/50 flex items-center justify-center">
+                        <img
+                          src="/avatars/boy.png"
+                          alt="Boy Companion"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-[#0A0A0A] dark:text-[#FFFFFF]">
+                            Boy
+                          </span>
+                          {companion === 'boy' && (
+                            <span className="text-cyan-500 text-xs font-bold font-mono">✓ Selected</span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60 block truncate">
+                          grounded & calm
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+                  <p className="text-[10px] font-mono text-[#0A0A0A]/40 dark:text-[#FFFFFF]/40 mt-1.5">
+                    Default is Girl. You can change your companion anytime in Customize Mascot.
+                  </p>
+                </div>
               </motion.div>
             )}
 
@@ -1195,18 +1334,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   </div>
                 </div>
 
-                {/* Voice Selection */}
+                {/* Companion Voice Timbre — filtered strictly by chosen companion gender */}
                 <div className="flex flex-col gap-2">
-                  <label className="text-xs font-semibold text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70">
-                    {t.steps.voice.voiceSelectLabel}
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70">
+                      {t.steps.voice.voiceSelectLabel}
+                      <span className="ml-2 text-[10px] font-mono text-[#8B5CF6]">
+                        {companion === 'boy' ? '♂ Boy Companion' : '♀ Girl Companion'}
+                      </span>
+                    </label>
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
-                      { id: 'aarav', name: 'Aarav', style: 'Calm & Grounding' },
-                      { id: 'diya', name: 'Diya', style: 'Gentle & Soft' }
-                    ].map((v) => {
-                      const isSelected = selectedVoice === v.id;
+                    {availableTones.map((v) => {
+                      const isSelected = selectedVoice === v.id || (!selectedVoice && v.id === availableTones[0].id);
                       return (
                         <button
                           key={v.id}

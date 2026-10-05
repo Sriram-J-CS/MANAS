@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Lock, Mail, User, Sparkles, AlertCircle, ArrowRight, CheckCircle2, Phone, KeyRound, RefreshCw } from 'lucide-react';
 
@@ -9,6 +9,75 @@ interface AuthModalProps {
   initialMode?: 'login' | 'signup' | 'otp';
 }
 
+/**
+ * 6-box OTP entry component with auto-focus, paste, and backspace navigation.
+ */
+const OtpDigitsInput: React.FC<{
+  value: string;
+  onChange: (val: string) => void;
+  disabled?: boolean;
+}> = ({ value, onChange, disabled }) => {
+  const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const digits = Array.from({ length: 6 }, (_, i) => value[i] || '');
+
+  const handleChange = (index: number, char: string) => {
+    const clean = char.replace(/\D/g, '');
+    if (!clean) {
+      const next = digits.slice();
+      next[index] = '';
+      onChange(next.join('').trim());
+      return;
+    }
+    const next = digits.slice();
+    next[index] = clean.slice(-1);
+    const combined = next.join('');
+    onChange(combined);
+
+    if (index < 5) {
+      inputsRef.current[index + 1]?.focus();
+    }
+  };
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !digits[index] && index > 0) {
+      inputsRef.current[index - 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pasted) {
+      onChange(pasted);
+      const targetIdx = Math.min(5, pasted.length - 1);
+      inputsRef.current[targetIdx]?.focus();
+    }
+  };
+
+  return (
+    <div className="flex gap-2 sm:gap-2.5 justify-between w-full my-2">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <input
+          key={i}
+          ref={(el) => { inputsRef.current[i] = el; }}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={1}
+          disabled={disabled}
+          value={digits[i] || ''}
+          onChange={(e) => handleChange(i, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(i, e)}
+          onPaste={handlePaste}
+          autoFocus={i === 0}
+          className="w-11 sm:w-12 h-14 text-center text-xl sm:text-2xl font-bold font-mono rounded-xl bg-white/5 border border-white/20 text-white focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-500/30 transition-all shadow-inner disabled:opacity-50"
+          aria-label={`Digit ${i + 1}`}
+        />
+      ))}
+    </div>
+  );
+};
+
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
@@ -17,19 +86,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 }) => {
   const [authMethod, setAuthMethod] = useState<'otp' | 'password'>('otp');
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode === 'signup' ? 'signup' : 'login');
-  
-  // Mobile OTP state
+
+  // OTP state (Supports Mobile Phone or Email)
+  const [otpType, setOtpType] = useState<'phone' | 'email'>('phone');
   const [phone, setPhone] = useState('+91 ');
+  const [otpEmail, setOtpEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
-  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
 
   // Email / Password state
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  
+
   // Status states
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,37 +115,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Send OTP to Mobile Number
-  const handleSendMobileOtp = async () => {
+  // Send OTP
+  const handleSendOtp = async () => {
     setError(null);
     setSuccessMsg(null);
 
-    const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
-    if (cleanPhone.length < 10) {
+    const isPhone = otpType === 'phone';
+    const destination = isPhone
+      ? phone.trim().replace(/[\s\-]/g, '')
+      : otpEmail.trim().toLowerCase();
+
+    if (isPhone && destination.length < 10) {
       setError('Please enter a valid mobile number with country code (e.g. +91 9876543210).');
+      return;
+    }
+    if (!isPhone && (!destination || !destination.includes('@'))) {
+      setError('Please enter a valid email address for OTP delivery.');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/send-mobile-otp', {
+      const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, name: name.trim() || undefined }),
+        body: JSON.stringify({
+          destination,
+          name: name.trim() || undefined,
+          email: (!isPhone ? destination : email.trim()) || undefined,
+        }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || 'Failed to send OTP code.');
+        throw new Error(data.detail || 'Failed to dispatch verification code.');
       }
 
       setOtpSent(true);
       setResendCooldown(60);
-      if (data.dev_otp_code) {
-        setDevOtpCode(data.dev_otp_code);
-        setOtpCode(data.dev_otp_code); // Pre-fill for ultra-smooth local testing
-      }
-      setSuccessMsg(`Verification code sent to ${data.masked_phone || cleanPhone}`);
+      setOtpCode('');
+      setSuccessMsg(`6-digit code dispatched to ${data.masked_destination || destination}. Valid for 10 minutes.`);
     } catch (err: any) {
       setError(err.message || 'An error occurred while sending OTP.');
     } finally {
@@ -83,44 +162,51 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // Verify Mobile OTP
-  const handleVerifyMobileOtp = async (e: React.FormEvent) => {
+  // Verify OTP
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccessMsg(null);
 
-    const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
-    if (!otpCode.trim() || otpCode.trim().length !== 6) {
-      setError('Please enter the 6-digit OTP code.');
+    const isPhone = otpType === 'phone';
+    const destination = isPhone
+      ? phone.trim().replace(/[\s\-]/g, '')
+      : otpEmail.trim().toLowerCase();
+
+    const cleanCode = otpCode.trim();
+    if (!cleanCode || cleanCode.length !== 6) {
+      setError('Please enter the full 6-digit verification code.');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-mobile-otp', {
+      const res = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: cleanPhone,
-          code: otpCode.trim(),
+          destination,
+          code: cleanCode,
           name: name.trim() || 'Friend',
+          email: (!isPhone ? destination : email.trim()) || undefined,
         }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || 'Invalid or expired OTP code.');
+        throw new Error(data.detail || 'Invalid or expired verification code.');
       }
 
-      // Store JWT
+      // Store authenticated session
       localStorage.setItem('manas_access_token', data.access_token);
       localStorage.setItem('manas_refresh_token', data.refresh_token);
       localStorage.setItem('manas_user_id', data.user_id);
-      localStorage.setItem('manas_user_phone', data.phone || cleanPhone);
-      localStorage.setItem('manas_user_name', data.name);
+      if (data.phone) localStorage.setItem('manas_user_phone', data.phone);
       if (data.email) localStorage.setItem('manas_user_email', data.email);
+      localStorage.setItem('manas_user_name', data.name);
 
-      setSuccessMsg('Phone verified! Signing into your twin...');
+      setSuccessMsg('Identity verified! Entering your MANAS sanctuary... 🌿');
+
       setTimeout(() => {
         onAuthSuccess({
           user_id: data.user_id,
@@ -129,9 +215,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           phone: data.phone,
         });
         onClose();
-      }, 700);
+      }, 800);
     } catch (err: any) {
-      setError(err.message || 'Verification failed. Please check the code.');
+      setError(err.message || 'Verification failed. Please check the 6 digits.');
     } finally {
       setLoading(false);
     }
@@ -235,14 +321,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="mb-5">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-300 text-xs font-mono mb-3">
               <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              <span>MANAS Verified Login</span>
+              <span>MANAS Security · Production OTP</span>
             </div>
             <h2 className="text-2xl font-bold tracking-tight text-white font-sans">
-              {authMethod === 'otp' ? 'Mobile Number OTP Login' : (mode === 'login' ? 'Sign In with Password' : 'Create Account')}
+              {authMethod === 'otp' ? 'Instant 6-Digit OTP Login' : (mode === 'login' ? 'Sign In with Password' : 'Create Account')}
             </h2>
             <p className="text-xs text-white/60 font-mono mt-1">
               {authMethod === 'otp'
-                ? 'Instant 6-digit OTP verification directly to your phone.'
+                ? 'Cryptographically verified single-use login code.'
                 : 'Zero-PII storage with cryptographic token security.'}
             </p>
           </div>
@@ -261,8 +347,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   : 'text-white/60 hover:text-white'
               }`}
             >
-              <Phone className="w-3.5 h-3.5" />
-              <span>Mobile OTP</span>
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Secure OTP</span>
             </button>
             <button
               type="button"
@@ -296,50 +382,119 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* DEV CODE BANNER */}
-          {devOtpCode && authMethod === 'otp' && (
-            <div className="mb-4 p-2.5 rounded-xl bg-cyan-950/40 border border-cyan-400/40 text-cyan-300 text-xs flex items-center justify-between font-mono">
-              <span>Dispatched OTP Code:</span>
-              <span className="font-bold text-sm tracking-widest text-white bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-400/50">
-                {devOtpCode}
-              </span>
-            </div>
-          )}
-
-          {/* TAB 1: MOBILE OTP FLOW */}
+          {/* TAB 1: PRODUCTION OTP FLOW */}
           {authMethod === 'otp' && (
-            <form onSubmit={handleVerifyMobileOtp} className="space-y-4">
-              <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-1.5">
-                  Mobile Number
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
-                    <input
-                      type="tel"
-                      required
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="+91 98765 43210"
-                      className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-mono transition-colors"
-                    />
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              {/* Phone vs Email Toggle */}
+              <div className="flex gap-2 text-xs font-mono mb-1">
+                <button
+                  type="button"
+                  onClick={() => { setOtpType('phone'); setError(null); }}
+                  className={`px-3 py-1 rounded-full border transition-all cursor-pointer ${
+                    otpType === 'phone'
+                      ? 'bg-white/10 border-white/30 text-white font-semibold'
+                      : 'border-transparent text-white/50 hover:text-white'
+                  }`}
+                >
+                  Mobile SMS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setOtpType('email'); setError(null); }}
+                  className={`px-3 py-1 rounded-full border transition-all cursor-pointer ${
+                    otpType === 'email'
+                      ? 'bg-white/10 border-white/30 text-white font-semibold'
+                      : 'border-transparent text-white/50 hover:text-white'
+                  }`}
+                >
+                  Email Address
+                </button>
+              </div>
+
+              {otpType === 'phone' ? (
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-1.5">
+                    Mobile Number
+                  </label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+                      <input
+                        type="tel"
+                        required
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="+91 98765 43210"
+                        className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-mono transition-colors"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={loading || resendCooldown > 0}
+                      onClick={handleSendOtp}
+                      className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-semibold text-white disabled:opacity-50 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                    >
+                      {resendCooldown > 0 ? (
+                        <span>{resendCooldown}s</span>
+                      ) : (
+                        <>
+                          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                          <span>{otpSent ? 'Resend' : 'Send Code'}</span>
+                        </>
+                      )}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    disabled={loading || resendCooldown > 0}
-                    onClick={handleSendMobileOtp}
-                    className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-semibold text-white disabled:opacity-50 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
-                  >
-                    {resendCooldown > 0 ? (
-                      <span>{resendCooldown}s</span>
-                    ) : (
-                      <>
-                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                        <span>{otpSent ? 'Resend' : 'Send OTP'}</span>
-                      </>
-                    )}
-                  </button>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-1.5">
+                    Email Address
+                  </label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+                      <input
+                        type="email"
+                        required
+                        value={otpEmail}
+                        onChange={(e) => setOtpEmail(e.target.value)}
+                        placeholder="you@domain.com"
+                        className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-mono transition-colors"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={loading || resendCooldown > 0}
+                      onClick={handleSendOtp}
+                      className="px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-semibold text-white disabled:opacity-50 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                    >
+                      {resendCooldown > 0 ? (
+                        <span>{resendCooldown}s</span>
+                      ) : (
+                        <>
+                          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                          <span>{otpSent ? 'Resend' : 'Send Code'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Optional Name for Community Welcome */}
+              <div>
+                <label className="block text-[11px] font-mono uppercase tracking-wider text-white/60 mb-1">
+                  Your Name (Optional)
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Sriram"
+                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/25 text-xs focus:outline-none focus:border-violet-500 transition-colors"
+                  />
                 </div>
               </div>
 
@@ -347,25 +502,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="space-y-4"
+                  className="space-y-4 pt-2"
                 >
                   <div>
                     <label className="block text-xs font-mono uppercase tracking-wider text-violet-300 mb-1.5 flex items-center justify-between">
-                      <span>Enter 6-Digit Verification Code</span>
+                      <span>Enter 6-Digit Code</span>
+                      <span className="text-[10px] text-white/40 normal-case">Check your SMS / Email</span>
                     </label>
-                    <div className="relative">
-                      <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
-                      <input
-                        type="text"
-                        maxLength={6}
-                        required
-                        value={otpCode}
-                        onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                        placeholder="••••••"
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-violet-950/20 border border-violet-500/40 text-white text-lg tracking-[0.3em] font-mono focus:outline-none focus:border-violet-400 transition-colors"
-                        autoFocus
-                      />
-                    </div>
+                    <OtpDigitsInput
+                      value={otpCode}
+                      onChange={setOtpCode}
+                      disabled={loading}
+                    />
                   </div>
 
                   <button
@@ -377,7 +525,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <span>Verifying code...</span>
                     ) : (
                       <>
-                        <span>Verify & Sign In</span>
+                        <span>Verify & Enter MANAS</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
@@ -389,10 +537,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={handleSendMobileOtp}
+                  onClick={handleSendOtp}
                   className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-violet-600/30 transition-all cursor-pointer disabled:opacity-50 mt-4"
                 >
-                  <span>Send 6-Digit OTP</span>
+                  <span>Dispatch 6-Digit OTP</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               )}
@@ -415,7 +563,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Sriram"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 transition-colors"
+                      className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-sans transition-colors"
                     />
                   </div>
                 </div>
@@ -432,8 +580,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 transition-colors"
+                    placeholder="you@domain.com"
+                    className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-sans transition-colors"
                   />
                 </div>
               </div>
@@ -449,8 +597,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="At least 8 characters"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 transition-colors"
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-mono transition-colors"
                   />
                 </div>
               </div>
@@ -502,3 +650,5 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     </AnimatePresence>
   );
 };
+
+export default AuthModal;

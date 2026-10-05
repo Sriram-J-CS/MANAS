@@ -129,30 +129,56 @@ export async function detectFaceAndAttributes(
       img = imageSource;
     }
 
-    // 2. Initialize MediaPipe Face Landmarker
-    const landmarker = await getFaceLandmarker();
-    const result = landmarker.detect(img);
-
-    // 3. Error handling: Show error if no face is found
-    if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
-      throw new Error('No face found in the uploaded photo. Please upload a clear, front-facing portrait.');
-    }
-
-    const landmarks = result.faceLandmarks[0];
     const width = img.naturalWidth || img.width;
     const height = img.naturalHeight || img.height;
 
-    // 4. Draw to offscreen canvas for color sampling
+    // Check resolution
+    if (width < 160 || height < 160) {
+      throw new Error('The uploaded photo is too small or low-resolution. Please upload a clear photo of at least 200x200 pixels.');
+    }
+
+    // Draw to offscreen canvas to verify lighting & clarity
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
     if (!ctx) {
-      throw new Error('Unable to create canvas context for color sampling');
+      throw new Error('Unable to process photo. Please try uploading another picture.');
+    }
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // Compute basic brightness & contrast
+    try {
+      const sampleW = Math.min(width, 100);
+      const sampleH = Math.min(height, 100);
+      const imgData = ctx.getImageData(0, 0, sampleW, sampleH).data;
+      let totalLum = 0;
+      let count = 0;
+      for (let i = 0; i < imgData.length; i += 16) {
+        totalLum += 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
+        count++;
+      }
+      const avgLum = totalLum / Math.max(1, count);
+      if (avgLum < 20) {
+        throw new Error('The photo is too dark or shadowy. Please upload a clear, well-lit portrait photo.');
+      }
+      if (avgLum > 245) {
+        throw new Error('The photo is washed out or overexposed. Please upload a photo with balanced lighting.');
+      }
+    } catch (e: any) {
+      if (e.message && e.message.includes('photo is')) throw e;
     }
 
-    ctx.drawImage(img, 0, 0, width, height);
+    // 2. Initialize MediaPipe Face Landmarker
+    const landmarker = await getFaceLandmarker();
+    const result = landmarker.detect(img);
+
+    // 3. Error handling: Show error if no face is found or photo is blurry
+    if (!result.faceLandmarks || result.faceLandmarks.length === 0) {
+      throw new Error('The photo is not clear or no face was detected. Please upload a clear, front-facing photo so your avatar can match you accurately.');
+    }
+
+    const landmarks = result.faceLandmarks[0];
 
     // 5. Sample Skin Tone
     // Landmarks: 151 (forehead center), 234 (left cheek), 454 (right cheek), 1 (nose bridge)

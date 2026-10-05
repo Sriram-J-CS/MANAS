@@ -204,6 +204,104 @@ async def run_avatar_pipeline(req: AvatarPipelineRequest):
         message="3-Step Avatar Pipeline completed and live-connected to chat companion."
     )
 
+class AvatarPhotoMatchRequest(BaseModel):
+    photo_base64: str
+
+@router.post("/avatar/photo-match")
+async def match_avatar_photo(req: AvatarPhotoMatchRequest):
+    """
+    Opt-in Photo Appearance Matching for 'Avatar Like Me'.
+    Sends photo in-memory to gemini-3.8-flash (or fallback model) with strict JSON schema:
+    {
+      skin_tone_hex, hair_color_hex, hair_length (short|medium|long),
+      hair_style, eye_color_hex, glasses (bool),
+      facial_hair (none|stubble|beard|moustache), face_shape, age_range, confidence
+    }
+    Never identifies the person. Image is deleted immediately from memory after request.
+    No storage, no logs.
+    """
+    if not req.photo_base64:
+        raise HTTPException(status_code=400, detail="Photo is required")
+
+    raw_b64 = req.photo_base64
+    if "base64," in raw_b64:
+        raw_b64 = raw_b64.split("base64,")[1]
+
+    # Default neutral baseline attributes
+    default_attrs = {
+        "skin_tone_hex": "#F0C8A0",
+        "hair_color_hex": "#2C1B18",
+        "hair_length": "medium",
+        "hair_style": "natural",
+        "eye_color_hex": "#3D2314",
+        "glasses": False,
+        "facial_hair": "none",
+        "face_shape": "oval",
+        "age_range": "20-25",
+        "confidence": 0.85
+    }
+
+    api_key = get_api_key()
+    if not api_key:
+        return default_attrs
+
+    try:
+        import httpx
+        prompt = (
+            "Analyze this portrait to match avatar visual styling attributes. "
+            "NEVER identify the person or state personal identity. "
+            "Return strictly a JSON object with this exact schema:\n"
+            "{\n"
+            '  "skin_tone_hex": "#RRGGBB",\n'
+            '  "hair_color_hex": "#RRGGBB",\n'
+            '  "hair_length": "short" | "medium" | "long",\n'
+            '  "hair_style": "string",\n'
+            '  "eye_color_hex": "#RRGGBB",\n'
+            '  "glasses": true | false,\n'
+            '  "facial_hair": "none" | "stubble" | "beard" | "moustache",\n'
+            '  "face_shape": "oval" | "round" | "square" | "heart",\n'
+            '  "age_range": "string",\n'
+            '  "confidence": 0.0 to 1.0\n'
+            "}"
+        )
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": raw_b64}}
+                ]
+            }],
+            "generationConfig": {
+                "temperature": 0.1,
+                "response_mime_type": "application/json"
+            }
+        }
+
+        # Try gemini-3.8-flash, fall back to gemini-2.5-flash / gemini-1.5-flash
+        models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash-latest"]
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            for model_name in models_to_try:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                        parsed = json.loads(text)
+                        for k, v in parsed.items():
+                            if k in default_attrs:
+                                default_attrs[k] = v
+                        break
+                except Exception as inner_e:
+                    logger.debug("Model %s photo analysis attempt failed: %s", model_name, inner_e)
+                    continue
+    except Exception as e:
+        logger.warning("Photo appearance analysis exception: %s", e)
+    finally:
+        # Explicit zeroing / deletion from scope
+        raw_b64 = None
+
+    return default_attrs
+
 @router.get("/status")
 def get_agent_status():
     """Returns AI Agent status, active models, RAG dataset integration, and auth status."""

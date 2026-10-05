@@ -131,13 +131,17 @@ export class VRMLipSync {
       }
     }
 
-    // 3. Smooth Damping to Prevent Mouth Snapping
-    const factor = 1 - Math.exp(-delta * this.dampingSpeed);
-    this.currentWeights.aa = THREE.MathUtils.lerp(this.currentWeights.aa, this.targetWeights.aa, factor);
-    this.currentWeights.ih = THREE.MathUtils.lerp(this.currentWeights.ih, this.targetWeights.ih, factor);
-    this.currentWeights.ou = THREE.MathUtils.lerp(this.currentWeights.ou, this.targetWeights.ou, factor);
-    this.currentWeights.ee = THREE.MathUtils.lerp(this.currentWeights.ee, this.targetWeights.ee, factor);
-    this.currentWeights.oh = THREE.MathUtils.lerp(this.currentWeights.oh, this.targetWeights.oh, factor);
+    // 3. Smooth Damping with attack (~40ms) and release (~90ms) to prevent mouth snapping
+    const smoothVowel = (curr: number, target: number) => {
+      const speed = target > curr ? 25 : 11;
+      const f = 1 - Math.exp(-delta * speed);
+      return THREE.MathUtils.lerp(curr, target, f);
+    };
+    this.currentWeights.aa = smoothVowel(this.currentWeights.aa, this.targetWeights.aa);
+    this.currentWeights.ih = smoothVowel(this.currentWeights.ih, this.targetWeights.ih);
+    this.currentWeights.ou = smoothVowel(this.currentWeights.ou, this.targetWeights.ou);
+    this.currentWeights.ee = smoothVowel(this.currentWeights.ee, this.targetWeights.ee);
+    this.currentWeights.oh = smoothVowel(this.currentWeights.oh, this.targetWeights.oh);
 
     // 4. Apply to VRM Expression Manager
     try {
@@ -151,6 +155,130 @@ export class VRMLipSync {
     }
 
     return this.currentWeights;
+  }
+
+  /**
+   * Updates standard ARKit / Oculus viseme morph targets on a Three.js Mesh.
+   */
+  public updateMeshMorphs(
+    headMesh: THREE.Mesh | null,
+    delta: number,
+    isSpeaking: boolean,
+    audioEnergy: number,
+    analyser?: AnalyserNode | null,
+    time: number = 0
+  ): VowelWeights {
+    if (!headMesh || !headMesh.morphTargetDictionary || !headMesh.morphTargetInfluences) {
+      return this.currentWeights;
+    }
+
+    if (!isSpeaking) {
+      this.targetWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    } else if (analyser) {
+      if (this.freqData.length !== analyser.frequencyBinCount) {
+        this.freqData = new Uint8Array(analyser.frequencyBinCount);
+      }
+      analyser.getByteFrequencyData(this.freqData as any);
+
+      const sampleRate = analyser.context.sampleRate || 44100;
+      const binWidth = sampleRate / analyser.fftSize;
+
+      let energyLow = 0;
+      let countLow = 0;
+      let energyMid = 0;
+      let countMid = 0;
+      let energyHigh = 0;
+      let countHigh = 0;
+      let totalEnergy = 0;
+
+      for (let i = 0; i < this.freqData.length; i++) {
+        const freq = i * binWidth;
+        const val = this.freqData[i] / 255;
+        totalEnergy += val;
+
+        if (freq >= 200 && freq < 550) {
+          energyLow += val;
+          countLow++;
+        } else if (freq >= 550 && freq < 1000) {
+          energyMid += val;
+          countMid++;
+        } else if (freq >= 1000 && freq < 2400) {
+          energyHigh += val;
+          countHigh++;
+        }
+      }
+
+      const avgLow = countLow > 0 ? energyLow / countLow : 0;
+      const avgMid = countMid > 0 ? energyMid / countMid : 0;
+      const avgHigh = countHigh > 0 ? energyHigh / countHigh : 0;
+      const rms = Math.min(1.0, (totalEnergy / this.freqData.length) * 3.5);
+
+      if (rms > 0.04) {
+        this.targetWeights.aa = THREE.MathUtils.clamp((avgMid * 1.8) * rms, 0, 0.95);
+        this.targetWeights.ih = THREE.MathUtils.clamp((avgHigh * 1.6) * rms, 0, 0.7);
+        this.targetWeights.oh = THREE.MathUtils.clamp((avgLow * 1.5) * rms, 0, 0.65);
+        this.targetWeights.ou = THREE.MathUtils.clamp(((avgLow * 0.7 + avgMid * 0.3) * 1.3) * rms, 0, 0.55);
+        this.targetWeights.ee = THREE.MathUtils.clamp((avgHigh * 1.4) * rms, 0, 0.6);
+      } else {
+        this.targetWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+      }
+    } else {
+      const energy = THREE.MathUtils.clamp(audioEnergy, 0, 1);
+      if (energy > 0.05) {
+        const syllabicAA = Math.max(0, Math.sin(time * 13)) * 0.75 + 0.25;
+        const syllabicIH = Math.max(0, Math.cos(time * 11 + 0.8)) * 0.5;
+        const syllabicOH = Math.max(0, Math.sin(time * 8.5 + 1.5)) * 0.4;
+        const syllabicEE = Math.max(0, Math.cos(time * 14.5 + 2.1)) * 0.4;
+
+        this.targetWeights.aa = energy * syllabicAA;
+        this.targetWeights.ih = energy * syllabicIH;
+        this.targetWeights.oh = energy * syllabicOH;
+        this.targetWeights.ou = energy * (syllabicOH * 0.6);
+        this.targetWeights.ee = energy * syllabicEE;
+      } else {
+        this.targetWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+      }
+    }
+
+    const factor = 1 - Math.exp(-delta * this.dampingSpeed);
+    this.currentWeights.aa = THREE.MathUtils.lerp(this.currentWeights.aa, this.targetWeights.aa, factor);
+    this.currentWeights.ih = THREE.MathUtils.lerp(this.currentWeights.ih, this.targetWeights.ih, factor);
+    this.currentWeights.ou = THREE.MathUtils.lerp(this.currentWeights.ou, this.targetWeights.ou, factor);
+    this.currentWeights.ee = THREE.MathUtils.lerp(this.currentWeights.ee, this.targetWeights.ee, factor);
+    this.currentWeights.oh = THREE.MathUtils.lerp(this.currentWeights.oh, this.targetWeights.oh, factor);
+
+    const dict = headMesh.morphTargetDictionary;
+    const infl = headMesh.morphTargetInfluences;
+
+    const setMorph = (name: string, val: number) => {
+      const idx = dict[name];
+      if (idx !== undefined && infl[idx] !== undefined) {
+        infl[idx] = val;
+      }
+    };
+
+    setMorph('viseme_aa', this.currentWeights.aa);
+    setMorph('jawOpen', Math.min(1.0, this.currentWeights.aa * 0.7 + this.currentWeights.oh * 0.45));
+    setMorph('viseme_O', this.currentWeights.oh);
+    setMorph('viseme_U', this.currentWeights.ou);
+    setMorph('viseme_E', this.currentWeights.ee);
+    setMorph('viseme_I', this.currentWeights.ih);
+
+    return this.currentWeights;
+  }
+
+  public resetMeshMorphs(headMesh: THREE.Mesh | null): void {
+    this.currentWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    this.targetWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
+    if (!headMesh || !headMesh.morphTargetDictionary || !headMesh.morphTargetInfluences) return;
+    const dict = headMesh.morphTargetDictionary;
+    const infl = headMesh.morphTargetInfluences;
+    ['viseme_aa', 'jawOpen', 'viseme_O', 'viseme_U', 'viseme_E', 'viseme_I', 'mouthOpen'].forEach((name) => {
+      const idx = dict[name];
+      if (idx !== undefined && infl[idx] !== undefined) {
+        infl[idx] = 0;
+      }
+    });
   }
 
   public reset(vrm: VRM | null): void {

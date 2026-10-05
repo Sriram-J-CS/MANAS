@@ -30,7 +30,7 @@ import { MascotViewer } from './mascot/MascotViewer';
 import { MascotStage } from './MascotStage';
 import { AvatarStudioModal } from './avatar/AvatarStudioModal';
 import { MascotControls } from './mascot/MascotControls';
-import { OutfitsPanel } from './mascot/OutfitsPanel';
+import { EditProfileModal } from './profile/EditProfileModal';
 import { MascotCustomizer } from './mascot/MascotCustomizer';
 import { ChatInput } from './chat/ChatInput';
 import { ChatMessages } from './chat/ChatMessages';
@@ -99,21 +99,56 @@ function getInitialQuickReplies(lang: string): string[] {
   if (lang === 'ta') {
     return [
       'இன்று மனம் மிகவும் பாரமாக இருக்கிறது',
-      'படபடப்பைக் குறைக்க என்ன செய்ய வேண்டும்?',
-      'நாம் ஒரு மூச்சுப் பயிற்சி செய்வோமா?',
+      'என்னுடன் சிறிது நேரம் பேசுங்கள்',
+      'எனக்கு கொஞ்சம் ஆறுதல் வேண்டும்',
     ];
   }
   if (lang === 'hi') {
     return [
-      'आज मन बहुत भारी और तनावग्रस्त है',
-      'घबराहट शांत करने के लिए क्या करूं?',
-      'आइए साथ में एक गहरी सांस लें',
+      'आज मन बहुत भारी और अकेला लग रहा है',
+      'मेरे साथ थोड़ी देर बात कीजिए',
+      'मुझे थोड़ी शांति और संबल चाहिए',
+    ];
+  }
+  if (lang === 'te') {
+    return [
+      'ఈరోజు మనస్సు చాలా భారంగా ఉంది',
+      'నాతో కాసేపు మాట్లాడండి',
+      'నాకు కొంచెం ధైర్యం కావాలి',
+    ];
+  }
+  if (lang === 'kn') {
+    return [
+      'ಇಂದು ಮನಸ್ಸು ತುಂಬಾ ಭಾರವಾಗಿದೆ',
+      'ನನ್ನ ಜೊತೆ ಸ್ವಲ್ಪ ಹೊತ್ತು ಮಾತನಾಡಿ',
+      'ನನಗೆ ಸ್ವಲ್ಪ ನೆಮ್ಮದಿ ಬೇಕು',
+    ];
+  }
+  if (lang === 'ml') {
+    return [
+      'ഇന്ന് മനസ്സ് വളരെ ഭാരമുള്ളതാണ്',
+      'എന്റെ കൂടെ കുറച്ചുനേരം സംസാരിക്കാമോ',
+      'എനിക്ക് കുറച്ച് ആശ്വാസം വേണം',
+    ];
+  }
+  if (lang === 'bn') {
+    return [
+      'আজ মন খুব ভারী আর ক্লান্ত লাগছে',
+      'আমার সাথে একটু কথা বলো',
+      'একটু মনের শান্তি পেতে চাই',
+    ];
+  }
+  if (lang === 'mr') {
+    return [
+      'आज मन खूप जड आणि उदास वाटत आहे',
+      'माझ्याशी थोडा वेळ बोलू शकाल का',
+      'मला थोडा धीर हवा आहे',
     ];
   }
   return [
-    "I'm feeling really stressed today",
-    'Help me untangle what feels heaviest',
-    'Can we do a short breathing exercise?',
+    "I'm feeling really drained and heavy today",
+    "Can you just talk with me for a bit?",
+    "Help me find a little peace right now",
   ];
 }
 
@@ -143,82 +178,90 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   const [isFeedbackDashboardOpen, setIsFeedbackDashboardOpen] = useState<boolean>(false);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [isCustomizerOpen, setIsCustomizerOpen] = useState<boolean>(false);
-  const [isOutfitsOpen, setIsOutfitsOpen] = useState<boolean>(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState<boolean>(false);
   const [isLangMenuOpen, setIsLangMenuOpen] = useState<boolean>(false);
   const [isAvatarStudioOpen, setIsAvatarStudioOpen] = useState<boolean>(false);
   const [activeAutoSave, setActiveAutoSave] = useState<AutoSaveEventData | null>(null);
 
-  // Audio Mixer & Controls State
-  const [isAudioMenuOpen, setIsAudioMenuOpen] = useState<boolean>(false);
-  const audioControlRef = useRef<HTMLDivElement>(null);
-  const [voiceVolume, setVoiceVolume] = useState<number>(sharedAudioManager.getVoiceVolume());
+  // Simple Voice Mute State (Kept as single simple toggle)
   const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(sharedAudioManager.getIsVoiceMuted());
-  const [musicVolume, setMusicVolume] = useState<number>(sharedAudioManager.getMusicVolume());
-  const [isMusicMuted, setIsMusicMuted] = useState<boolean>(sharedAudioManager.getIsMusicMuted());
-  const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(musicPlayer.getState().isPlaying);
-  const [musicTrack, setMusicTrack] = useState(musicPlayer.getState().currentTrack);
+  const [confirmAction, setConfirmAction] = useState<'memory' | 'data' | null>(null);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
-  // Requirement 1: Ambient music defaults to OFF in chat
+  // Ambient music defaults to OFF in chat
   useEffect(() => {
     if (musicPlayer.getState().isPlaying) {
       musicPlayer.pause();
     }
   }, []);
 
-  // Sync with sharedAudioManager and musicPlayer
+  // Sync voice mute with sharedAudioManager
   useEffect(() => {
     const unsubAudio = sharedAudioManager.subscribe(() => {
-      setVoiceVolume(sharedAudioManager.getVoiceVolume());
       setIsVoiceMuted(sharedAudioManager.getIsVoiceMuted());
-      setMusicVolume(sharedAudioManager.getMusicVolume());
-      setIsMusicMuted(sharedAudioManager.getIsMusicMuted());
     });
-
-    const unsubMusic = musicPlayer.subscribe((state) => {
-      setIsMusicPlaying(state.isPlaying);
-      setMusicTrack(state.currentTrack);
-    });
-
     return () => {
       unsubAudio();
-      unsubMusic();
     };
   }, []);
-
-  // Close audio popover on outside click
-  useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (
-        audioControlRef.current &&
-        !audioControlRef.current.contains(e.target as Node)
-      ) {
-        setIsAudioMenuOpen(false);
-      }
-    };
-    if (isAudioMenuOpen) {
-      document.addEventListener('mousedown', handleOutsideClick);
-      return () => document.removeEventListener('mousedown', handleOutsideClick);
-    }
-  }, [isAudioMenuOpen]);
-
-  const handleVoiceVolumeChange = (vol: number) => {
-    sharedAudioManager.setVoiceVolume(vol);
-  };
 
   const handleToggleVoiceMute = () => {
     sharedAudioManager.toggleVoiceMute();
   };
 
-  const handleMusicVolumeChange = (vol: number) => {
-    sharedAudioManager.setMusicVolume(vol);
+  const handleConfirmDeleteMemory = async () => {
+    setConfirmAction(null);
+    setIsDeletingMemory(true);
+    try {
+      const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+      const token = localStorage.getItem('manas_access_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      await Promise.allSettled([
+        deleteSessionSummaryRemote(userId),
+        fetch('/api/memory/clear', { method: 'POST', headers }),
+      ]);
+
+      setSessionMemory(null);
+      setActionToast('Companion memory deleted successfully from DB.');
+      setTimeout(() => {
+        setActionToast(null);
+        if (onEditProfile) onEditProfile();
+        else onClose();
+      }, 1200);
+    } catch (err) {
+      console.warn('Failed to delete memory:', err);
+    } finally {
+      setIsDeletingMemory(false);
+    }
   };
 
-  const handleToggleMusicMute = () => {
-    sharedAudioManager.toggleMusicMute();
-  };
-
-  const handleToggleMusicPlay = () => {
-    musicPlayer.togglePlay();
+  const handleConfirmDeleteData = async () => {
+    setConfirmAction(null);
+    try {
+      const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+      await fetch(`/api/user/data/${userId}`, { method: 'DELETE' });
+      try {
+        localStorage.removeItem('manas_twin_profile');
+        localStorage.removeItem('manas_twin_onboarded');
+        localStorage.removeItem('manas_user_id');
+        localStorage.removeItem('manas_user_name');
+        localStorage.removeItem('manas_access_token');
+        localStorage.removeItem('manas_user_profile_v2');
+      } catch (_) { }
+      setActionToast('All user data deleted successfully from database.');
+      setTimeout(() => {
+        setActionToast(null);
+        if (onDeleteData) {
+          onDeleteData();
+        } else {
+          onClose();
+        }
+      }, 1200);
+    } catch (err) {
+      console.warn('Failed to delete user data:', err);
+    }
   };
 
   // Load avatar configuration on startup
@@ -252,14 +295,27 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   } | null>(null);
   const [isDeletingMemory, setIsDeletingMemory] = useState<boolean>(false);
 
+  // Active Companion Language (immediately responsive to in-chat switching)
+  const [activeLanguage, setActiveLanguage] = useState<string>(() => userProfile.language || 'en');
+
   // Dynamic quick-reply chips from live LLM (Requirement 4)
   const [quickReplies, setQuickReplies] = useState<string[]>(() =>
     getInitialQuickReplies(userProfile.language || 'en')
   );
 
   useEffect(() => {
-    setQuickReplies(getInitialQuickReplies(userProfile.language || 'en'));
+    if (userProfile.language && userProfile.language !== activeLanguage) {
+      setActiveLanguage(userProfile.language);
+      setQuickReplies(getInitialQuickReplies(userProfile.language));
+    }
   }, [userProfile.language]);
+
+  const handleSelectLanguage = (langCode: string) => {
+    setActiveLanguage(langCode);
+    _onUpdateProfile?.({ language: langCode });
+    setIsLangMenuOpen(false);
+    setQuickReplies(getInitialQuickReplies(langCode));
+  };
 
   // Streaming sentence-by-sentence TTS queue (Requirement 8)
   const sentenceBufferRef = useRef<string>('');
@@ -391,15 +447,27 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       setSpeakingMessageId(currentTTSMsgIdRef.current);
     }
 
-    const voiceGender =
-      userProfile.voiceGender ||
-      (userProfile.avatarType === 'girl' ? 'girl' : userProfile.gender === 'girl' ? 'girl' : 'boy');
+    // ── Resolve companion gender + voiceTone at CALL TIME from localStorage ──
+    // Never rely on stale closure state — read fresh from profile every utterance.
+    let callTimeCompanion: 'girl' | 'boy' = 'girl';
+    let callTimeTone = '';
+    try {
+      const raw = localStorage.getItem('manas_twin_profile');
+      if (raw) {
+        const p = JSON.parse(raw);
+        const c = (p.companion || p.avatarType || 'girl').toLowerCase();
+        callTimeCompanion = c === 'boy' ? 'boy' : 'girl';
+        callTimeTone = (p.voiceTone || '').toLowerCase();
+      }
+    } catch (_) { }
+
     const userPitch = userProfile.voicePitch;
 
-    speechEngine.speak(nextSentence, userProfile.language || 'en', {
+    speechEngine.speak(nextSentence, activeLanguage || userProfile.language || 'en', {
       voiceSpeed: mascotConfig.voiceSpeed,
       pitch: userPitch,
-      gender: voiceGender,
+      gender: callTimeCompanion,
+      purpose: 'chat_reply',
       onEnergy: (energy) => setAudioEnergy(energy),
       onEnd: () => {
         isTTSPlayingRef.current = false;
@@ -410,14 +478,17 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         playNextQueuedSentence();
       },
     });
+
+    // Also pass tone through speechEngine → speechGateway (gateway reads localStorage anyway,
+    // but explicit passing ensures consistency for voice sample calls)
+    void callTimeTone; // acknowledged — gateway reads localStorage directly
   }, [
-    userProfile.voiceGender,
-    userProfile.avatarType,
-    userProfile.gender,
     userProfile.voicePitch,
     userProfile.language,
+    activeLanguage,
     mascotConfig.voiceSpeed,
   ]);
+
 
   // Enqueue a finished sentence to TTS (Requirement 8)
   const enqueueSentenceTTS = useCallback(
@@ -547,7 +618,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             setTimeout(() => scrollToBottom(false), 80);
             return;
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // 3. New conversation welcome message
@@ -642,7 +713,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       const res = await streamChatMessage({
         message: textToSend.trim(),
         userName: userProfile.name || 'Friend',
-        language: userProfile.language || 'en',
+        language: activeLanguage || userProfile.language || 'en',
         personality: mascotConfig.personality,
         role: userProfile.role || 'student',
         stylePref: userProfile.stylePref || 'reflective',
@@ -660,18 +731,18 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             prev.map((m) =>
               m.id === botMsgId
                 ? {
-                    ...m,
-                    isThinking: false,
-                    isStreaming: true,
-                    expression: (meta.emotion as MascotExpression) || m.expression,
-                    state_label: meta.state_label || m.state_label,
-                    stress_level: meta.stress_level,
-                    suggested_exercise: meta.suggested_exercise,
-                    suggest_tool: meta.suggest_tool,
-                    helplines: meta.helplines,
-                    isHighRisk: meta.isHighRisk,
-                    crisis: meta.crisis,
-                  }
+                  ...m,
+                  isThinking: false,
+                  isStreaming: true,
+                  expression: (meta.emotion as MascotExpression) || m.expression,
+                  state_label: meta.state_label || m.state_label,
+                  stress_level: meta.stress_level,
+                  suggested_exercise: meta.suggested_exercise,
+                  suggest_tool: meta.suggest_tool,
+                  helplines: meta.helplines,
+                  isHighRisk: meta.isHighRisk,
+                  crisis: meta.crisis,
+                }
                 : m
             )
           );
@@ -681,11 +752,11 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             prev.map((m) =>
               m.id === botMsgId
                 ? {
-                    ...m,
-                    isThinking: false,
-                    isStreaming: true,
-                    text: m.text + token,
-                  }
+                  ...m,
+                  isThinking: false,
+                  isStreaming: true,
+                  text: m.text + token,
+                }
                 : m
             )
           );
@@ -725,13 +796,13 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           prev.map((m) =>
             m.id === botMsgId
               ? {
-                  ...m,
-                  isThinking: false,
-                  isStreaming: false,
-                  isError: true,
-                  text: 'Connection hiccup, please try again.',
-                  retryText: textToSend.trim(),
-                }
+                ...m,
+                isThinking: false,
+                isStreaming: false,
+                isError: true,
+                text: 'Connection hiccup, please try again.',
+                retryText: textToSend.trim(),
+              }
               : m
           )
         );
@@ -745,22 +816,22 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         prev.map((m) =>
           m.id === botMsgId
             ? {
-                ...m,
-                isThinking: false,
-                isStreaming: false,
-                text: res.message,
-                expression: res.emotion,
-                isHighRisk: res.isHighRisk,
-                crisis: res.crisis,
-                stress_level: res.stress_level,
-                helplines: res.helplines,
-                state_label: res.state_label,
-                suggested_exercise: res.suggested_exercise,
-                suggest_tool: res.suggest_tool,
-                gesture: res.animation,
-                spoken_text: res.spoken_text,
-                quick_replies: res.quick_replies,
-              }
+              ...m,
+              isThinking: false,
+              isStreaming: false,
+              text: res.message,
+              expression: res.emotion,
+              isHighRisk: res.isHighRisk,
+              crisis: res.crisis,
+              stress_level: res.stress_level,
+              helplines: res.helplines,
+              state_label: res.state_label,
+              suggested_exercise: res.suggested_exercise,
+              suggest_tool: res.suggest_tool,
+              gesture: res.animation,
+              spoken_text: res.spoken_text,
+              quick_replies: res.quick_replies,
+            }
             : m
         )
       );
@@ -781,13 +852,13 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         prev.map((m) =>
           m.id === botMsgId
             ? {
-                ...m,
-                isThinking: false,
-                isStreaming: false,
-                isError: true,
-                text: 'Connection hiccup, please try again.',
-                retryText: textToSend.trim(),
-              }
+              ...m,
+              isThinking: false,
+              isStreaming: false,
+              isError: true,
+              text: 'Connection hiccup, please try again.',
+              retryText: textToSend.trim(),
+            }
             : m
         )
       );
@@ -915,7 +986,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             >
               <Globe className="w-3.5 h-3.5 text-[#8B5CF6]" />
               <span className="font-bold">
-                {LANGUAGE_MAP[(userProfile.language || 'en') as keyof typeof LANGUAGE_MAP]?.nativeName || 'English'}
+                {LANGUAGE_MAP[(activeLanguage || 'en') as keyof typeof LANGUAGE_MAP]?.nativeName || 'English'}
               </span>
               <ChevronDown className="w-3 h-3 text-[#0A0A0A]/40" />
             </button>
@@ -930,15 +1001,11 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 {SUPPORTED_LANGUAGES.map((lang) => (
                   <button
                     key={lang.code}
-                    onClick={() => {
-                      _onUpdateProfile?.({ language: lang.code });
-                      setIsLangMenuOpen(false);
-                    }}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${
-                      (userProfile.language || 'en') === lang.code
+                    onClick={() => handleSelectLanguage(lang.code)}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${(activeLanguage || 'en') === lang.code
                         ? 'bg-[#8B5CF6]/15 text-[#8B5CF6] font-bold'
                         : 'hover:bg-[#F2EFE8] text-[#0A0A0A]'
-                    }`}
+                      }`}
                   >
                     <span>{lang.nativeName}</span>
                     <span className="text-[10px] text-[#0A0A0A]/40">{lang.englishName}</span>
@@ -955,20 +1022,18 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               id="audio-controls-button"
               data-testid="audio-controls-button"
               onClick={() => setIsAudioMenuOpen(!isAudioMenuOpen)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-mono transition-all cursor-pointer ${
-                isAudioMenuOpen
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-mono transition-all cursor-pointer ${isAudioMenuOpen
                   ? 'bg-[#8B5CF6] text-white border-[#8B5CF6] shadow-sm'
                   : 'border-[#0A0A0A]/15 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]'
-              }`}
+                }`}
               title="Audio Controls: Voice & Ambient Music"
             >
               {isVoiceMuted && isMusicMuted ? (
                 <VolumeX className="w-3.5 h-3.5 text-rose-500" />
               ) : (
                 <Volume2
-                  className={`w-3.5 h-3.5 ${
-                    isMusicPlaying ? 'text-[#8B5CF6] animate-pulse' : 'text-[#0A0A0A]/60'
-                  }`}
+                  className={`w-3.5 h-3.5 ${isMusicPlaying ? 'text-[#8B5CF6] animate-pulse' : 'text-[#0A0A0A]/60'
+                    }`}
                 />
               )}
               <span className="font-bold">AUDIO</span>
@@ -1012,11 +1077,10 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                       id="voice-mute-button"
                       data-testid="voice-mute-button"
                       onClick={handleToggleVoiceMute}
-                      className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
-                        isVoiceMuted
+                      className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${isVoiceMuted
                           ? 'bg-rose-500 text-white border-rose-600'
                           : 'bg-white text-[#0A0A0A]/70 hover:text-[#0A0A0A] border-[#0A0A0A]/15'
-                      }`}
+                        }`}
                       title={isVoiceMuted ? 'Unmute companion voice' : 'Mute companion voice'}
                     >
                       {isVoiceMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
@@ -1046,9 +1110,8 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setVoiceOutputEnabled(!voiceOutputEnabled)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
-                        voiceOutputEnabled ? 'bg-violet-600 text-white' : 'bg-[#0A0A0A]/10 text-[#0A0A0A]/60'
-                      }`}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${voiceOutputEnabled ? 'bg-violet-600 text-white' : 'bg-[#0A0A0A]/10 text-[#0A0A0A]/60'
+                        }`}
                     >
                       {voiceOutputEnabled ? 'ON' : 'OFF'}
                     </button>
@@ -1077,11 +1140,10 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                         id="music-mute-button"
                         data-testid="music-mute-button"
                         onClick={handleToggleMusicMute}
-                        className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
-                          isMusicMuted
+                        className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${isMusicMuted
                             ? 'bg-rose-500 text-white border-rose-600'
                             : 'bg-white text-[#0A0A0A]/70 hover:text-[#0A0A0A] border-[#0A0A0A]/15'
-                        }`}
+                          }`}
                         title={isMusicMuted ? 'Unmute ambient music' : 'Mute ambient music'}
                       >
                         {isMusicMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
@@ -1091,11 +1153,10 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                         id="music-power-toggle"
                         data-testid="music-power-toggle"
                         onClick={handleToggleMusicPlay}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
-                          isMusicPlaying
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${isMusicPlaying
                             ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                             : 'bg-[#0A0A0A] text-white hover:bg-[#0A0A0A]/80'
-                        }`}
+                          }`}
                       >
                         {isMusicPlaying ? 'TURN OFF' : 'TURN ON'}
                       </button>
@@ -1368,17 +1429,34 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         >
           <div className="flex-1 w-full h-full relative">
             <MascotStage
-              gender={userProfile.gender === 'girl' ? 'girl' : 'boy'}
+              gender={userProfile.companion || (userProfile.gender === 'girl' ? 'girl' : 'boy')}
+              onGenderChange={(newGender) => {
+                _onUpdateProfile?.({
+                  companion: newGender,
+                  gender: newGender,
+                  avatarType: newGender,
+                  voiceGender: newGender,
+                });
+                try {
+                  const saved = localStorage.getItem('manas_user_profile_v2');
+                  const parsed = saved ? JSON.parse(saved) : {};
+                  parsed.companion = newGender;
+                  parsed.gender = newGender;
+                  parsed.avatarType = newGender;
+                  parsed.voiceGender = newGender;
+                  localStorage.setItem('manas_user_profile_v2', JSON.stringify(parsed));
+                } catch (_) { }
+              }}
               emotion={
                 mascotExpr === 'concerned'
                   ? 'concerned'
                   : mascotExpr === 'happy'
-                  ? 'happy'
-                  : mascotExpr === 'sad'
-                  ? 'sad'
-                  : mascotExpr === 'surprised'
-                  ? 'surprised'
-                  : 'calm'
+                    ? 'happy'
+                    : mascotExpr === 'sad'
+                      ? 'sad'
+                      : mascotExpr === 'surprised'
+                        ? 'surprised'
+                        : 'calm'
               }
               isSpeaking={isAvatarSpeaking}
               isUserTyping={isListening || isTyping}
@@ -1510,19 +1588,81 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         </div>
       )}
 
-      {isOutfitsOpen && (
-        <OutfitsPanel
-          isOpen={isOutfitsOpen}
-          onClose={() => setIsOutfitsOpen(false)}
-          currentGender={userProfile.gender === 'girl' ? 'girl' : 'boy'}
-          onSelectOutfit={(outfit) => {
-            avatar.setOutfit(outfit);
-          }}
-          onPhotoPersonalize={() => {
-            setIsOutfitsOpen(false);
-            setIsCustomizerOpen(true);
-          }}
-        />
+      {/* Edit Profile Dedicated Modal */}
+      <EditProfileModal
+        isOpen={isEditProfileOpen}
+        onClose={() => setIsEditProfileOpen(false)}
+        userProfile={userProfile}
+        onUpdateProfile={(updated) => {
+          if (_onUpdateProfile) {
+            _onUpdateProfile(updated);
+          }
+        }}
+      />
+
+      {/* Confirmation Modal for Delete Companion Memory / Delete My Data */}
+      {confirmAction && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in"
+        >
+          <div className="w-full max-w-md bg-[#0F1117] border border-white/15 rounded-3xl p-6 text-white shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  {confirmAction === 'memory' ? 'Delete Companion Memory?' : 'Delete All My Data?'}
+                </h3>
+                <p className="text-xs text-white/50">
+                  {confirmAction === 'memory'
+                    ? 'Permanent database reset'
+                    : 'Irreversible data erasure'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-white/70 leading-relaxed">
+              {confirmAction === 'memory'
+                ? 'This will permanently remove your companion’s remembered session themes, preferences, and notes from the database. This action cannot be undone.'
+                : 'This will permanently delete your account profile, avatar appearance attributes, wellness logs, memories, goals, and journal entries from the database and return you to onboarding.'}
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                id="confirm-dialog-cancel"
+                onClick={() => setConfirmAction(null)}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs text-white font-medium cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-dialog-proceed"
+                onClick={confirmAction === 'memory' ? handleConfirmDeleteMemory : handleConfirmDeleteData}
+                disabled={isDeletingMemory}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs text-white font-bold cursor-pointer transition-colors shadow-lg"
+              >
+                {isDeletingMemory
+                  ? 'Deleting...'
+                  : confirmAction === 'memory'
+                  ? 'Delete Memory'
+                  : 'Delete All Data'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action Success Toast */}
+      {actionToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-80 px-4 py-2.5 rounded-2xl bg-emerald-600 text-white text-xs font-mono font-bold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
+          <span>✓</span>
+          <span>{actionToast}</span>
+        </div>
       )}
 
       {isBreathingOpen && (
@@ -1571,6 +1711,34 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               console.warn('Failed to record mood:', err);
             }
           }}
+          onDeleteMood={async (id) => {
+            try {
+              const token = localStorage.getItem('manas_access_token');
+              const headers: Record<string, string> = {};
+              if (token) headers['Authorization'] = `Bearer ${token}`;
+              await fetch(`/api/mood/${id}`, { method: 'DELETE', headers });
+              setMoodHistory((prev) => prev.filter((m: any) => m.id !== id));
+            } catch (err) {
+              console.warn('Failed to delete mood:', err);
+            }
+          }}
+          onEditMood={async (id, newScore) => {
+            try {
+              const token = localStorage.getItem('manas_access_token');
+              const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+              if (token) headers['Authorization'] = `Bearer ${token}`;
+              await fetch(`/api/mood/${id}`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ score: newScore }),
+              });
+              setMoodHistory((prev) =>
+                prev.map((m: any) => (m.id === id ? { ...m, score: newScore } : m))
+              );
+            } catch (err) {
+              console.warn('Failed to edit mood:', err);
+            }
+          }}
         />
       )}
 
@@ -1615,37 +1783,37 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           onConfirm={
             activeAutoSave.requires_confirmation
               ? async (event) => {
-                  try {
-                    const token = localStorage.getItem('manas_access_token');
-                    const headers: Record<string, string> = {
-                      'Content-Type': 'application/json',
-                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    };
-                    if (event.tool === 'set_reminder') {
-                      await fetch('/api/chat/auto-save/confirm-reminder', {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify({
-                          action_id: event.action_id,
-                          text: event.reminder_text || event.summary,
-                          time_or_recurrence: event.time_or_recurrence || '09:00',
-                        }),
-                      });
-                    } else if (event.tool === 'update_preference') {
-                      await fetch('/api/chat/auto-save/confirm-preference', {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify({
-                          action_id: event.action_id,
-                          key: event.pref_key || 'preference',
-                          value: event.pref_value || event.summary,
-                        }),
-                      });
-                    }
-                  } catch (err) {
-                    console.warn('Failed to confirm auto save:', err);
+                try {
+                  const token = localStorage.getItem('manas_access_token');
+                  const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                  };
+                  if (event.tool === 'set_reminder') {
+                    await fetch('/api/chat/auto-save/confirm-reminder', {
+                      method: 'POST',
+                      headers,
+                      body: JSON.stringify({
+                        action_id: event.action_id,
+                        text: event.reminder_text || event.summary,
+                        time_or_recurrence: event.time_or_recurrence || '09:00',
+                      }),
+                    });
+                  } else if (event.tool === 'update_preference') {
+                    await fetch('/api/chat/auto-save/confirm-preference', {
+                      method: 'POST',
+                      headers,
+                      body: JSON.stringify({
+                        action_id: event.action_id,
+                        key: event.pref_key || 'preference',
+                        value: event.pref_value || event.summary,
+                      }),
+                    });
                   }
+                } catch (err) {
+                  console.warn('Failed to confirm auto save:', err);
                 }
+              }
               : undefined
           }
           onDismiss={() => setActiveAutoSave(null)}

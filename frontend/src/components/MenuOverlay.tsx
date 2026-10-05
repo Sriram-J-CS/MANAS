@@ -141,6 +141,9 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
             ))}
           </div>
           <span className="text-white/40 text-[10px]">© 2026 MANAS — AI Emotional Wellness Twin</span>
+          <span className="text-white/35 text-[9px] font-mono">
+            Avatars by pixiv VRoid Project (sample models). Personal/non-profit use.
+          </span>
         </div>
       </div>
     </div>
