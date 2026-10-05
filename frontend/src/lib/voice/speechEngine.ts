@@ -74,7 +74,26 @@ const BROWSER_LANG_CODES: Record<string, string> = {
   ml: 'ml-IN',
   bn: 'bn-IN',
   mr: 'mr-IN',
-  en: 'en-US',
+  en: 'en-IN',
+  'ta-IN': 'ta-IN',
+  'hi-IN': 'hi-IN',
+  'te-IN': 'te-IN',
+  'kn-IN': 'kn-IN',
+  'ml-IN': 'ml-IN',
+  'bn-IN': 'bn-IN',
+  'mr-IN': 'mr-IN',
+  'en-IN': 'en-IN',
+  'en-US': 'en-IN',
+};
+
+const CLIENT_LOANWORDS: Record<string, Record<string, string>> = {
+  ta: { stress: 'ஸ்ட்ரெஸ்', tension: 'டென்ஷன்', relax: 'ரிலாக்ஸ்', anxiety: 'ஆன்ஸைட்டி', doctor: 'டாக்டர்', ok: 'சரி' },
+  hi: { stress: 'स्ट्रेस', tension: 'टेंशन', relax: 'रिलैक्स', anxiety: 'एंग्जायटी', doctor: 'डॉक्टर', ok: 'ठीक है' },
+  te: { stress: 'స్ట్రెస్', tension: 'టెన్షన్', relax: 'రిలాక్స్', anxiety: 'యాంగ్జైటీ', doctor: 'డాక్టర్', ok: 'సరే' },
+  ml: { stress: 'സ്ട്രെസ്സ്', tension: 'ടെൻഷൻ', relax: 'റിലാക്സ്', anxiety: 'ആങ്സൈറ്റി', doctor: 'ഡോക്ടർ', ok: 'ശരി' },
+  kn: { stress: 'ಸ್ಟ್ರೆಸ್', tension: 'ಟೆನ್ಷನ್', relax: 'ರಿಲ್ಯಾಕ್ಸ್', anxiety: 'ಆಂಗ್ಸೈಟಿ', doctor: 'ಡಾಕ್ಟರ್', ok: 'ಸರಿ' },
+  bn: { stress: 'স্ট্রেস', tension: 'টেনশন', relax: 'রিল্যাক্স', anxiety: 'অ্যাংজাইটি', doctor: 'ডাক্তার', ok: 'ঠিক আছে' },
+  mr: { stress: 'स्ट्रेस', tension: 'टेंशन', relax: 'रिलॅक्स', anxiety: 'अँग्झायटी', doctor: 'डॉक्टर', ok: 'ठीक आहे' },
 };
 
 class SpeechEngine {
@@ -270,6 +289,15 @@ class SpeechEngine {
       }
     }
 
+    // Transliterate English loanwords into native script for non-English speech
+    const langPrefix = lang.split('-')[0].toLowerCase();
+    const loanwords = CLIENT_LOANWORDS[langPrefix];
+    if (loanwords) {
+      for (const [enW, natW] of Object.entries(loanwords)) {
+        clean = clean.replace(new RegExp(`\\b${enW}\\b`, 'gi'), natW);
+      }
+    }
+
     return clean.replace(/\s+/g, ' ').trim();
   }
 
@@ -281,8 +309,8 @@ class SpeechEngine {
 
   /**
    * Speaks text using per-language provider chain:
-   * 1. Calls backend /api/voice/tts (checks cache or Sarvam AI).
-   * 2. Falls back smoothly to browser Web Speech API.
+   * 1. Calls backend /api/voice/tts with exact BCP-47 language code (checks cache or Chirp 3 HD / Gemini TTS).
+   * 2. Falls back smoothly to browser Web Speech API (strictly native voice only).
    */
   public async speak(
     text: string,
@@ -300,6 +328,7 @@ class SpeechEngine {
     const clean = this.sanitizeSpokenText(text, lang);
     if (!clean) return;
 
+    const targetBcp47 = BROWSER_LANG_CODES[lang] || (lang.includes('-') ? lang : `${lang}-IN`);
     const isBoy = opts.gender === 'boy' || opts.gender === 'male';
     const genderStr = isBoy ? 'male' : 'female';
     const defaultVoice = isBoy ? 'achal' : 'ananya';
@@ -310,7 +339,7 @@ class SpeechEngine {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: clean,
-          language: lang,
+          language: targetBcp47,
           voice: opts.voiceName || defaultVoice,
           gender: genderStr,
           emotion: 'calm',
@@ -483,6 +512,13 @@ class SpeechEngine {
             const name = v.name.toLowerCase();
             return keywords.some((k) => name.includes(k));
           };
+
+          // Strictly NEVER speak non-English text with an English voice
+          if (matchingLangVoices.length === 0 && langPrefix !== 'en') {
+            console.warn(`[SpeechEngine] No native browser voice found for ${targetLang}. Refusing to speak with an English voice.`);
+            this.handleTTSEnd(opts);
+            return;
+          }
 
           const pool = matchingLangVoices.length > 0 ? matchingLangVoices : voices;
           let matchedVoice: SpeechSynthesisVoice | undefined;

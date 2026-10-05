@@ -40,7 +40,29 @@ STRUCTURED_OUTPUT_SCHEMA = {
     "properties": {
         "reply": {
             "type": "STRING",
-            "description": "Conversational reply in 2-4 short sentences, reflecting user's exact words and feelings, natural spoken style (code-mixing allowed)."
+            "description": "Visible display text in 2-4 short sentences, reflecting user's exact words and feelings, natural spoken style (code-mixing allowed for on-screen reading)."
+        },
+        "speech_text": {
+            "type": "STRING",
+            "description": (
+                "Spoken text for voice synthesis. For non-English languages (ta, hi, te, ml, kn, bn, mr), "
+                "it must be 100% in the chosen language and native script with ZERO Latin letters or English phrases "
+                "(unless the user wrote them). Transliterate all English loanwords into the native script "
+                "(e.g. stress -> ஸ்ட்ரெஸ் in Tamil, स्ट्रेस in Hindi, etc.). Natural colloquial spoken style."
+            )
+        },
+        "speech_metadata": {
+            "type": "OBJECT",
+            "properties": {
+                "style": {
+                    "type": "STRING",
+                    "description": "Warm style prompt for voice synthesis."
+                },
+                "language_code": {
+                    "type": "STRING",
+                    "description": "Exact BCP-47 language code, e.g. ta-IN, hi-IN, te-IN, ml-IN, kn-IN, bn-IN, mr-IN, en-IN"
+                }
+            }
         },
         "emotion": {
             "type": "STRING",
@@ -99,7 +121,20 @@ def build_companion_system_prompt(
         "mr": "Marathi",
         "en": "English",
     }
-    lang_label = lang_map.get(language, language)
+    lang_clean = language.split("-")[0] if language else "en"
+    lang_label = lang_map.get(lang_clean, language)
+    region_map = {
+        "ta": "Tamil Nadu",
+        "hi": "North India",
+        "te": "Andhra Pradesh and Telangana",
+        "kn": "Karnataka",
+        "ml": "Kerala",
+        "bn": "Bengal",
+        "mr": "Maharashtra",
+        "en": "India",
+    }
+    region = region_map.get(lang_clean, "India")
+    bcp47_code = f"{lang_clean}-IN"
 
     anti_repetition_prompt = ""
     if recent_bot_messages:
@@ -172,11 +207,17 @@ CORE CONVERSATIONAL PRINCIPLES:
 5. CONCISE & THOUGHTFUL: Exactly 2 to 4 gentle, impactful sentences. No bulleted essays or clinical lectures.
 6. GENTLE INQUIRY: Ask at most ONE natural, open-hearted question to invite them to share if they feel comfortable.
 7. NEVER REPEAT: Vary your opening lines and phrasing every single turn. Never repeat stock phrases like "I'm right here beside you" or previous answers.
+8. VOICE STEP MANDATE (FOR NON-ENGLISH: ta, hi, te, ml, kn, bn, mr):
+   - You MUST write 'speech_text' 100% in the chosen language and authentic native script in natural spoken (colloquial) style.
+   - Transliterate all English loanwords into the native script (e.g. "stress" -> "ஸ்ட்ரெஸ்" in Tamil, "स्ट्रेस" in Hindi, "స్ట్రెస్" in Telugu, "സ്ട്രെസ്സ്" in Malayalam, "ಸ್ಟ್ರೆಸ್" in Kannada, "স্ট্রেস" in Bengali, "स्ट्रेस" in Marathi).
+   - ZERO Latin letters, ZERO English phrases in 'speech_text' unless the user wrote them.
+   - Keep 'reply' (display_text) as it is.
+   - Set 'speech_metadata' with style "warm, gentle, friendly, slightly slow, like a close friend from {region}, calm and comforting" and language_code "{bcp47_code}".
 {anti_repetition_prompt}{saved_mem_prompt}{memory_prompt}{rolling_prompt}{name_rule}{breathing_rule}
 USER CONTEXT:
 - Preferred Name: {user_name}
 - Age: {age}
-- Language: {lang_label} ({language})
+- Language: {lang_label} ({language} / {bcp47_code})
 - Companion Tone: {companion_tone}
 
 You must return a valid JSON object matching the requested schema.

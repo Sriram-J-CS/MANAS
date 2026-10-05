@@ -41,7 +41,7 @@ export async function speak(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: speechText,
-        language: lang.split('-')[0], // 'hi-IN' → 'hi'
+        language: lang, // Exact BCP-47 language code (ta-IN, hi-IN, etc.)
         gender: voiceGender,
         emotion,
       }),
@@ -89,7 +89,7 @@ export async function speak(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Browser SpeechSynthesis fallback – gender + language aware
+// Browser SpeechSynthesis fallback – gender + language aware (never English voice for non-English)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function _browserSpeak(
@@ -112,6 +112,18 @@ function _browserSpeak(
 
     const voices = window.speechSynthesis.getVoices();
     const bestVoice = _pickBestBrowserVoice(voices, lang, voiceGender);
+
+    if (!bestVoice && lang !== 'en-IN') {
+      console.warn(`[TTS] No native browser voice found for ${lang}. Never speaking non-English text with an English voice.`);
+      return {
+        lang,
+        voiceGender,
+        voiceName: 'none',
+        fullSpeechText: speechText,
+        segments,
+        totalDurationMs: 0,
+      };
+    }
 
     const utt   = new SpeechSynthesisUtterance(speechText);
     utt.lang    = lang;

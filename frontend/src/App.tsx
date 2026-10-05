@@ -115,16 +115,42 @@ export function App() {
     registerServiceWorker();
     const lenisInstance = initLenis();
 
-    // Direct chat opening or voice lab opening via URL query param or hash
+    // Direct chat opening or voice lab opening via URL query param or hash (/voice-test)
     const params = new URLSearchParams(window.location.search);
     if (params.get('chat') === 'open' || window.location.hash === '#chat') {
       setIsCompanionOpen(true);
     }
-    if (params.get('test-voice') === 'true' || window.location.hash === '#test-voice') {
+    const isVoiceTest =
+      window.location.pathname === '/voice-test' ||
+      window.location.pathname.startsWith('/voice-test') ||
+      params.get('test-voice') === 'true' ||
+      params.get('voice-test') === 'true' ||
+      params.get('page') === 'voice-test' ||
+      window.location.hash === '#test-voice' ||
+      window.location.hash === '#voice-test';
+
+    if (isVoiceTest) {
       setIsVoiceRatingLabOpen(true);
     }
 
+    const handleHashOrPopState = () => {
+      const p = new URLSearchParams(window.location.search);
+      if (
+        window.location.pathname === '/voice-test' ||
+        p.get('test-voice') === 'true' ||
+        p.get('voice-test') === 'true' ||
+        window.location.hash === '#voice-test' ||
+        window.location.hash === '#test-voice'
+      ) {
+        setIsVoiceRatingLabOpen(true);
+      }
+    };
+    window.addEventListener('popstate', handleHashOrPopState);
+    window.addEventListener('hashchange', handleHashOrPopState);
+
     return () => {
+      window.removeEventListener('popstate', handleHashOrPopState);
+      window.removeEventListener('hashchange', handleHashOrPopState);
       lenisInstance?.destroy();
     };
   }, []);

@@ -35,7 +35,12 @@ from .services.voice import (
     synthesize_speech_provider,
     get_voice_status,
     set_voice_language_status,
-    sanitize_spoken_text
+    sanitize_spoken_text,
+    to_bcp47,
+    get_speech_style,
+    pick_native_voice,
+    get_voice_samples,
+    split_sentences_for_streaming
 )
 from .auth.routes import router as auth_router
 from .auth.dependencies import require_auth, require_admin, get_current_user_id
@@ -397,9 +402,21 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
         conn.close()
 
         async def crisis_stream():
+            bcp47_code = to_bcp47(req.language)
+            crisis_spoken = sanitize_spoken_text(crisis_text, req.language)
+            native_voice = pick_native_voice(bcp47_code)
             meta = {
                 "id": bot_msg_id,
                 "reply": crisis_text,
+                "display_text": crisis_text,
+                "speech_text": crisis_spoken,
+                "spoken_text": crisis_spoken,
+                "speech_metadata": {
+                    "style": get_speech_style(bcp47_code),
+                    "language_code": bcp47_code,
+                    "voice_name": native_voice,
+                },
+                "bcp47": bcp47_code,
                 "emotion": "concerned",
                 "expression": "concerned",
                 "suggest_tool": "none",
@@ -410,7 +427,6 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
                 "helplines": helplines_data,
                 "state_label": "Crisis Safety Active",
                 "gesture": "listening",
-                "spoken_text": crisis_text
             }
             yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
             words = crisis_text.split(" ")
@@ -516,6 +532,26 @@ async def chat(req: ChatRequest, current_uid: Optional[str] = Depends(get_curren
             elif kind == "meta":
                 final_meta = payload
                 final_meta["id"] = bot_msg_id
+                display_text = final_meta.get("reply") or accumulated_text
+                final_meta["display_text"] = display_text
+
+                # Pure native script voice step for non-English speech output
+                raw_speech = final_meta.get("speech_text") or display_text
+                speech_text = sanitize_spoken_text(raw_speech, req.language)
+                final_meta["speech_text"] = speech_text
+                final_meta["spoken_text"] = speech_text
+
+                bcp47_code = to_bcp47(req.language)
+                native_voice = pick_native_voice(bcp47_code)
+                style_str = get_speech_style(bcp47_code)
+
+                final_meta["speech_metadata"] = final_meta.get("speech_metadata") or {
+                    "style": style_str,
+                    "language_code": bcp47_code,
+                    "voice_name": native_voice,
+                }
+                final_meta["bcp47"] = bcp47_code
+
                 if final_meta.get("risk_level") == "high":
                     final_meta["is_high_risk"] = True
                     final_meta["crisis"] = True
@@ -1814,6 +1850,34 @@ async def voice_text_to_speech(req: VoiceTTSRequest):
 def voice_system_status():
     """Returns voice availability status for all 8 Indian languages and providers."""
     return get_voice_status()
+
+@app.get("/api/voice/samples")
+def voice_samples_endpoint():
+    """Returns sample lines per language with native Chirp 3 HD voice metadata for /voice-test."""
+    return get_voice_samples()
+
+class VoiceSentenceSynthesizeRequest(BaseModel):
+    sentences: Optional[List[str]] = None
+    text: Optional[str] = None
+    language: str = "en"
+    gender: str = "female"
+    voice: Optional[str] = None
+    emotion: Optional[str] = "calm"
+
+@app.post("/api/voice/synthesize-sentences")
+async def voice_synthesize_sentences(req: VoiceSentenceSynthesizeRequest):
+    """
+    Sentence-by-sentence TTS synthesis with memory & disk caching.
+    """
+    raw_text = req.text or (" ".join(req.sentences) if req.sentences else "")
+    res = await synthesize_speech_provider(
+        text=raw_text,
+        language=req.language,
+        voice=req.voice or None,
+        gender=req.gender,
+        emotion=req.emotion or "calm"
+    )
+    return res
 
 @app.post("/api/voice/status")
 def update_voice_system_status(req: VoiceStatusUpdateRequest):

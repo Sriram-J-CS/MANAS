@@ -55,7 +55,7 @@ export const MenuOverlay: React.FC<MenuOverlayProps> = ({
     { num: '07', label: 'SAFETY PLAN & HELPLINES', action: onOpenSafetyPlan },
     { num: '08', label: 'PRIVACY CENTER & CONSENT', action: onOpenPrivacy },
     { num: '09', label: 'NOTIFICATIONS & REMINDERS', action: onOpenNotifications },
-    { num: '10', label: 'VOICE RATING LAB (8 LANGUAGES)', action: onOpenVoiceRatingLab },
+    { num: '10', label: 'NATIVE VOICE TEST & RATINGS (/VOICE-TEST)', action: onOpenVoiceRatingLab },
     { num: '11', label: 'CUSTOMIZE 3D MASCOT', action: onOpenMascotCustomizer },
     { num: '12', label: 'CALM SPACE & AUDIO', action: onOpenCalm },
   ];
