@@ -73,7 +73,6 @@ export async function sendChatFeedback(options: {
       headers,
       body: JSON.stringify({
         message_id: options.messageId,
-        user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || 'default_user' : 'default_user',
         rating: normalizedRating,
         felt_understood: options.feltUnderstood ?? (normalizedRating === 'not_understood' ? 0 : 1),
         user_message: consent ? (options.userMessage || '') : '',
@@ -115,7 +114,7 @@ export async function streamChatMessage(
   } = options;
 
   const storedName = typeof window !== 'undefined' ? localStorage.getItem('manas_user_name') : null;
-  const resolvedName = (userName && userName !== 'Friend' && userName.toLowerCase() !== 'akshay')
+  const resolvedName = (userName && userName !== 'Friend')
     ? userName
     : (storedName || userName || 'Friend');
 
@@ -140,7 +139,6 @@ export async function streamChatMessage(
       body: JSON.stringify({
         message,
         user_name: resolvedName,
-        user_id: typeof window !== 'undefined' ? localStorage.getItem('manas_user_id') || 'default_user' : 'default_user',
         language,
         tone: toneMap[personality] || 'gentle',
         persona: `mascot_${personality}`,

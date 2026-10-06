@@ -492,7 +492,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Sriram"
+                    placeholder="e.g. Alex"
                     className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/25 text-xs focus:outline-none focus:border-violet-500 transition-colors"
                   />
                 </div>
@@ -562,7 +562,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       required
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. Sriram"
+                      placeholder="e.g. Alex"
                       className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:border-violet-500 font-sans transition-colors"
                     />
                   </div>

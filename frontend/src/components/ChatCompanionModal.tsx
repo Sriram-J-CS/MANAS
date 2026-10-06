@@ -657,11 +657,9 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       let welcome = `Hey${nm ? ` ${nm}` : ''}, I am right here beside you. Whatever you are feeling right now, you don't have to carry it alone. Take a slow, quiet breath with me. How is your mind feeling today?`;
 
       if (userProfile.language === 'ta') {
-        const taName = nm ? (nm.toLowerCase() === 'sriram' ? 'ஸ்ரீராம்' : nm) : '';
-        welcome = `வணக்கம்${taName ? ` ${taName}` : ''}! நான் உங்களுடன் இருக்கும் MANAS. கல்லூரி அல்லது வேலைச்சுமை அதிகமாக இருந்தாலும், நீங்கள் தனியாக இந்த பாரத்தை சுமக்க வேண்டாம். நாம் இருவரும் சேர்ந்து அமைதியாக ஒரு முறை மூச்சு விடுவோம். இப்போது உங்கள் மனம் எப்படி உணர்கிறது?`;
+        welcome = `வணக்கம்${nm ? ` ${nm}` : ''}! நான் உங்களுடன் இருக்கும் MANAS. கல்லூரி அல்லது வேலைச்சுமை அதிகமாக இருந்தாலும், நீங்கள் தனியாக இந்த பாரத்தை சுமக்க வேண்டாம். நாம் இருவரும் சேர்ந்து அமைதியாக ஒரு முறை மூச்சு விடுவோம். இப்போது உங்கள் மனம் எப்படி உணர்கிறது?`;
       } else if (userProfile.language === 'hi') {
-        const hiName = nm ? (nm.toLowerCase() === 'sriram' ? 'श्रीराम' : nm) : '';
-        welcome = `नमस्ते${hiName ? ` ${hiName}` : ''}! मैं आपके साथ हमेशा रहने वाला MANAS साथी हूँ। जब तनाव बहुत भारी लगने लगे, तो याद रखिए कि आप अकेले नहीं हैं। आइए साथ में एक गहरी और शांत सांस लें। अभी आपके मन में क्या चल रहा है?`;
+        welcome = `नमस्ते${nm ? ` ${nm}` : ''}! मैं आपके साथ हमेशा रहने वाला MANAS साथी हूँ। जब तनाव बहुत भारी लगने लगे, तो याद रखिए कि आप अकेले नहीं हैं। आइए साथ में एक गहरी और शांत सांस लें। अभी आपके मन में क्या चल रहा है?`;
       }
 
       const welcomeMsg: ChatMessage = {

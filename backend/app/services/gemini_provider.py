@@ -24,14 +24,13 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger("manas.gemini_provider")
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "gemini-flash-lite-latest",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-flash-latest",
     "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+    "gemini-flash-lite-latest",
 ]
 MODELS_CHAIN = list(dict.fromkeys(FALLBACK_MODELS))
 
@@ -381,13 +380,9 @@ def build_companion_system_prompt(
     clean_uname = (user_name or "").strip()
     if clean_uname and clean_uname.lower() not in ("friend", "user", "anonymous"):
         name_in_script = clean_uname
-        if lang_clean == "ta" and clean_uname.lower() == "sriram":
-            name_in_script = "ஸ்ரீராம்"
-        elif lang_clean == "hi" and clean_uname.lower() == "sriram":
-            name_in_script = "श्रीराम"
         name_rule = (
             f"\nUSER IDENTITY & NAME GUIDANCE:\n"
-            f"- Verified Name: {name_in_script} ({clean_uname}).\n"
+            f"- Verified Name: {name_in_script}.\n"
             f"- Address {name_in_script} warmly, personally, and affectionately by their name in {native_script}. CRITICAL RULE: DO NOT call them 'friend', 'my friend', or 'தோழா/தோழன்/दोस्त' right at the start. Build a genuine emotional bond and trust first.\n"
         )
     else:
