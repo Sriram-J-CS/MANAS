@@ -48,6 +48,29 @@ FALLBACK_EXTRACTOR_MODELS = [
 ]
 EXTRACTION_MODELS_CHAIN = list(dict.fromkeys(FALLBACK_EXTRACTOR_MODELS))
 
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+def sync_to_supabase_sync(table: str, row: Dict[str, Any]) -> None:
+    """Synchronizes extracted row to Supabase Postgres using the service role key."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return
+    uid = str(row.get("user_id", ""))
+    if not uid or len(uid) != 36:
+        return
+    try:
+        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
+        headers = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+        with httpx.Client(timeout=4.0) as client:
+            client.post(url, headers=headers, json=row)
+    except Exception as e:
+        logger.debug("Supabase sync to %s note: %s", table, e)
+
 # Exact function declarations required
 EXTRACTION_FUNCTION_DECLARATIONS = [
     {
@@ -349,6 +372,13 @@ def execute_extraction_actions(
                     VALUES (?, ?, ?, ?, ?)
                 """, (entry_id, user_id, score, tags_str, encrypted_note))
 
+                sync_to_supabase_sync("mood_events", {
+                    "user_id": user_id,
+                    "score": score,
+                    "emotions": emotions,
+                    "note": note
+                })
+
                 summary = f"Mood score {score}/5 ({tags_str})"
                 target_screen = "Mood Journey"
                 toast_msg = "Logged to Mood Journey"
@@ -385,6 +415,11 @@ def execute_extraction_actions(
                     INSERT INTO wellness_entries (id, user_id, metric_type, score, note)
                     VALUES (?, ?, ?, ?, ?)
                 """, (entry_id, user_id, dimension, val, encrypted_note))
+
+                twin_payload: Dict[str, Any] = {"user_id": user_id, "source": "chat_auto", "note": note}
+                if dimension in valid_dims:
+                    twin_payload[dimension] = val
+                sync_to_supabase_sync("twin_snapshots", twin_payload)
 
                 summary = f"{dimension.capitalize()} logged at {int(val)}/10"
                 target_screen = "Digital Mental Twin"
@@ -425,6 +460,14 @@ def execute_extraction_actions(
                     VALUES (?, ?, ?, ?, ?)
                 """, (mem_id, user_id, cat, encrypted_fact, confidence))
 
+                sync_to_supabase_sync("memories", {
+                    "user_id": user_id,
+                    "category": cat,
+                    "fact": fact,
+                    "importance": confidence,
+                    "source": "chat_auto"
+                })
+
                 summary = f"{cat.capitalize()}: {fact[:45]}"
                 target_screen = "Memory Center"
                 toast_msg = "Saved to Memory Center"
@@ -458,6 +501,12 @@ def execute_extraction_actions(
                     VALUES (?, ?, ?, 'mindfulness')
                 """, (goal_id, user_id, encrypted_title))
 
+                sync_to_supabase_sync("goals", {
+                    "user_id": user_id,
+                    "title": text,
+                    "source": "chat_auto"
+                })
+
                 summary = f"Goal: {text[:40]}"
                 target_screen = "Journal & Goals"
                 toast_msg = "Added to Goals"
@@ -490,6 +539,14 @@ def execute_extraction_actions(
                     INSERT INTO journal_entries (id, user_id, title, content, tags)
                     VALUES (?, ?, ?, ?, '["chat-extracted"]')
                 """, (jid, user_id, title, encrypted_content))
+
+                sync_to_supabase_sync("journal_entries", {
+                    "user_id": user_id,
+                    "title": "Reflection from Chat",
+                    "content": summary_text,
+                    "tags": ["chat-extracted"],
+                    "is_auto_summary": True
+                })
 
                 summary = f"Journal entry: {summary_text[:40]}"
                 target_screen = "Journal & Goals"
@@ -535,6 +592,16 @@ def execute_extraction_actions(
                     0 if is_positive else 1,
                     1.0 if is_positive else 0.0
                 ))
+
+                sync_to_supabase_sync("insights", {
+                    "user_id": user_id,
+                    "strategy_name": technique,
+                    "suggestion_text": outcome or f"Try {technique} to self-regulate",
+                    "evidence_message": f"You noted that {technique} helped in chat",
+                    "action_type": "try_this",
+                    "effectiveness_score": 1.0 if is_positive else 0.2,
+                    "is_helpful": is_positive
+                })
 
                 summary = f"{technique}: {outcome[:35]}"
                 target_screen = "What Works For Me"

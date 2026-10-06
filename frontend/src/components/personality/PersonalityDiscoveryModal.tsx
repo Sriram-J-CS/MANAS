@@ -244,6 +244,32 @@ export const PersonalityDiscoveryModal: React.FC<PersonalityModalProps> = ({ isO
                 <div className="p-4 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-xs text-teal-200/90 leading-relaxed">
                   <strong>How MANAS Adapts:</strong> High openness prompts deeper exploratory metaphors; high conscientiousness provides clear structured steps; emotional sensitivity shifts conversation into calm, grounding micro-paces.
                 </div>
+
+                {/* On/Off Switch for Personality Matching */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider">
+                      Personality Adaptation Matching
+                    </h4>
+                    <p className="text-[11px] text-white/60 mt-0.5">
+                      Dynamically align companion tone and pacing to your inferred OCEAN traits.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleTentativeOptIn(!tentativeOptIn)}
+                    disabled={isOptingIn}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ml-4 ${
+                      tentativeOptIn ? 'bg-teal-500' : 'bg-white/20'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        tentativeOptIn ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="text-center py-10">

@@ -708,6 +708,10 @@ USER READINESS DEFINITIONS:
 - "exploring": Reflective, willing to discuss the feeling or thoughts.
 - "ready_for_action": Calm, asking for small concrete steps.
 
+CRITICAL RISK CALIBRATION (STRICT):
+- Ordinary student stress, academic worry, upcoming exams ("exam tomorrow", "test coming up"), physical fatigue ("so tired", "exhausted", "sleepy"), work pressure, sadness over a breakup, or ordinary emotional venting MUST be marked "none" or "low" risk.
+- NEVER mark risk as "high" or "imminent" unless the user explicitly expresses active self-harm, suicidal intent ("want to die", "kill myself", "end my life"), or imminent physical danger. Reserve crisis escalation strictly for actual self-harm/suicide emergencies.
+
 OUTPUT RULE: Output ONLY raw JSON. No explanations, no markdown codeblocks.""".strip()
 
 

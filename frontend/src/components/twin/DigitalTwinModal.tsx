@@ -181,16 +181,10 @@ export const DigitalTwinModal: React.FC<DigitalTwinModalProps> = ({ isOpen, onCl
             >
               Twin Baseline & Strain
             </button>
-            <button
-              onClick={() => setActiveTab('checkin')}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === 'checkin'
-                  ? 'bg-white text-black shadow-lg'
-                  : 'bg-white/5 text-white/60 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              + Quick Wellness Log
-            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-300 text-xs font-mono font-medium">
+              <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
+              <span>Auto-updated from your chats</span>
+            </div>
             <button
               onClick={fetchTwinData}
               className="ml-auto p-2 rounded-xl bg-white/5 text-white/60 hover:text-white hover:bg-white/10 transition-colors"
@@ -215,16 +209,9 @@ export const DigitalTwinModal: React.FC<DigitalTwinModalProps> = ({ isOpen, onCl
                     <Sparkles className="w-6 h-6" />
                   </div>
                   <h3 className="text-base font-semibold text-white mb-2">No Mood Baseline Established Yet</h3>
-                  <p className="text-xs text-white/60 max-w-md mx-auto mb-5 leading-relaxed">
-                    {twinData?.message ||
-                      'MANAS builds your mental twin solely from your actual daily check-ins. Zero numbers are invented. Log 3+ mood or wellness check-ins to establish your baseline.'}
+                  <p className="text-xs text-white/60 max-w-md mx-auto mb-3 leading-relaxed">
+                    MANAS continuously infers and updates your mental twin directly from your natural chats. Chat with your companion to automatically establish your personal baseline.
                   </p>
-                  <button
-                    onClick={() => setActiveTab('checkin')}
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors shadow-lg cursor-pointer"
-                  >
-                    Log First Wellness Check-in →
-                  </button>
                 </div>
               ) : (
                 /* Real Twin Overview */
