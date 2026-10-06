@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { DevAvatarCheckPage } from './pages/DevAvatarCheckPage.tsx';
-import { DevLipSyncPage } from './pages/DevLipSyncPage.tsx';
+import { LipSyncTestPage } from './pages/LipSyncTestPage.tsx';
 
 // Simple lightweight route selector for developer pages
 function RootRouter() {
@@ -13,8 +13,8 @@ function RootRouter() {
     return <DevAvatarCheckPage />;
   }
 
-  if (pathname.startsWith('/dev/lipsync')) {
-    return <DevLipSyncPage />;
+  if (pathname.startsWith('/lipsync-test') || pathname.startsWith('/dev/lipsync')) {
+    return <LipSyncTestPage />;
   }
 
   return <App />;

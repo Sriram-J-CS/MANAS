@@ -272,7 +272,16 @@ class SpeechEngine {
   }
 
   public getAudioElement(): HTMLAudioElement | null {
-    return this.currentAudioElement;
+    return speechGateway.getCurrentAudio() || this.currentAudioElement;
+  }
+
+  public isAudioElementPlaying(): boolean {
+    return speechGateway.isAudioPlaying() || Boolean(
+      this.currentAudioElement &&
+      !this.currentAudioElement.paused &&
+      !this.currentAudioElement.ended &&
+      this.currentAudioElement.currentTime > 0
+    );
   }
 
   /**

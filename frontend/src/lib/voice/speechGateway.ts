@@ -553,6 +553,17 @@ class SpeechGateway {
     this.currentUtterance = utt;
     window.speechSynthesis.speak(utt);
   }
+
+  public getCurrentAudio(): HTMLAudioElement | null {
+    return this.currentAudio;
+  }
+
+  public isAudioPlaying(): boolean {
+    if (this.currentAudio && !this.currentAudio.paused && !this.currentAudio.ended && this.currentAudio.currentTime > 0) {
+      return true;
+    }
+    return false;
+  }
 }
 
 export const speechGateway = new SpeechGateway();

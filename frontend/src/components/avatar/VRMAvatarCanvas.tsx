@@ -154,19 +154,63 @@ function createProceduralGlasses(shape: string = 'round', frameColorHex: string 
 }
 
 /**
- * Tints an MToon/Standard material by ratio target/original average color,
- * preserving underlying texture luminance while shifting tone, and adjusting shadeColor.
+ * Tints an MToon/Standard skin material by preserving luminance:
+ * - Shifts only hue & saturation toward target skin tone
+ * - Clamps per-channel ratio strictly to 0.7 - 1.25
+ * - Prevents blushing, lip, or cheek over-saturation
  */
-function tintMaterial(mat: any, targetHex?: string): void {
+function tintSkinMaterial(mat: any, targetHex?: string): void {
+  if (!targetHex || !mat || !mat.color) return;
+  const target = new THREE.Color(targetHex);
+  const orig = mat.userData.originalColor || mat.color;
+
+  const origHsl = { h: 0, s: 0, l: 0 };
+  const targetHsl = { h: 0, s: 0, l: 0 };
+  orig.getHSL(origHsl);
+  target.getHSL(targetHsl);
+
+  // Preserve luminance: retain original lightness while shifting hue and moderate saturation
+  const tinted = new THREE.Color();
+  const blendedH = targetHsl.h;
+  const blendedS = THREE.MathUtils.lerp(origHsl.s, targetHsl.s, 0.6);
+  const preservedL = origHsl.l;
+  tinted.setHSL(blendedH, blendedS, preservedL);
+
+  // Clamp per-channel ratio strictly to 0.7 - 1.25
+  const safeDiv = (n: number, d: number) => (d > 0.001 ? n / d : 1.0);
+  const ratioR = THREE.MathUtils.clamp(safeDiv(tinted.r, orig.r), 0.7, 1.25);
+  const ratioG = THREE.MathUtils.clamp(safeDiv(tinted.g, orig.g), 0.7, 1.25);
+  const ratioB = THREE.MathUtils.clamp(safeDiv(tinted.b, orig.b), 0.7, 1.25);
+
+  mat.color.setRGB(
+    THREE.MathUtils.clamp(orig.r * ratioR, 0, 1),
+    THREE.MathUtils.clamp(orig.g * ratioG, 0, 1),
+    THREE.MathUtils.clamp(orig.b * ratioB, 0, 1)
+  );
+
+  if (mat.shadeColor) {
+    const origShade = mat.userData.originalShadeColor || mat.shadeColor;
+    mat.shadeColor.setRGB(
+      THREE.MathUtils.clamp(origShade.r * ratioR, 0, 1),
+      THREE.MathUtils.clamp(origShade.g * ratioG, 0, 1),
+      THREE.MathUtils.clamp(origShade.b * ratioB, 0, 1)
+    );
+  }
+  mat.needsUpdate = true;
+}
+
+/**
+ * Standard non-skin material tint (hair, accessories, etc.)
+ */
+function tintGeneralMaterial(mat: any, targetHex?: string): void {
   if (!targetHex || !mat || !mat.color) return;
   const target = new THREE.Color(targetHex);
   const orig = mat.userData.originalColor || mat.color;
   const origAvg = Math.max(0.01, (orig.r + orig.g + orig.b) / 3);
 
-  // Ratio target/original average
-  const ratioR = target.r / origAvg;
-  const ratioG = target.g / origAvg;
-  const ratioB = target.b / origAvg;
+  const ratioR = THREE.MathUtils.clamp(target.r / origAvg, 0.4, 2.0);
+  const ratioG = THREE.MathUtils.clamp(target.g / origAvg, 0.4, 2.0);
+  const ratioB = THREE.MathUtils.clamp(target.b / origAvg, 0.4, 2.0);
 
   mat.color.setRGB(
     Math.min(1, Math.max(0, orig.r * ratioR)),
@@ -174,7 +218,6 @@ function tintMaterial(mat: any, targetHex?: string): void {
     Math.min(1, Math.max(0, orig.b * ratioB))
   );
 
-  // Adjust shadeColor for MToon cell-shading depth
   if (mat.shadeColor) {
     const origShade = mat.userData.originalShadeColor || mat.shadeColor;
     const shadeAvg = Math.max(0.01, (origShade.r + origShade.g + origShade.b) / 3);
@@ -241,8 +284,21 @@ export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttribu
           mat.userData.originalShadeColor = mat.shadeColor.clone();
         }
 
+        const name = (mat.name || '').toLowerCase();
+
+        // Transparency and depth rendering order fixes
+        if (name.includes('brow') || name.includes('eyelash') || name.includes('eyeline')) {
+          mesh.renderOrder = 2;
+          mat.depthWrite = false;
+        } else if (name.includes('mouth') || name.includes('lip')) {
+          mesh.renderOrder = 1;
+        } else if (name.includes('skin') || name.includes('face') || name.includes('body')) {
+          mesh.renderOrder = 0;
+          mat.depthWrite = true;
+        }
+
         if (!attrs) {
-          // Reset to default
+          // Reset to default original colors
           if (mat.userData.originalColor && mat.color) {
             mat.color.copy(mat.userData.originalColor);
           }
@@ -253,18 +309,21 @@ export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttribu
           return;
         }
 
-        const name = (mat.name || '').toLowerCase();
-
-        // 1. Skin tone (face and body skin)
-        if (
-          attrs.skin_tone_hex &&
+        // 1. Skin tone: apply strictly to skin materials (NOT mouth, lips, eyes, blush overlay)
+        const isSkinMaterial =
           (name.includes('skin') || name.includes('face') || name.includes('body')) &&
-          !name.includes('eye') &&
           !name.includes('mouth') &&
+          !name.includes('lip') &&
+          !name.includes('eye') &&
           !name.includes('brow') &&
-          !name.includes('hair')
-        ) {
-          tintMaterial(mat, attrs.skin_tone_hex);
+          !name.includes('eyelash') &&
+          !name.includes('eyeline') &&
+          !name.includes('hair') &&
+          !name.includes('blush') &&
+          !name.includes('overlay');
+
+        if (attrs.skin_tone_hex && isSkinMaterial) {
+          tintSkinMaterial(mat, attrs.skin_tone_hex);
         }
 
         // 2. Hair color (hair, hair back, bangs)
@@ -272,7 +331,7 @@ export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttribu
           attrs.hair_color_hex &&
           (name.includes('hair') || name.includes('hairback') || name.includes('hair_back') || name.includes('bangs'))
         ) {
-          tintMaterial(mat, attrs.hair_color_hex);
+          tintGeneralMaterial(mat, attrs.hair_color_hex);
         }
 
         // 3. Eye Iris color
@@ -280,15 +339,15 @@ export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttribu
           attrs.eye_color_hex &&
           (name.includes('iris') || name.includes('eyeiris') || name.includes('eye_iris'))
         ) {
-          tintMaterial(mat, attrs.eye_color_hex);
+          tintGeneralMaterial(mat, attrs.eye_color_hex);
         }
 
-        // 4. Lip color
+        // 4. Lip color (mouth/lip materials only)
         if (
           attrs.lip_color_hex &&
-          (name.includes('mouth') || name.includes('lip'))
+          (name.includes('facemouth') || name.includes('mouth') || name.includes('lip'))
         ) {
-          tintMaterial(mat, attrs.lip_color_hex);
+          tintGeneralMaterial(mat, attrs.lip_color_hex);
         }
       });
     }
@@ -737,6 +796,9 @@ function VRMModelInner({
       : blinkProgressRef.current * 2;
 
     // 7. Expressions Crossfade (400ms transition)
+    const isAudioPlaying = speechEngine.isAudioElementPlaying?.() || false;
+    const isSpeakingActive = isAudioPlaying || (isSpeaking && audioEnergy > 0.05);
+
     const exprFactor = 1 - Math.exp(-delta * 7.5);
     const cur = currentExprWeights.current;
     const tgt = targetExprWeights.current;
@@ -748,17 +810,36 @@ function VRMModelInner({
 
     if (vrm.expressionManager) {
       try {
+        // While speaking: emotion expression weights capped at <= 0.25
+        const maxEmotion = isSpeakingActive ? 0.25 : 1.0;
+        const effRelaxed = Math.min(maxEmotion, Math.max(0, cur.relaxed));
+        const effSad = Math.min(maxEmotion, Math.max(0, cur.sad));
+        const effHappy = Math.min(maxEmotion, Math.max(0, cur.happy));
+        const effSurprised = Math.min(maxEmotion, Math.max(0, cur.surprised));
+
         vrm.expressionManager.setValue('blink', THREE.MathUtils.clamp(blinkVal, 0, 1));
-        vrm.expressionManager.setValue('relaxed', cur.relaxed);
-        vrm.expressionManager.setValue('sad', cur.sad);
-        vrm.expressionManager.setValue('happy', cur.happy);
-        vrm.expressionManager.setValue('surprised', cur.surprised);
+        vrm.expressionManager.setValue('relaxed', effRelaxed);
+        vrm.expressionManager.setValue('sad', effSad);
+        vrm.expressionManager.setValue('happy', effHappy);
+        vrm.expressionManager.setValue('surprised', effSurprised);
+
+        // Check each expression's overrideMouth and reset unused/stuck expressions to 0
+        const activeSet = new Set(['blink', 'relaxed', 'sad', 'happy', 'surprised', 'aa', 'ih', 'ou', 'ee', 'oh']);
+        const allExprs = (vrm.expressionManager as any).expressions || [];
+        for (const exp of allExprs) {
+          const expName = exp.expressionName;
+          if (isSpeakingActive && exp.overrideMouth && exp.overrideMouth !== 'none') {
+            vrm.expressionManager.setValue(expName, 0);
+          } else if (!activeSet.has(expName)) {
+            vrm.expressionManager.setValue(expName, 0);
+          }
+        }
       } catch (_) {}
     }
 
-    // 8. Real TTS Audio Analyser Lip-Sync (A/I/U/E/O mapped to aa/ih/ou/ee/oh)
+    // 8. Real TTS Audio Analyser Lip-Sync (real audio only, noise-gated)
     const analyser = speechEngine.getAnalyserNode();
-    lipSyncRef.current.update(vrm, delta, isSpeaking, audioEnergy, analyser, time);
+    lipSyncRef.current.update(vrm, delta, isSpeakingActive, analyser);
   });
 
   return null;

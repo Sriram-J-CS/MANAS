@@ -237,17 +237,18 @@ export class MediaPipeGeminiProvider implements PhotoAvatarProvider {
 
       const landmarks = landmarkerResult.faceLandmarks[0];
 
-      // 3. Sample Skin Color (forehead 151, left cheek 234, right cheek 454)
-      const forehead = landmarks[151] || landmarks[10];
-      const leftCheek = landmarks[234] || landmarks[117];
-      const rightCheek = landmarks[454] || landmarks[347];
+      // 3. Sample Skin Color strictly from skin-only pixels (forehead center 151, left 108, right 337)
+      // Strictly avoid cheeks/nose (which have blush/redness) and lips (which have lip color)
+      const foreheadCenter = landmarks[151] || landmarks[10];
+      const foreheadLeft = landmarks[108] || landmarks[67];
+      const foreheadRight = landmarks[337] || landmarks[297];
 
-      const skinForehead = samplePatchColor(ctx, forehead.x * width, forehead.y * height, 4, lighting);
-      const skinLeftCheek = samplePatchColor(ctx, leftCheek.x * width, leftCheek.y * height, 4, lighting);
-      const skinRightCheek = samplePatchColor(ctx, rightCheek.x * width, rightCheek.y * height, 4, lighting);
+      const skinForehead = samplePatchColor(ctx, foreheadCenter.x * width, foreheadCenter.y * height, 4, lighting);
+      const skinLeft = samplePatchColor(ctx, foreheadLeft.x * width, foreheadLeft.y * height, 4, lighting);
+      const skinRight = samplePatchColor(ctx, foreheadRight.x * width, foreheadRight.y * height, 4, lighting);
 
-      // Cheeks give best lighting-balanced skin tone
-      const detectedSkin = skinLeftCheek || skinRightCheek || skinForehead || '#F0C8A0';
+      // Clean forehead pixels represent true baseline skin tone without blush/makeup interference
+      const detectedSkin = skinForehead || skinLeft || skinRight || '#F0C8A0';
 
       // 4. Sample Hair Color (Hair Segmenter mask or crown heuristics)
       let detectedHair = '#2C1B18';
