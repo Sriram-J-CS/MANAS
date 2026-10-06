@@ -38,6 +38,7 @@ import { MoodJourneyDrawer } from './chat/MoodJourneyDrawer';
 import { BreathingWidget } from './chat/BreathingWidget';
 import { GroundingWidget } from './chat/GroundingWidget';
 import { speechEngine } from '../lib/voice/speechEngine';
+import { speechGateway } from '../lib/voice/speechGateway';
 import { getMascotConfig, type MascotConfig } from '../lib/mascot/mascotConfig';
 import { avatar } from '../lib/avatar/avatarConfigService';
 import { FeedbackDashboardModal } from './admin/FeedbackDashboardModal';
@@ -406,6 +407,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   // Barge-in: immediately stop speech synthesis and clear streaming sentence queue
   const handleBargeIn = useCallback(() => {
     speechEngine.stopSpeaking();
+    speechGateway.stopSpeaking();
     ttsQueueRef.current = [];
     isTTSPlayingRef.current = false;
     currentTTSMsgIdRef.current = null;
@@ -499,18 +501,49 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     [playNextQueuedSentence]
   );
 
-  // Speak response aloud (replay on demand or full text)
+  // Speak response aloud (seamless continuous speech across full text with natural ~0.1s pauses)
   const speakResponse = (text: string, _lang = 'en', messageId?: string) => {
     if (!text.trim()) return;
     handleBargeIn();
-    const { sentences, remaining } = extractFinishedSentences(text);
-    const toPlay = sentences.length > 0 ? sentences : [text.trim()];
-    if (remaining.trim() && sentences.length > 0) {
-      toPlay.push(remaining.trim());
-    }
-    for (const s of toPlay) {
-      enqueueSentenceTTS(s, messageId);
-    }
+
+    let callTimeCompanion: 'girl' | 'boy' = 'girl';
+    let callTimeTone = '';
+    try {
+      const raw = localStorage.getItem('manas_twin_profile');
+      if (raw) {
+        const p = JSON.parse(raw);
+        const c = (p.companion || p.avatarType || 'girl').toLowerCase();
+        callTimeCompanion = c === 'boy' ? 'boy' : 'girl';
+        callTimeTone = (p.voiceTone || '').toLowerCase();
+      }
+    } catch (_) { }
+
+    setIsAvatarSpeaking(true);
+    if (messageId) setSpeakingMessageId(messageId);
+
+    speechGateway.speak({
+      text: text.trim(),
+      lang: activeLanguage || userProfile.language || 'en',
+      gender: callTimeCompanion,
+      tone: callTimeTone,
+      purpose: 'chat_reply',
+      pitch: userProfile.voicePitch,
+      onEnergy: (energy) => setAudioEnergy(energy),
+      onStart: () => {
+        setIsAvatarSpeaking(true);
+        if (messageId) setSpeakingMessageId(messageId);
+      },
+      onEnd: () => {
+        setIsAvatarSpeaking(false);
+        setSpeakingMessageId(null);
+        setAudioEnergy(0);
+      },
+      onError: () => {
+        setIsAvatarSpeaking(false);
+        setSpeakingMessageId(null);
+        setAudioEnergy(0);
+      },
+    });
   };
 
   // Load session memory from DB on mount (Requirement 6)
@@ -620,13 +653,15 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       }
 
       // 3. New conversation welcome message
-      const nm = userProfile.name || 'Friend';
-      let welcome = `Hey ${nm}, I am right here beside you. Whatever you are feeling right now, you don't have to carry it alone. Take a slow, quiet breath with me. How is your mind feeling today?`;
+      const nm = userProfile.name && userProfile.name.toLowerCase() !== 'friend' ? userProfile.name : '';
+      let welcome = `Hey${nm ? ` ${nm}` : ''}, I am right here beside you. Whatever you are feeling right now, you don't have to carry it alone. Take a slow, quiet breath with me. How is your mind feeling today?`;
 
       if (userProfile.language === 'ta') {
-        welcome = `வணக்கம் ${nm}! நான் உங்கள் மனநல AI தோழன். கல்லூரி மற்றும் வேலைச்சுமை அதிகமாக இருந்தாலும், நீங்கள் தனியாக இந்த பாரத்தை சுமக்க வேண்டாம். நாம் இருவரும் சேர்ந்து ஆழ்ந்து ஒரு முறை மூச்சு விடுவோம். இப்போது உங்கள் மனம் எப்படி உணர்கிறது?`;
+        const taName = nm ? (nm.toLowerCase() === 'sriram' ? 'ஸ்ரீராம்' : nm) : '';
+        welcome = `வணக்கம்${taName ? ` ${taName}` : ''}! நான் உங்களுடன் இருக்கும் MANAS. கல்லூரி அல்லது வேலைச்சுமை அதிகமாக இருந்தாலும், நீங்கள் தனியாக இந்த பாரத்தை சுமக்க வேண்டாம். நாம் இருவரும் சேர்ந்து அமைதியாக ஒரு முறை மூச்சு விடுவோம். இப்போது உங்கள் மனம் எப்படி உணர்கிறது?`;
       } else if (userProfile.language === 'hi') {
-        welcome = `नमस्ते ${nm}! मैं आपका डिजिटल मेंटल साथी हूँ। जब तनाव बहुत भारी लगने लगे, तो याद रखिए कि आप अकेले नहीं हैं। आइए साथ में एक गहरी और शांत सांस लें। अभी आपके मन में क्या चल रहा है?`;
+        const hiName = nm ? (nm.toLowerCase() === 'sriram' ? 'श्रीराम' : nm) : '';
+        welcome = `नमस्ते${hiName ? ` ${hiName}` : ''}! मैं आपके साथ हमेशा रहने वाला MANAS साथी हूँ। जब तनाव बहुत भारी लगने लगे, तो याद रखिए कि आप अकेले नहीं हैं। आइए साथ में एक गहरी और शांत सांस लें। अभी आपके मन में क्या चल रहा है?`;
       }
 
       const welcomeMsg: ChatMessage = {

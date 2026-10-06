@@ -55,24 +55,50 @@ def get_sarvam_cache_key(text: str, speaker: str, lang: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 def strip_markdown_and_normalize(text: str) -> str:
-    """Removes markdown symbols and cleans whitespace for clean acoustic prosody."""
+    """
+    Removes markdown symbols, emojis, and normalizes punctuation for clean, continuous acoustic prosody.
+    Eliminates awkward long gaps at '.' and ',' by regularizing spacing and collapsing redundant punctuation.
+    """
     if not text:
         return ""
-    # Strip markdown bold, italics, headers, links, and code backticks
+    # Strip markdown bold, italics, headers, links, code backticks
     clean = re.sub(r"[*_~`#\[\]\(\)<>]|https?://\S+", " ", text)
-    # Strip emojis
-    clean = re.sub(r"[\U00010000-\U0010ffff]", "", clean)
+    # Strip emojis and pictographs
+    clean = re.sub(r"[\U00010000-\U0010ffff]|[\u200d\uFE0F\u2060\u200B]|[\u2600-\u27BF]|[\uD83C-\uDBFF\uDC00-\uDFFF]", "", clean)
+
+    # Normalize multiple ellipses (...) and double periods (..) to a single clean period
+    clean = re.sub(r"\.{2,}", ".", clean)
+    # Normalize multiple commas
+    clean = re.sub(r",+", ",", clean)
+    # Normalize mixed punctuation like ',.' or '.,' or ';,'
+    clean = re.sub(r"[,;]+\.", ".", clean)
+    clean = re.sub(r"\.[,;]+", ".", clean)
+
+    # Strip space BEFORE punctuation (e.g. 'word , word' -> 'word, word')
+    clean = re.sub(r"\s+([,.!?|।])", r"\1", clean)
+
+    # Ensure single clean space AFTER punctuation (e.g. 'word,word' -> 'word, word')
+    clean = re.sub(r"([,.!?|।])(?=[^\s\d])", r"\1 ", clean)
+
+    # Replace linebreaks with a single space so sentences flow continuously
+    clean = re.sub(r"\s*\n+\s*", " ", clean)
+
     return re.sub(r"\s+", " ", clean).strip()
 
-def split_text_into_chunks(text: str, max_chars: int = 220) -> List[str]:
+def split_text_into_chunks(text: str, max_chars: int = 2000) -> List[str]:
     """
-    Groups 2-3 sentences (max ~220 characters) per request for optimal prosody and natural flow.
+    Groups sentences into natural spoken blocks (max 2000 chars, well within Sarvam's 2500 limit).
+    Allows complete companion messages (40-100 words) to synthesize continuously in one seamless audio file.
     """
     cleaned = strip_markdown_and_normalize(text)
     if not cleaned:
         return []
 
-    # Split by standard sentence delimiters
+    # If within limit, keep as a single continuous passage for uninterrupted prosody
+    if len(cleaned) <= max_chars:
+        return [cleaned]
+
+    # Split by standard sentence delimiters only if text exceeds 2000 chars
     raw_sentences = [s.strip() for s in RE_SENTENCE_SPLIT.split(cleaned) if s.strip()]
     if not raw_sentences:
         raw_sentences = [cleaned]
@@ -81,7 +107,6 @@ def split_text_into_chunks(text: str, max_chars: int = 220) -> List[str]:
     current_chunk = ""
 
     for s in raw_sentences:
-        # Check if adding this sentence stays within ~220 chars
         candidate = f"{current_chunk} {s}".strip() if current_chunk else s
         if len(candidate) <= max_chars:
             current_chunk = candidate
@@ -89,7 +114,6 @@ def split_text_into_chunks(text: str, max_chars: int = 220) -> List[str]:
             if current_chunk:
                 chunks.append(current_chunk)
             if len(s) > max_chars:
-                # Sub-split overly long sentences safely at spaces
                 words = s.split()
                 sub = ""
                 for w in words:
@@ -344,8 +368,17 @@ async def sarvamTts(
         if audio_b64:
             audios.append(audio_b64)
 
-    # First sentence starts immediately for fast playback
-    primary_audio = audios[0] if audios else None
+    # Concatenate all synthesized segments into one seamless, continuous audio stream
+    primary_audio = None
+    if audios:
+        if len(audios) == 1:
+            primary_audio = audios[0]
+        else:
+            try:
+                combined_bytes = b"".join(base64.b64decode(a) for a in audios)
+                primary_audio = base64.b64encode(combined_bytes).decode("ascii")
+            except Exception:
+                primary_audio = audios[0]
 
     return {
         "audio_base64": primary_audio,

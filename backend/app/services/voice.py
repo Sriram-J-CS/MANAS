@@ -443,6 +443,15 @@ def sanitize_spoken_text(text: str, language: str = "en") -> str:
     if lang_code != "en":
         clean = transliterate_loanwords(clean, lang_code)
 
+    # Normalize punctuation pauses (~0.1s natural pause, eliminate long gaps and ellipses)
+    clean = re.sub(r"\.{2,}", ".", clean)
+    clean = re.sub(r",+", ",", clean)
+    clean = re.sub(r"[,;]+\.", ".", clean)
+    clean = re.sub(r"\.[,;]+", ".", clean)
+    clean = re.sub(r"\s+([,.!?|।])", r"\1", clean)
+    clean = re.sub(r"([,.!?|।])(?=[^\s\d])", r"\1 ", clean)
+    clean = re.sub(r"\s*\n+\s*", " ", clean)
+
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean
 
