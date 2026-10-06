@@ -976,8 +976,25 @@ def clear_chat_history(user_id: str, current_uid: Optional[str] = Depends(get_cu
     conn.close()
     return {"status": "success", "message": f"Chat history for user {effective_uid} cleared"}
 
+class ConversationTitleRequest(BaseModel):
+    first_message: str
+    first_reply: Optional[str] = ""
+
+@app.post("/api/conversations/{conversation_id}/generate-title")
+async def generate_conversation_title_route(
+    conversation_id: str,
+    req: ConversationTitleRequest,
+    current_uid: Optional[str] = Depends(get_current_user_id)
+):
+    """
+    Generates a 3-5 word title for a conversation using gemini-3.8-flash (or fallback).
+    """
+    title = await gemini.generate_conversation_title(req.first_message, req.first_reply or "")
+    return {"status": "success", "conversation_id": conversation_id, "title": title}
+
 class SessionSummaryRequest(BaseModel):
     user_id: Optional[str] = None
+
     messages: Optional[List[Dict[str, str]]] = None
 
 @app.post("/api/session/summary")

@@ -854,6 +854,52 @@ class GeminiProvider:
             "summary": "User completed a supportive conversation."
         }
 
+    async def generate_conversation_title(self, first_message: str, first_reply: str = "") -> str:
+        """
+        Generates a concise 3-5 word title using gemini-3.8-flash for a new conversation.
+        Fallback: first 30 chars of the user's message.
+        """
+        fallback = (first_message or "").strip()[:30]
+        if not fallback:
+            fallback = "New Conversation"
+
+        if not self.is_configured() or not (first_message or "").strip():
+            return fallback
+
+        prompt = (
+            "Generate a clear, gentle, 3 to 5 word title summarizing the user's topic or feeling "
+            "based on this initial exchange. Do NOT use quotes, markdown, or punctuation.\n"
+            f"User: {first_message}\n"
+            f"Assistant: {(first_reply or '')[:150]}\n"
+            "Return ONLY the 3-5 word title in plain text."
+        )
+
+        target_model = self.get_model_name()
+        url = f"{self.base_url}/{target_model}:generateContent?key={self.api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 30
+            }
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
+                    raw = parts[0].get("text", "").strip()
+                    cleaned = re.sub(r'["\'\*\#]', '', raw).strip().strip('.').strip()
+                    if cleaned and len(cleaned.split()) <= 8:
+                        return cleaned
+        except Exception as e:
+            logger.warning("Conversation title generation failed: %s", e)
+
+        return fallback
+
 
 # Global singleton instance
 gemini = GeminiProvider()
+

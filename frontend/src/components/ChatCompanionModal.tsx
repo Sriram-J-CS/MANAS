@@ -21,6 +21,8 @@ import {
   Volume2,
   VolumeX,
   Bell,
+  Plus,
+  Clock,
 } from 'lucide-react';
 import { AutoSaveToast, type AutoSaveEventData } from './chat/AutoSaveToast';
 import type { UserProfile } from './OnboardingModal';
@@ -35,6 +37,17 @@ import { MascotCustomizer } from './mascot/MascotCustomizer';
 import { ChatInput } from './chat/ChatInput';
 import { ChatMessages } from './chat/ChatMessages';
 import { MoodJourneyDrawer } from './chat/MoodJourneyDrawer';
+import { ChatHistoryDrawer } from './chat/ChatHistoryDrawer';
+import {
+  listConversations,
+  createConversation,
+  renameConversation,
+  deleteConversation,
+  listMessages,
+  saveMessage,
+  generateAndSaveTitle,
+  type ConversationItem,
+} from '../lib/chat/conversationService';
 import { BreathingWidget } from './chat/BreathingWidget';
 import { GroundingWidget } from './chat/GroundingWidget';
 import { speechEngine } from '../lib/voice/speechEngine';
@@ -181,6 +194,11 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   const [isLangMenuOpen, setIsLangMenuOpen] = useState<boolean>(false);
   const [isAvatarStudioOpen, setIsAvatarStudioOpen] = useState<boolean>(false);
   const [activeAutoSave, setActiveAutoSave] = useState<AutoSaveEventData | null>(null);
+
+  // Chat History Drawer & Persistent Multi-User Conversations
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState<boolean>(false);
 
   // Simple Voice Mute State (Kept as single simple toggle)
   const [isVoiceMuted, setIsVoiceMuted] = useState<boolean>(sharedAudioManager.getIsVoiceMuted());
@@ -621,78 +639,119 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     }
   };
 
-  // Load chat history from SQLite Database on mount (with localStorage fallback)
+  // Helper to generate personalized welcome greeting
+  const getWelcomeMessage = useCallback((profile: UserProfile): ChatMessage => {
+    const nm = profile.name && profile.name.toLowerCase() !== 'friend' ? profile.name : '';
+    let welcome = `Hey${nm ? ` ${nm}` : ''}, I am right here beside you. Whatever you are feeling right now, you don't have to carry it alone. Take a slow, quiet breath with me. How is your mind feeling today?`;
+
+    if (profile.language === 'ta') {
+      welcome = `வணக்கம்${nm ? ` ${nm}` : ''}! நான் உங்களுடன் இருக்கும் MANAS. கல்லூரி அல்லது வேலைச்சுமை அதிகமாக இருந்தாலும், நீங்கள் தனியாக இந்த பாரத்தை சுமக்க வேண்டாம். நாம் இருவரும் சேர்ந்து அமைதியாக ஒரு முறை மூச்சு விடுவோம். இப்போது உங்கள் மனம் எப்படி உணர்கிறது?`;
+    } else if (profile.language === 'hi') {
+      welcome = `नमस्ते${nm ? ` ${nm}` : ''}! मैं आपके साथ हमेशा रहने वाला MANAS साथी हूँ। जब तनाव बहुत भारी लगने लगे, तो याद रखिए कि आप अकेले नहीं हैं। आइए साथ में एक गहरी और शांत सांस लें। अभी आपके मन में क्या चल रहा है?`;
+    }
+
+    return {
+      id: `welcome_${Date.now()}`,
+      sender: 'mascot',
+      text: welcome,
+      time: 'Just now',
+      expression: 'calm',
+      state_label: 'Attuned & Present',
+      stress_level: 3,
+    };
+  }, []);
+
+  // Load conversation list and active conversation on mount or user change
   useEffect(() => {
     const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
     let isMounted = true;
 
-    async function loadHistory() {
-      // 1. Fetch from Database
-      const remoteMsgs = await fetchChatHistory(userId);
+    async function initConversations() {
+      const convList = await listConversations(userId);
       if (!isMounted) return;
+      setConversations(convList);
 
-      if (remoteMsgs && remoteMsgs.length > 0) {
-        setMessages(remoteMsgs);
-        // Persist to local cache
-        localStorage.setItem(`manas_chat_${userId}`, JSON.stringify(remoteMsgs));
-        setTimeout(() => scrollToBottom(false), 80);
-        return;
+      if (convList.length > 0) {
+        // Open most recent conversation
+        const mostRecent = convList[0];
+        setActiveConversationId(mostRecent.id);
+        const msgs = await listMessages(mostRecent.id, userId);
+        if (!isMounted) return;
+        if (msgs.length > 0) {
+          setMessages(msgs);
+          setTimeout(() => scrollToBottom(false), 80);
+          return;
+        }
       }
 
-      // 2. Fallback to localStorage cache
-      const cached = localStorage.getItem(`manas_chat_${userId}`);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setMessages(parsed);
-            setTimeout(() => scrollToBottom(false), 80);
-            return;
-          }
-        } catch (_) { }
-      }
-
-      // 3. New conversation welcome message
-      const nm = userProfile.name && userProfile.name.toLowerCase() !== 'friend' ? userProfile.name : '';
-      let welcome = `Hey${nm ? ` ${nm}` : ''}, I am right here beside you. Whatever you are feeling right now, you don't have to carry it alone. Take a slow, quiet breath with me. How is your mind feeling today?`;
-
-      if (userProfile.language === 'ta') {
-        welcome = `வணக்கம்${nm ? ` ${nm}` : ''}! நான் உங்களுடன் இருக்கும் MANAS. கல்லூரி அல்லது வேலைச்சுமை அதிகமாக இருந்தாலும், நீங்கள் தனியாக இந்த பாரத்தை சுமக்க வேண்டாம். நாம் இருவரும் சேர்ந்து அமைதியாக ஒரு முறை மூச்சு விடுவோம். இப்போது உங்கள் மனம் எப்படி உணர்கிறது?`;
-      } else if (userProfile.language === 'hi') {
-        welcome = `नमस्ते${nm ? ` ${nm}` : ''}! मैं आपके साथ हमेशा रहने वाला MANAS साथी हूँ। जब तनाव बहुत भारी लगने लगे, तो याद रखिए कि आप अकेले नहीं हैं। आइए साथ में एक गहरी और शांत सांस लें। अभी आपके मन में क्या चल रहा है?`;
-      }
-
-      const welcomeMsg: ChatMessage = {
-        id: `welcome_${Date.now()}`,
-        sender: 'mascot',
-        text: welcome,
-        time: 'Just now',
-        expression: 'calm',
-        state_label: 'Attuned & Present',
-        stress_level: 3,
-      };
-      setMessages([welcomeMsg]);
-      localStorage.setItem(`manas_chat_${userId}`, JSON.stringify([welcomeMsg]));
-
-      if (voiceOutputEnabled) {
-        speakResponse(welcome, userProfile.language, welcomeMsg.id);
+      // No conversations yet or empty: show welcome message
+      const welcome = getWelcomeMessage(userProfile);
+      setMessages([welcome]);
+      if (voiceOutputEnabledRef.current) {
+        speakResponse(welcome.text, userProfile.language, welcome.id);
       }
     }
 
-    loadHistory();
+    initConversations();
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [userProfile.id, getWelcomeMessage]);
 
-  // Save conversation locally on update
-  useEffect(() => {
+  const handleSelectConversation = async (convId: string) => {
+    if (convId === activeConversationId) return;
+    handleBargeIn();
+    setActiveConversationId(convId);
     const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
-    const cleanToStore = messages.filter((m) => !m.isThinking && !m.isError);
-    if (cleanToStore.length > 0) {
-      localStorage.setItem(`manas_chat_${userId}`, JSON.stringify(cleanToStore));
+    const msgs = await listMessages(convId, userId);
+    if (msgs.length > 0) {
+      setMessages(msgs);
+    } else {
+      const welcome = getWelcomeMessage(userProfile);
+      setMessages([welcome]);
     }
-  }, [messages, userProfile.id]);
+    setTimeout(() => scrollToBottom(false), 80);
+  };
+
+  const handleNewChat = async () => {
+    handleBargeIn();
+    const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+    const newConv = await createConversation('New Conversation', userId);
+    setActiveConversationId(newConv.id);
+    setConversations((prev) => [newConv, ...prev.filter((c) => c.id !== newConv.id)]);
+
+    const welcome = getWelcomeMessage(userProfile);
+    setMessages([welcome]);
+    await saveMessage(newConv.id, 'assistant', welcome.text, { id: welcome.id, emotion: 'calm' }, userId);
+    setQuickReplies(getInitialQuickReplies(activeLanguage || userProfile.language || 'en'));
+    setTimeout(() => scrollToBottom(false), 80);
+  };
+
+  const handleRenameConversation = async (convId: string, newTitle: string) => {
+    const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+    const success = await renameConversation(convId, newTitle, userId);
+    if (success) {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === convId ? { ...c, title: newTitle } : c))
+      );
+    }
+  };
+
+  const handleDeleteConversation = async (convId: string) => {
+    const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+    await deleteConversation(convId, userId);
+    const remaining = conversations.filter((c) => c.id !== convId);
+    setConversations(remaining);
+
+    if (activeConversationId === convId) {
+      if (remaining.length > 0) {
+        handleSelectConversation(remaining[0].id);
+      } else {
+        handleNewChat();
+      }
+    }
+  };
+
 
   /**
    * Main Conversational Loop:
@@ -711,6 +770,18 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     const timestamp = Date.now();
     const userMsgId = `user_${timestamp}_${Math.random().toString(36).substring(2, 7)}`;
     const botMsgId = `bot_${timestamp + 1}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const userId = userProfile.id || localStorage.getItem('manas_user_id') || 'default_user';
+    let currentConvId = activeConversationId;
+    if (!currentConvId) {
+      const newConv = await createConversation('New Conversation', userId);
+      currentConvId = newConv.id;
+      setActiveConversationId(newConv.id);
+      setConversations((prev) => [newConv, ...prev.filter((c) => c.id !== newConv.id)]);
+    }
+
+    // Save user message in real-time
+    saveMessage(currentConvId, 'user', textToSend.trim(), { id: userMsgId }, userId);
 
     const userMsg: ChatMessage = {
       id: userMsgId,
@@ -867,6 +938,31 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         )
       );
 
+      // Save bot response in real-time
+      if (currentConvId && !res.isError) {
+        saveMessage(currentConvId, 'assistant', res.message, {
+          id: botMsgId,
+          emotion: res.emotion,
+          tool: res.suggest_tool,
+        }, userId);
+
+        // Auto-generate title if default title or first exchange
+        const targetConv = conversations.find((c) => c.id === currentConvId);
+        const shouldGenTitle = !targetConv || targetConv.title === 'New Conversation' || messages.filter((m) => m.sender === 'user').length <= 1;
+        if (shouldGenTitle) {
+          const titleConvId = currentConvId;
+          generateAndSaveTitle(titleConvId, textToSend.trim(), res.message, userId)
+            .then((newTitle) => {
+              if (newTitle) {
+                setConversations((prev) =>
+                  prev.map((c) => (c.id === titleConvId ? { ...c, title: newTitle } : c))
+                );
+              }
+            })
+            .catch(() => {});
+        }
+      }
+
       if (res.isHighRisk || res.crisis) {
         onOpenHelp();
       }
@@ -947,12 +1043,38 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
 
       {/* TOP EDITORIAL BAR */}
       <header className="h-[64px] px-4 md:px-8 border-b border-[#0A0A0A]/10 bg-[#FFFFFF] flex items-center justify-between z-30 shrink-0">
-        <div className="flex items-center gap-3 md:gap-6">
+        <div className="flex items-center gap-2.5 sm:gap-4 md:gap-6">
           <span className="font-mono font-black text-base md:text-lg tracking-[-0.04em] flex items-center gap-1.5">
             MANAS′ <span className="text-xs px-2 py-0.5 rounded-full bg-[#8B5CF6]/10 text-[#8B5CF6] font-mono">3D MASCOT</span>
           </span>
 
-          <span className="hidden sm:inline-block text-xs font-mono text-[#0A0A0A]/60">
+          {/* Chat History Drawer Trigger */}
+          <button
+            type="button"
+            id="chat-history-drawer-button"
+            data-testid="chat-history-drawer-button"
+            onClick={() => setIsHistoryDrawerOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#0A0A0A]/15 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-xs font-mono font-bold text-[#0A0A0A] transition-all cursor-pointer shadow-xs"
+            title="Past Conversations & History"
+          >
+            <Clock className="w-3.5 h-3.5 text-[#8B5CF6]" />
+            <span className="hidden sm:inline">CHATS</span>
+          </button>
+
+          {/* Prominent New Chat Button */}
+          <button
+            type="button"
+            id="new-chat-header-button"
+            data-testid="new-chat-header-button"
+            onClick={handleNewChat}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#8B5CF6] hover:bg-[#7C3AED] text-white text-xs font-mono font-bold transition-all cursor-pointer shadow-xs"
+            title="Start a new chat session"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>NEW CHAT</span>
+          </button>
+
+          <span className="hidden lg:inline-block text-xs font-mono text-[#0A0A0A]/60">
             Companion: <span className="font-bold text-[#0A0A0A]">{mascotConfig.name}</span> ({mascotConfig.personality})
           </span>
         </div>
@@ -1676,6 +1798,18 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
           onDismiss={() => setActiveAutoSave(null)}
         />
       )}
+
+      {/* Persistent Multi-User Chat History Drawer */}
+      <ChatHistoryDrawer
+        isOpen={isHistoryDrawerOpen}
+        onClose={() => setIsHistoryDrawerOpen(false)}
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        onSelectConversation={handleSelectConversation}
+        onNewChat={handleNewChat}
+        onRenameConversation={handleRenameConversation}
+        onDeleteConversation={handleDeleteConversation}
+      />
     </div>
   );
 };
