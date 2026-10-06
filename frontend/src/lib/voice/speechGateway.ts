@@ -205,9 +205,9 @@ class SpeechGateway {
     // ── Gender + Tone resolution at call-time (never stale) ──────────────────
     // Priority: opts.companion > opts.gender > localStorage profile
     const { companion: profileCompanion, voiceTone: profileTone } = resolveCompanionFromProfile();
-    const companionStr = (opts.companion || profileCompanion || 'girl').toLowerCase();
-    const isBoy = companionStr === 'boy' || companionStr === 'male' ||
-                  opts.gender === 'boy' || opts.gender === 'male';
+    const explicitGender = (opts.companion || opts.gender || '').toLowerCase().trim();
+    const companionStr = explicitGender || (profileCompanion || 'girl').toLowerCase().trim();
+    const isBoy = companionStr === 'boy' || companionStr === 'male';
     const genderKey: 'boy' | 'girl' = isBoy ? 'boy' : 'girl';
     const resolvedTone = (opts.tone || profileTone || '').toLowerCase().trim();
 

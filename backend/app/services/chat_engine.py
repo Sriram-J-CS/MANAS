@@ -1071,6 +1071,7 @@ Goal: {strategy_desc}
 {knowledge_context}
 {minor_clause}{crisis_clause}{avoid_clause}
 LANGUAGE: {LANGUAGE_INSTRUCTIONS.get(language, 'Reply in the language the person is writing in, warm and natural.')}
+LANGUAGE SWITCH RULE: Follow the user's selected language ({language}). If the user writes in another language, answer in that language naturally and offer to switch the language setting at the end of your reply.
 
 MOTIVATIONAL INTERVIEWING & STYLE GUIDELINES (OARS):
 1. SPECIFICITY: Reference specific words and situations the user actually said. Never give cold generic lines.

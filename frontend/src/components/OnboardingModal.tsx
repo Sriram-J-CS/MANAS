@@ -31,10 +31,22 @@ import { sharedAudioManager } from '../lib/audio/sharedAudioContext';
 import { ONBOARDING_FIXED_LINES } from '../lib/voice/onboardingVoiceLines';
 
 import type { AvatarAppearanceAttributes } from '../lib/avatar/providers';
+import { mediaPipeGeminiProvider } from '../lib/avatar/providers/MediaPipeGeminiProvider';
+import {
+  supabase,
+  signInWithPhoneOtp,
+  verifyPhoneOtp,
+  linkPhoneToUser,
+  verifyPhoneLinkOtp,
+  createAnonymousSession,
+  normalizePhone,
+  isSmsTestMode,
+} from '../lib/supabase';
 
 export interface UserProfile {
   id?: string;
   name: string;
+  companionName?: string;
   age: number;
   isMinor: boolean;
   guardianConsent: boolean;
@@ -100,7 +112,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   existingProfile,
   onDeleteData
 }) => {
-  // Step state (1: Name, 2: Age, 3: Language, 4: Contact & OTP, 5: Photo, 6: Voice)
+  // Step state (1: Language, 2: Name & Companion, 3: Age, 4: Contact & OTP, 5: Photo, 6: Voice)
   const [step, setStep] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('manas_entry_step_v2');
@@ -109,25 +121,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     return 1;
   });
 
-  // Step 1: Name
-  const [name, setName] = useState<string>(existingProfile?.name || '');
-  const [nameError, setNameError] = useState<string>('');
-  const [companion, setCompanion] = useState<'girl' | 'boy'>(() => {
-    if (existingProfile?.companion) return existingProfile.companion;
-    if (existingProfile?.gender === 'boy') return 'boy';
-    return 'girl'; // default is Girl
-  });
-  const [mascotGesture, setMascotGesture] = useState<string>('idle');
-
-  // Step 2: Age
-  const [age, setAge] = useState<number>(existingProfile?.age || 20);
-  const [guardianConsent, setGuardianConsent] = useState<boolean>(
-    existingProfile?.guardianConsent || false
-  );
-  const [ageError, setAgeError] = useState<string>('');
-  const isMinor = age < 18;
-
-  // Step 3: Language
+  // Step 1: Language
   const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>(() => {
     if (existingProfile?.language && ['en', 'ta', 'hi', 'te', 'kn', 'ml', 'bn', 'mr'].includes(existingProfile.language)) {
       return existingProfile.language as SupportedLanguage;
@@ -137,7 +131,32 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
   const { t } = useI18n(selectedLanguage);
 
-  // Step 4: Contact & OTP
+  // Step 2: Name & Companion
+  const [name, setName] = useState<string>(existingProfile?.name || '');
+  const [nameError, setNameError] = useState<string>('');
+  const [companion, setCompanion] = useState<'girl' | 'boy'>(() => {
+    if (existingProfile?.companion) return existingProfile.companion;
+    if (existingProfile?.gender === 'boy') return 'boy';
+    return 'girl'; // default is Girl
+  });
+  const [companionName, setCompanionName] = useState<string>(() => {
+    if (existingProfile?.companionName) return existingProfile.companionName;
+    return companion === 'boy' ? 'Aarav' : 'Maya';
+  });
+  const [mascotGesture, setMascotGesture] = useState<string>('idle');
+
+  // Step 3: Age (no prefilled default 20)
+  const [age, setAge] = useState<number | ''>(() => {
+    if (typeof existingProfile?.age === 'number') return existingProfile.age;
+    return '';
+  });
+  const [guardianConsent, setGuardianConsent] = useState<boolean>(
+    existingProfile?.guardianConsent || false
+  );
+  const [ageError, setAgeError] = useState<string>('');
+  const isMinor = typeof age === 'number' && age < 18;
+
+  // Step 4: Contact & Supabase Phone OTP
   const [email, setEmail] = useState<string>(existingProfile?.contactEmail || '');
   const [phone, setPhone] = useState<string>(existingProfile?.contactPhone || '+91 ');
   const [contactConsent, setContactConsent] = useState<boolean>(true);
@@ -146,17 +165,24 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   const [otpCode, setOtpCode] = useState<string>('');
   const [devOtpHint, setDevOtpHint] = useState<string>('');
   const [emailVerified, setEmailVerified] = useState<boolean>(
-    existingProfile?.emailVerified || false
+    existingProfile?.emailVerified || existingProfile?.phoneVerified || false
   );
   const [isVerifyingOtp, setIsVerifyingOtp] = useState<boolean>(false);
   const [isSendingOtp, setIsSendingOtp] = useState<boolean>(false);
   const [otpError, setOtpError] = useState<string>('');
   const [resendCooldown, setResendCooldown] = useState<number>(0);
+  const [isLinkingAccount, setIsLinkingAccount] = useState<boolean>(false);
 
-  // Step 5: Photo
+  // Step 5: Photo & 3D Live Avatar Pipeline
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(
     existingProfile?.avatarUrl || null
   );
+  const [appearanceAttrs, setAppearanceAttrs] = useState<AvatarAppearanceAttributes | null>(
+    existingProfile?.appearanceAttributes || null
+  );
+  const [isProcessingPhoto, setIsProcessingPhoto] = useState<boolean>(false);
+  const [showAdjustControls, setShowAdjustControls] = useState<boolean>(false);
+  const [consentGeminiAnalysis, setConsentGeminiAnalysis] = useState<boolean>(true);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -298,6 +324,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       text: textToSpeak,
       lang: targetLang,
       gender: companion || 'girl',
+      companion: companion || 'girl',
+      pitch: companion === 'boy' ? 0.9 : 1.15,
       purpose: 'onboarding_step',
       lineId: currentLineId,
       onStart: () => {
@@ -314,6 +342,21 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       }
     });
   };
+
+  // Check active Supabase session
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        if (user.phone && (user.phone_confirmed_at || user.confirmed_at)) {
+          setPhone(user.phone);
+          setEmailVerified(true);
+        } else if (user.email) {
+          setEmail(user.email);
+          setIsLinkingAccount(true);
+        }
+      }
+    });
+  }, [isOpen]);
 
   // Speak step instruction when entering step or when modal opens
   useEffect(() => {
@@ -380,7 +423,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
   };
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (!videoRef.current) return;
     const canvas = document.createElement('canvas');
     canvas.width = 400;
@@ -392,6 +435,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     setPhotoDataUrl(dataUrl);
     stopCamera();
+    await runPhotoAvatarPipeline(dataUrl);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -402,6 +446,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
       setPhotoDataUrl(dataUrl);
+      runPhotoAvatarPipeline(file);
     };
     reader.readAsDataURL(file);
   };
@@ -479,16 +524,25 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     });
   };
 
+  // Validation flags for Next buttons (Phase 3)
+  const isStep1Valid = Boolean(selectedLanguage);
+  const isStep2Valid = name.trim().length >= 2 && Boolean(companion);
+  const isStep3Valid = typeof age === 'number' && age >= 13 && age <= 100 && (age >= 18 || guardianConsent);
+  const isStep4Valid = Boolean(emailVerified);
+
   // Navigation handlers
   const handleNextStep1 = () => {
-    // Step 1: Language selected -> move to Step 2 (Name)
+    if (!isStep1Valid) return;
     setStep(2);
   };
 
   const handleNextStep2 = () => {
-    // Step 2: Name input
     if (!name.trim()) {
-      setNameError('Please enter your name or a comforting nickname');
+      setNameError('Please enter your name (at least 2 letters)');
+      return;
+    }
+    if (name.trim().length < 2) {
+      setNameError('Name must be at least 2 characters');
       return;
     }
     setNameError('');
@@ -496,49 +550,53 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   };
 
   const handleNextStep3 = () => {
-    // Step 3: Age & Minor Safety
-    if (age < 13) {
-      setAgeError('Users under 13 must speak with a trusted adult or contact Childline 1098.');
+    if (typeof age !== 'number' || age < 13 || age > 100) {
+      setAgeError('Please enter your age between 13 and 100.');
       return;
     }
     if (isMinor && !guardianConsent) {
-      setAgeError(t.steps.age.guardianConsentRequired);
+      setAgeError(t.steps.age.guardianConsentRequired || 'Guardian consent is required for under 18');
       return;
     }
     setAgeError('');
     setStep(4);
   };
 
-  // Skip handler for each step
-  const handleSkipStep = (currentStep: number) => {
+  // Skip handler for each step: ONLY way to proceed with empty input, uses defaults with no error
+  const handleSkipStep = async (currentStep: number) => {
+    // Ensure anonymous Supabase session if user has not signed in yet
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        await createAnonymousSession();
+      }
+    } catch (_) {}
+
     switch (currentStep) {
       case 1:
-        // Skip language -> advance to name with default language
+        if (!selectedLanguage) setSelectedLanguage('en');
         setStep(2);
         break;
       case 2:
-        // Skip name -> set friendly default fallback and proceed
         if (!name.trim()) setName('Friend');
+        if (!companion) setCompanion('girl');
         setNameError('');
         setStep(3);
         break;
       case 3:
-        // Skip age -> set safe adult default 20 to avoid minor consent lock
-        if (!age || age < 18) setAge(20);
+        if (typeof age !== 'number' || age < 18) setAge(20);
+        setGuardianConsent(true);
         setAgeError('');
         setStep(4);
         break;
       case 4:
-        // Skip contact & OTP -> proceed to avatar photo
         setStep(5);
         break;
       case 5:
-        // Skip photo -> stop webcam and proceed to voice setup
         stopCamera();
         setStep(6);
         break;
       case 6:
-        // Skip voice -> finish onboarding with defaults
         handleFinish();
         break;
       default:
@@ -546,11 +604,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
   };
 
-  // Step 4: Send OTP to Mobile Number
+  // Step 4: Send OTP to Mobile Number via Supabase
   const handleSendOtp = async () => {
-    const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
-    if (!cleanPhone || cleanPhone.length < 8) {
-      setContactErrors({ phone: 'Please enter a valid mobile number (e.g. +91 9876543210)' });
+    const rawDigits = phone.trim().replace(/\D/g, '');
+    if (rawDigits.length < 10) {
+      setContactErrors({ phone: 'Please enter a valid 10-digit mobile number (e.g. +91 9876543210)' });
       return;
     }
     setContactErrors({});
@@ -558,22 +616,17 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setOtpError('');
 
     try {
-      const res = await fetch('/api/auth/send-mobile-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: cleanPhone,
-          name: name.trim() || undefined
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Failed to send OTP to mobile number');
+      const formatted = normalizePhone(phone);
+      if (isLinkingAccount) {
+        const res = await linkPhoneToUser(formatted);
+        if (!res.success) throw new Error(res.error || 'Failed to send OTP to mobile number');
+      } else {
+        const res = await signInWithPhoneOtp(formatted);
+        if (!res.success) throw new Error(res.error || 'Failed to send OTP to mobile number');
       }
       setOtpSent(true);
-      if (data.dev_otp_code) {
-        setDevOtpHint(data.dev_otp_code);
-        setOtpCode(data.dev_otp_code);
+      if (isSmsTestMode) {
+        setDevOtpHint('Test mode active: Enter test OTP configured in Supabase or SMS');
       }
       setResendCooldown(60);
     } catch (err: any) {
@@ -583,7 +636,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
   };
 
-  // Step 4: Verify OTP from Mobile Number
+  // Step 4: Verify OTP from Mobile Number via Supabase
   const handleVerifyOtp = async () => {
     if (!otpCode.trim() || otpCode.trim().length !== 6) {
       setOtpError('Please enter the 6-digit verification code.');
@@ -593,25 +646,17 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     setOtpError('');
 
     try {
-      const cleanPhone = phone.trim().replace(/[\s\-]/g, '');
-      const res = await fetch('/api/auth/verify-mobile-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: cleanPhone,
-          code: otpCode.trim(),
-          name: name.trim() || 'Friend'
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Invalid verification code');
-      }
-      if (data.access_token) {
-        localStorage.setItem('manas_access_token', data.access_token);
-        localStorage.setItem('manas_refresh_token', data.refresh_token);
-        localStorage.setItem('manas_user_id', data.user_id);
-        localStorage.setItem('manas_user_phone', data.phone || cleanPhone);
+      const formatted = normalizePhone(phone);
+      if (isLinkingAccount) {
+        const res = await verifyPhoneLinkOtp(formatted, otpCode.trim());
+        if (!res.success) throw new Error(res.error || 'Invalid verification code');
+      } else {
+        const res = await verifyPhoneOtp(formatted, otpCode.trim());
+        if (!res.success) throw new Error(res.error || 'Invalid verification code');
+        if (res.session?.access_token) {
+          localStorage.setItem('manas_access_token', res.session.access_token);
+          localStorage.setItem('manas_user_id', res.session.user.id);
+        }
       }
       setEmailVerified(true);
       setStep(5);
@@ -622,22 +667,53 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
   };
 
+  // Step 5: Live Photo Avatar Pipeline
+  const runPhotoAvatarPipeline = async (source: File | string) => {
+    setIsProcessingPhoto(true);
+    try {
+      const attrs = await mediaPipeGeminiProvider.processPhoto(source, {
+        allowServerAnalysis: consentGeminiAnalysis,
+        userConsentGiven: true,
+      });
+      setAppearanceAttrs(attrs);
+      if (typeof source === 'string') {
+        setPhotoDataUrl(source);
+      }
+    } catch (err: any) {
+      console.warn('Photo avatar processing failed:', err);
+    } finally {
+      setIsProcessingPhoto(false);
+    }
+  };
+
   // Final Complete Handler
   const handleFinish = async () => {
+    let session = (await supabase.auth.getSession()).data.session;
+    if (!session) {
+      await createAnonymousSession();
+      session = (await supabase.auth.getSession()).data.session;
+    }
+    const finalUserId = session?.user?.id || existingProfile?.id || `user_${Date.now()}`;
+    const finalAge = typeof age === 'number' ? age : 20;
+    const finalIsMinor = finalAge < 18;
+
     const finalProfile: UserProfile = {
-      id: existingProfile?.id || `user_${Date.now()}`,
+      id: finalUserId,
       name: name.trim() || 'Friend',
-      age,
-      isMinor,
-      guardianConsent: isMinor ? guardianConsent : true,
+      companionName: companionName.trim() || (companion === 'boy' ? 'Aarav' : 'Maya'),
+      age: finalAge,
+      isMinor: finalIsMinor,
+      guardianConsent: finalIsMinor ? guardianConsent : true,
       language: selectedLanguage,
-      contactEmail: email.trim(),
-      contactPhone: phone.trim(),
+      contactEmail: email.trim() || undefined,
+      contactPhone: phone.trim() || undefined,
       emailVerified,
       phoneVerified: emailVerified,
       avatarUrl: photoDataUrl || undefined,
-      voicePref: selectedVoice,
-      voiceTone: selectedVoice,   // persisted so speechGateway can use it at call-time
+      appearanceAttributes: appearanceAttrs || undefined,
+      voicePref: selectedVoice || (companion === 'boy' ? 'aarav' : 'ananya'),
+      voiceTone: selectedVoice || (companion === 'boy' ? 'aarav' : 'ananya'),
+      voiceGender: companion,
       micGranted: micStatus === 'granted',
       consentDisclaimer: true,
       consentChat: true,
@@ -649,34 +725,48 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       companion,
       gender: companion,
       avatarType: companion,
-      voiceGender: companion,
       voicePitch: companion === 'girl' ? 1.15 : 0.9,
       reasons: existingProfile?.reasons || ['Stress & Pressure']
     };
 
-    // Save profile to backend with zero plaintext contacts in LLM tables
+    // Save profile to Supabase
     try {
-      await fetch('/api/onboarding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: finalProfile.id,
-          name: finalProfile.name,
-          age: finalProfile.age,
-          is_minor: finalProfile.isMinor,
-          guardian_consent: finalProfile.guardianConsent,
-          language: finalProfile.language,
-          tone: finalProfile.tone,
-          role: finalProfile.role,
-          reasons: finalProfile.reasons,
-          voice_pref: finalProfile.voicePref,
-          consent_chat: true,
-          consent_mood: true,
-          consent_cadence: true,
-          consent_timestamp: finalProfile.consentTimestamp
-        })
-      });
-    } catch (_) {}
+      await supabase.from('profiles').upsert({
+        user_id: finalUserId,
+        name: finalProfile.name,
+        age: finalProfile.age,
+        language: finalProfile.language,
+        companion: finalProfile.companion,
+        voice_gender: finalProfile.voiceGender,
+        voice_tone: finalProfile.voiceTone,
+        avatar_type: finalProfile.avatarType,
+        avatar_url: finalProfile.avatarUrl,
+        guardian_consent: finalProfile.guardianConsent,
+        consent_chat: true,
+        consent_mood: true,
+        consent_cadence: true,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+
+      if (appearanceAttrs) {
+        await supabase.from('avatar_attrs').upsert({
+          user_id: finalUserId,
+          skin_tone: appearanceAttrs.skin_tone_hex,
+          hair_color: appearanceAttrs.hair_color_hex,
+          eye_color: appearanceAttrs.eye_color_hex,
+          lip_color: appearanceAttrs.lip_color_hex,
+          glasses: Boolean(appearanceAttrs.glasses),
+          glasses_shape: appearanceAttrs.glasses_shape,
+          glasses_color: appearanceAttrs.glasses_color_hex,
+          hair_style: appearanceAttrs.hair_style,
+          hair_length: appearanceAttrs.hair_length,
+          facial_hair: appearanceAttrs.facial_hair,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' });
+      }
+    } catch (e) {
+      console.warn('Failed to persist profile to Supabase:', e);
+    }
 
     try {
       localStorage.removeItem('manas_entry_step_v2');
@@ -979,8 +1069,25 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                     </button>
                   </div>
                   <p className="text-[10px] font-mono text-[#0A0A0A]/40 dark:text-[#FFFFFF]/40 mt-1.5">
-                    Default is Girl. You can change your companion anytime in Customize Mascot.
+                    Default is Girl. You can change your companion anytime in Edit Profile.
                   </p>
+
+                  {/* Companion Name */}
+                  <div className="pt-3">
+                    <label className="block text-xs font-mono font-bold uppercase tracking-wider text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 mb-1.5">
+                      Companion Name
+                    </label>
+                    <input
+                      type="text"
+                      value={companionName}
+                      onChange={(e) => setCompanionName(e.target.value)}
+                      placeholder={companion === 'boy' ? 'Aarav' : 'Maya'}
+                      className="w-full px-4 py-3 rounded-2xl bg-[#F8F6F0] dark:bg-[#1E2638] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all text-[#0A0A0A] dark:text-[#FFFFFF]"
+                    />
+                    <p className="text-[10px] font-mono text-[#0A0A0A]/40 dark:text-[#FFFFFF]/40 mt-1">
+                      Default is {companion === 'boy' ? 'Aarav' : 'Maya'}. You can personalize this anytime in Edit Profile.
+                    </p>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -1014,8 +1121,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       min={13}
                       max={100}
                       value={age}
+                      placeholder="Enter age (13-100)"
                       onChange={(e) => {
-                        setAge(parseInt(e.target.value, 10) || 18);
+                        const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
+                        setAge(val as any);
                         setAgeError('');
                       }}
                       className="w-full pl-10 pr-4 py-3.5 rounded-2xl bg-[#F8F6F0] dark:bg-[#1E2638] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all text-[#0A0A0A] dark:text-[#FFFFFF]"
@@ -1250,7 +1359,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </motion.div>
             )}
 
-            {/* STEP 5: OPTIONAL PHOTO */}
+            {/* STEP 5: LIVE PHOTO-AVATAR PIPELINE */}
             {step === 5 && (
               <motion.div
                 key="step5"
@@ -1269,8 +1378,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   </p>
                 </div>
 
-                {/* Photo Preview Container */}
-                <div className="w-48 h-48 rounded-full border-2 border-dashed border-[#8B5CF6]/50 flex items-center justify-center overflow-hidden bg-[#FBF9F5] dark:bg-[#1E2638] relative shadow-inner">
+                {/* Live 3D Avatar Preview Container */}
+                <div className="w-52 h-52 rounded-3xl border-2 border-dashed border-[#8B5CF6]/50 flex items-center justify-center overflow-hidden bg-[#FBF9F5] dark:bg-[#1E2638] relative shadow-inner">
                   {cameraActive ? (
                     <video
                       ref={videoRef}
@@ -1279,6 +1388,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       muted
                       className="w-full h-full object-cover"
                     />
+                  ) : appearanceAttrs ? (
+                    <div className="w-full h-full relative">
+                      <VRMAvatarCanvas
+                        companion={companion}
+                        gender={companion}
+                        appearanceAttributes={appearanceAttrs}
+                        isSpeaking={false}
+                        emotion="happy"
+                        className="w-full h-full"
+                      />
+                      <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-violet-600 text-white font-mono text-[9px] font-bold tracking-wider uppercase shadow">
+                        3D Live
+                      </span>
+                    </div>
                   ) : photoDataUrl ? (
                     <img
                       src={photoDataUrl}
@@ -1286,20 +1409,27 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="flex flex-col items-center gap-2 text-[#0A0A0A]/40 dark:text-[#FFFFFF]/40">
+                    <div className="flex flex-col items-center gap-2 text-[#0A0A0A]/40 dark:text-[#FFFFFF]/40 p-4">
                       <Sparkles className="w-8 h-8 text-[#8B5CF6]" />
-                      <span className="text-xs font-mono">Soothing Default Avatar</span>
+                      <span className="text-xs font-mono">Soothing Default 3D Avatar</span>
+                    </div>
+                  )}
+
+                  {isProcessingPhoto && (
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-white">
+                      <div className="w-6 h-6 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-[11px] font-mono">Analyzing colors & features...</span>
                     </div>
                   )}
                 </div>
 
                 {/* Camera / Upload Controls */}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-2">
                   {cameraActive ? (
                     <button
                       type="button"
                       onClick={capturePhoto}
-                      className="px-5 py-2.5 rounded-full bg-[#8B5CF6] text-white text-xs font-mono font-bold uppercase shadow"
+                      className="px-5 py-2.5 rounded-full bg-[#8B5CF6] text-white text-xs font-mono font-bold uppercase shadow cursor-pointer hover:bg-[#7C3AED]"
                     >
                       {t.steps.photo.takePhoto}
                     </button>
@@ -1308,7 +1438,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       <button
                         type="button"
                         onClick={startCamera}
-                        className="px-4 py-2 rounded-xl bg-[#F0EDE4] dark:bg-[#1E2638] hover:bg-[#8B5CF6]/15 text-xs font-mono font-semibold flex items-center gap-1.5 transition-colors"
+                        className="px-4 py-2 rounded-xl bg-[#F0EDE4] dark:bg-[#1E2638] hover:bg-[#8B5CF6]/15 text-xs font-mono font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <Camera className="w-3.5 h-3.5 text-[#8B5CF6]" />
                         {t.steps.photo.cameraButton}
@@ -1326,7 +1456,105 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       </label>
                     </>
                   )}
+
+                  {appearanceAttrs && !cameraActive && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowAdjustControls(!showAdjustControls)}
+                        className="px-3.5 py-2 rounded-xl border border-violet-400 text-violet-700 dark:text-violet-300 text-xs font-mono font-semibold hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors cursor-pointer"
+                      >
+                        {showAdjustControls ? 'Close Adjust' : 'Adjust Appearance'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAppearanceAttrs(null);
+                          setPhotoDataUrl(null);
+                          setShowAdjustControls(false);
+                        }}
+                        className="px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 text-xs font-mono hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                      >
+                        Reset
+                      </button>
+                    </>
+                  )}
                 </div>
+
+                {/* Adjust Appearance Drawer */}
+                {showAdjustControls && appearanceAttrs && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="w-full max-w-sm p-3.5 rounded-2xl bg-[#FBF9F5] dark:bg-[#1E2638]/70 border border-violet-500/30 flex flex-col gap-2.5 text-left text-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-[#0A0A0A] dark:text-[#FFFFFF] font-mono">Fine-Tune 3D Avatar</span>
+                      <span className="text-[10px] text-violet-600 font-mono">Live Sync</span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] font-mono text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60">Skin Tone</span>
+                        <input
+                          type="color"
+                          value={appearanceAttrs.skin_tone_hex || '#F0C8A0'}
+                          onChange={(e) =>
+                            setAppearanceAttrs({ ...appearanceAttrs, skin_tone_hex: e.target.value })
+                          }
+                          className="w-full h-8 rounded-lg cursor-pointer bg-transparent border border-black/10"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] font-mono text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60">Hair Color</span>
+                        <input
+                          type="color"
+                          value={appearanceAttrs.hair_color_hex || '#2C1B18'}
+                          onChange={(e) =>
+                            setAppearanceAttrs({ ...appearanceAttrs, hair_color_hex: e.target.value })
+                          }
+                          className="w-full h-8 rounded-lg cursor-pointer bg-transparent border border-black/10"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] font-mono text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60">Eye Color</span>
+                        <input
+                          type="color"
+                          value={appearanceAttrs.eye_color_hex || '#3D2314'}
+                          onChange={(e) =>
+                            setAppearanceAttrs({ ...appearanceAttrs, eye_color_hex: e.target.value })
+                          }
+                          className="w-full h-8 rounded-lg cursor-pointer bg-transparent border border-black/10"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="flex items-center gap-2 pt-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(appearanceAttrs.glasses)}
+                        onChange={(e) =>
+                          setAppearanceAttrs({ ...appearanceAttrs, glasses: e.target.checked })
+                        }
+                        className="w-4 h-4 rounded text-violet-600 focus:ring-violet-500"
+                      />
+                      <span className="text-xs font-medium text-[#0A0A0A]/80 dark:text-[#FFFFFF]/80">
+                        Include Glasses
+                      </span>
+                    </label>
+                  </motion.div>
+                )}
+
+                {/* Consent checkbox for AI feature detection */}
+                <label className="flex items-center gap-2 cursor-pointer text-left text-[11px] text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60 max-w-sm">
+                  <input
+                    type="checkbox"
+                    checked={consentGeminiAnalysis}
+                    onChange={(e) => setConsentGeminiAnalysis(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded text-violet-600 focus:ring-violet-500 shrink-0"
+                  />
+                  <span>Allow transient AI analysis (glasses, hairstyle). Photo is never saved.</span>
+                </label>
 
                 <p className="text-[11px] text-[#0A0A0A]/50 dark:text-[#FFFFFF]/50 max-w-sm">
                   {t.steps.photo.clientSideNotice}
@@ -1473,7 +1701,29 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
+            {/* Inline validation hint when next button is disabled */}
+            {step === 1 && !isStep1Valid && (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-mono">
+                Please select a language
+              </span>
+            )}
+            {step === 2 && !isStep2Valid && (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-mono">
+                Enter name (2+ characters) and select companion
+              </span>
+            )}
+            {step === 3 && !isStep3Valid && (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-mono">
+                Enter age (13-100){typeof age === 'number' && age < 18 && !guardianConsent ? ' with guardian consent' : ''}
+              </span>
+            )}
+            {step === 4 && !isStep4Valid && (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-mono">
+                Verify mobile OTP or use 'Skip for now'
+              </span>
+            )}
+
             {/* Skip for now option available on every onboarding step */}
             <button
               type="button"
@@ -1487,7 +1737,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               <button
                 type="button"
                 onClick={handleNextStep1}
-                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
+                disabled={!isStep1Valid}
+                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
                 {t.common.next}
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1498,7 +1749,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               <button
                 type="button"
                 onClick={handleNextStep2}
-                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
+                disabled={!isStep2Valid}
+                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
                 {t.common.next}
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1509,7 +1761,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               <button
                 type="button"
                 onClick={handleNextStep3}
-                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
+                disabled={!isStep3Valid}
+                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
                 {t.common.next}
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1520,7 +1773,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               <button
                 type="button"
                 onClick={() => setStep(5)}
-                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
+                disabled={!isStep4Valid}
+                className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
                 {t.common.next}
                 <ArrowRight className="w-3.5 h-3.5" />
