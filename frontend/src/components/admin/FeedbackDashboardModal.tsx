@@ -30,7 +30,10 @@ export const FeedbackDashboardModal: React.FC<FeedbackDashboardModalProps> = ({
   const fetchFeedback = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/admin/feedback');
+      const authToken = localStorage.getItem('manas_access_token');
+      const res = await fetch('/api/admin/feedback', {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+      });
       if (res.ok) {
         const data = await res.json();
         setFeedbackList(data.feedback || []);
@@ -163,8 +166,12 @@ export const FeedbackDashboardModal: React.FC<FeedbackDashboardModalProps> = ({
         {/* Table / List */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {displayedList.length === 0 ? (
-            <div className="text-center py-12 text-[#0A0A0A]/40 font-mono text-sm">
-              No feedback entries matching filter.
+            <div className="text-center py-12 px-4 rounded-2xl bg-[#FDFBF7] border border-dashed border-[#0A0A0A]/10 space-y-2">
+              <MessageSquareHeart className="w-8 h-8 text-[#8B5CF6]/50 mx-auto" />
+              <div className="text-sm font-semibold text-[#0A0A0A]/70">No Feedback Recorded Yet</div>
+              <p className="text-xs text-[#0A0A0A]/40 max-w-sm mx-auto font-mono">
+                Rate companion responses in chat using the thumbs up or down buttons to view empathy ratings here.
+              </p>
             </div>
           ) : (
             displayedList.map((item) => (

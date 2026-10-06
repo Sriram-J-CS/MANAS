@@ -114,7 +114,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  // ── Dispatch Phone OTP via Supabase ──────────────────────────────────────
+  // ── Dispatch Phone OTP via Backend ───────────────────────────────────────
   const handleSendPhoneOtp = async () => {
     setError(null);
     setSuccessMsg(null);
@@ -127,26 +127,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      const { error: otpErr } = await supabase.auth.signInWithOtp({
-        phone: formatted,
-        options: {
-          data: {
-            name: name.trim() || undefined,
-          },
-        },
+      const res = await fetch('/api/auth/send-mobile-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: formatted,
+          name: name.trim() || undefined,
+        }),
       });
 
-      if (otpErr) {
-        if (otpErr.message.includes('rate limit') || otpErr.message.includes('once every')) {
-          throw new Error('Too many requests. Please wait 60 seconds before requesting another code.');
-        }
-        throw new Error(otpErr.message || 'Failed to dispatch verification code.');
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to dispatch verification code.');
       }
 
       setOtpSent(true);
       setResendCooldown(60);
       setOtpCode('');
-      setSuccessMsg(`6-digit code dispatched to ${formatted}. Valid for 10 minutes.`);
+
+      if (data.dev_otp_code) {
+        setSuccessMsg(`Verification code: ${data.dev_otp_code} (Valid for 10 minutes)`);
+        setOtpCode(data.dev_otp_code);
+      } else {
+        setSuccessMsg(`6-digit code dispatched to ${formatted}. Valid for 10 minutes.`);
+      }
     } catch (err: any) {
       setError(err.message || 'An error occurred while sending OTP.');
     } finally {
@@ -154,7 +158,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // ── Verify 6-Digit Phone OTP via Supabase ─────────────────────────────────
+  // ── Verify 6-Digit Phone OTP via Backend ──────────────────────────────────
   const handleVerifyPhoneOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -169,44 +173,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      const { data, error: verifyErr } = await supabase.auth.verifyOtp({
-        phone: formatted,
-        token: cleanCode,
-        type: 'sms',
+      const res = await fetch('/api/auth/verify-mobile-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: formatted,
+          code: cleanCode,
+          name: name.trim() || undefined,
+        }),
       });
 
-      if (verifyErr) {
-        if (verifyErr.message.includes('expired')) {
-          throw new Error('The code has expired. Please request a new code.');
-        }
-        throw new Error('Invalid verification code. Please check the 6 digits and try again.');
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Invalid verification code. Please check and try again.');
       }
 
-      if (!data.session || !data.user) {
-        throw new Error('Authentication succeeded but session could not be established.');
-      }
-
-      const verifiedUser = data.user;
-      const userName = (verifiedUser.user_metadata?.name as string) || name.trim() || 'Friend';
-
-      // Update name in user metadata if provided
-      if (name.trim()) {
-        try {
-          await supabase.auth.updateUser({ data: { name: name.trim() } });
-        } catch (_) {}
+      if (data.access_token) {
+        localStorage.setItem('manas_access_token', data.access_token);
+        localStorage.setItem('manas_user_id', data.user_id);
+        if (data.name) localStorage.setItem('manas_user_name', data.name);
+        if (data.phone) localStorage.setItem('manas_user_phone', data.phone);
+        if (data.email) localStorage.setItem('manas_user_email', data.email);
       }
 
       setSuccessMsg('Identity verified! Entering your MANAS sanctuary... 🌿');
 
       setTimeout(() => {
         onAuthSuccess({
-          user_id: verifiedUser.id,
-          name: userName,
-          email: verifiedUser.email,
-          phone: verifiedUser.phone,
+          user_id: data.user_id,
+          name: data.name || name.trim() || 'Friend',
+          email: data.email,
+          phone: data.phone || formatted,
         });
         onClose();
-      }, 700);
+      }, 600);
     } catch (err: any) {
       setError(err.message || 'Verification failed. Please check the 6 digits.');
     } finally {
@@ -214,7 +214,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // ── Email & Password Authentication via Supabase ─────────────────────────
+  // ── Email & Password Authentication via Backend ──────────────────────────
   const handleEmailPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -232,62 +232,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      if (mode === 'signup') {
-        const { data, error: signErr } = await supabase.auth.signUp({
-          email: email.trim().toLowerCase(),
-          password,
-          options: {
-            data: {
-              name: name.trim(),
-            },
-          },
-        });
+      const endpoint = mode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
+      const payload = mode === 'signup'
+        ? { email: email.trim().toLowerCase(), password, name: name.trim() || 'Friend' }
+        : { email: email.trim().toLowerCase(), password };
 
-        if (signErr) {
-          throw new Error(signErr.message);
-        }
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-        if (data.session && data.user) {
-          setSuccessMsg('Account created successfully! Welcome to MANAS.');
-          setTimeout(() => {
-            onAuthSuccess({
-              user_id: data.user!.id,
-              name: name.trim(),
-              email: data.user!.email,
-            });
-            onClose();
-          }, 700);
-        } else {
-          setSuccessMsg('Verification link sent! Please check your email to complete registration.');
-        }
-      } else {
-        const { data, error: logErr } = await supabase.auth.signInWithPassword({
-          email: email.trim().toLowerCase(),
-          password,
-        });
-
-        if (logErr) {
-          if (logErr.message.includes('Invalid login credentials')) {
-            throw new Error('Invalid email or password. Please try again.');
-          }
-          throw new Error(logErr.message);
-        }
-
-        if (!data.user) {
-          throw new Error('Failed to retrieve user profile.');
-        }
-
-        const userName = (data.user.user_metadata?.name as string) || 'Friend';
-        setSuccessMsg('Welcome back! Loading your companion...');
-        setTimeout(() => {
-          onAuthSuccess({
-            user_id: data.user.id,
-            name: userName,
-            email: data.user.email,
-          });
-          onClose();
-        }, 700);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || (mode === 'signup' ? 'Failed to create account.' : 'Invalid email or password.'));
       }
+
+      // Store authenticated credentials in localStorage
+      if (data.access_token) {
+        localStorage.setItem('manas_access_token', data.access_token);
+        localStorage.setItem('manas_user_id', data.user_id);
+        if (data.name) localStorage.setItem('manas_user_name', data.name);
+        if (data.email) localStorage.setItem('manas_user_email', data.email);
+        if (data.phone) localStorage.setItem('manas_user_phone', data.phone);
+      }
+
+      setSuccessMsg(mode === 'signup' ? 'Account created successfully! Welcome to MANAS.' : 'Welcome back! Loading your companion...');
+      setTimeout(() => {
+        onAuthSuccess({
+          user_id: data.user_id,
+          name: data.name || name.trim() || 'Friend',
+          email: data.email,
+          phone: data.phone,
+        });
+        onClose();
+      }, 600);
     } catch (err: any) {
       setError(err.message || 'Authentication failed. Please verify credentials.');
     } finally {

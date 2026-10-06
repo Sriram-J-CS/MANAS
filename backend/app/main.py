@@ -45,7 +45,7 @@ from .services.voice import (
 from .services.voice_config import is_native_6_language, get_sarvam_speaker, get_tones_for_companion
 from .services.voice_validator import validate_and_purify_speech_text
 from .auth.routes import router as auth_router
-from .auth.dependencies import require_auth, require_admin, get_current_user_id
+from .auth.dependencies import require_auth, require_admin, get_current_user_id, get_chat_user_id
 from .services.agent_orchestrator import router as agent_router
 from .services.domain_routes import router as domain_router
 from .services.user_crypto import encrypt_user_text, decrypt_user_text
@@ -517,7 +517,7 @@ def get_admin_feedback(limit: int = 50, only_negative: bool = False, current_uid
 
 @app.post("/api/chat")
 @app.post("/api/chat/stream")
-async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(require_auth)):
+async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(get_chat_user_id)):
     """
     Scale-ready streaming chat endpoint:
     - OpenTelemetry / trace correlation with X-Trace-ID
@@ -527,12 +527,12 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(re
     - Distributed job queue for background extraction and push notifications
     - Live Server-Sent Events (SSE) streaming tokens to UI with structured output metadata
     """
-    uid = current_uid
+    uid = current_uid or "guest_user"
     client_ip = request.client.host if request.client else "127.0.0.1"
 
     # Derive verified user name from server database identity if authenticated
     actual_name = (req.user_name or "").strip()
-    if uid and uid != "anonymous":
+    if uid and uid not in ("anonymous", "guest_user"):
         try:
             conn_u = get_db()
             cur_u = conn_u.cursor()
@@ -558,23 +558,25 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(re
             headers={"Retry-After": str(ip_retry)}
         )
 
-    # Rate limiting: 30 req/min per user
-    user_allowed, _, user_retry = await check_rate_limit(f"user:{uid}", limit=30, window_seconds=60)
-    if not user_allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"User rate limit exceeded (30 req/min). Please retry after {user_retry}s.",
-            headers={"Retry-After": str(user_retry)}
-        )
+    # Rate limiting: 30 req/min per user (applies to authenticated accounts)
+    if uid not in ("anonymous", "guest_user"):
+        user_allowed, _, user_retry = await check_rate_limit(f"user:{uid}", limit=30, window_seconds=60)
+        if not user_allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"User rate limit exceeded (30 req/min). Please retry after {user_retry}s.",
+                headers={"Retry-After": str(user_retry)}
+            )
 
-    # Cost cap: verify user within daily token budget
-    est_prompt_tokens = max(10, len(req.message.split()) * 2)
-    cost_allowed, current_spend, max_spend = await check_and_record_cost(uid, prompt_tokens=est_prompt_tokens, response_tokens=0)
-    if not cost_allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Daily token quota exceeded (${current_spend:.4f} / ${max_spend:.2f}). Resets at midnight UTC."
-        )
+    # Cost cap: verify user within daily token budget (for authenticated users)
+    if uid not in ("anonymous", "guest_user"):
+        est_prompt_tokens = max(10, len(req.message.split()) * 2)
+        cost_allowed, current_spend, max_spend = await check_and_record_cost(uid, prompt_tokens=est_prompt_tokens, response_tokens=0)
+        if not cost_allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Daily token quota exceeded (${current_spend:.4f} / ${max_spend:.2f}). Resets at midnight UTC."
+            )
 
     user_msg_id = str(uuid.uuid4())
     bot_msg_id = str(uuid.uuid4())
@@ -629,15 +631,23 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(re
                 "state_label": "Crisis Safety Active",
                 "gesture": "listening",
             }
-            yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+            yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
             words = crisis_text.split(" ")
             for i in range(0, len(words), 3):
                 chunk = " ".join(words[i:i+3]) + (" " if i + 3 < len(words) else "")
-                yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
+                yield f"event: token\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0.015)
             yield "event: done\ndata: {}\n\n"
 
-        return StreamingResponse(crisis_stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            crisis_stream(),
+            media_type="text/event-stream; charset=utf-8",
+            headers={
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            }
+        )
 
     # 2. Persist user message in DB with per-user encryption
     conn = get_db()
@@ -773,7 +783,7 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(re
         ):
             if kind == "token":
                 accumulated_text += payload
-                yield f"event: token\ndata: {json.dumps({'token': payload})}\n\n"
+                yield f"event: token\ndata: {json.dumps({'token': payload}, ensure_ascii=False)}\n\n"
             elif kind == "meta":
                 final_meta = payload
                 final_meta["id"] = bot_msg_id
@@ -843,22 +853,25 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(re
                         {"name": "National Emergency", "number": "112"},
                         {"name": "KIRAN Helpline", "number": "1800-599-0019"}
                     ]
-                yield f"event: meta\ndata: {json.dumps(final_meta)}\n\n"
+                yield f"event: meta\ndata: {json.dumps(final_meta, ensure_ascii=False)}\n\n"
 
         # Check background extraction results to yield auto_save events if ready
         try:
             auto_saves = await asyncio.wait_for(asyncio.shield(extraction_task), timeout=2.8)
             for act in auto_saves:
-                yield f"event: auto_save\ndata: {json.dumps(act)}\n\n"
+                yield f"event: auto_save\ndata: {json.dumps(act, ensure_ascii=False)}\n\n"
         except Exception:
             pass
 
         # 5. Persist bot reply in DB with per-user encryption
-        reply_to_store = (final_meta.get("reply") or accumulated_text or "I'm right here beside you, listening with all my heart.").strip()
+        reply_to_store = (display_text or final_meta.get("reply") or accumulated_text or "I'm right here beside you, listening with all my heart.").strip()
         if reply_to_store.startswith('{') or '"reply"' in reply_to_store:
             m_cln = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)', reply_to_store, re.DOTALL)
             if m_cln:
-                reply_to_store = m_cln.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
+                try:
+                    reply_to_store = json.loads(f'"{m_cln.group(1)}"')
+                except Exception:
+                    reply_to_store = m_cln.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
             else:
                 reply_to_store = "I'm right here with you, listening to everything you're feeling. Take all the time you need, I'm right here."
         emo_to_store = final_meta.get("emotion", "calm")
@@ -897,7 +910,15 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(re
 
         yield "event: done\ndata: {}\n\n"
 
-    return StreamingResponse(live_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        live_stream(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @app.get("/api/chat/history/{user_id}")

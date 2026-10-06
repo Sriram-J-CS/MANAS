@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ShieldCheck, Download, Trash2, Lock, EyeOff, AlertTriangle, Check, PauseCircle } from 'lucide-react';
+import { X, ShieldCheck, Trash2, Lock, EyeOff, AlertTriangle, Check, PauseCircle } from 'lucide-react';
 
 interface PrivacyCenterModalProps {
   isOpen: boolean;
@@ -12,43 +12,23 @@ interface PrivacyCenterModalProps {
 const CONSENT_LABELS: Record<string, { label: string; desc: string }> = {
   ai_personalization: {
     label: 'AI Personalization & Digital Twin',
-    desc: 'Allows MANAS to adapt conversational style and tone to your baseline.'
+    desc: 'Allows MANAS to adapt conversational style and tone to your inferred baseline.'
   },
   memory: {
     label: 'Long-Term Memory Center',
     desc: 'Retains important facts, preferred coping strategies, and milestones you choose to remember.'
   },
+  voice_processing: {
+    label: 'Voice Synthesis & Speech Engine',
+    desc: 'Synthesizes empathetic speech across Indian languages. Audio is never recorded.'
+  },
   photo_processing: {
     label: 'Photo Avatar Parameterization',
-    desc: 'Analyzes skin tone and colors from a photo to style your 3D mascot. Photo is deleted immediately after processing (Zero Retention).'
-  },
-  voice_processing: {
-    label: 'Voice Synthesis & Speech Processing',
-    desc: 'Synthesizes speech using native Indian language voices. Voice samples are never stored without explicit approval.'
-  },
-  typing_analysis: {
-    label: 'Typing Cadence Baseline',
-    desc: 'Measures typing speed and pause duration to adapt conversational rhythm without storing raw keystrokes.'
-  },
-  voice_behavior_analysis: {
-    label: 'Voice Speaking Pace Intelligence',
-    desc: 'Observes speaking pace and pauses to sense fatigue relative to your personal baseline.'
+    desc: 'Extracts 3D mascot attributes from webcam/upload. Original photo is deleted immediately.'
   },
   proactive_checkins: {
-    label: 'Evidence-Based Proactive Check-ins',
+    label: 'Proactive Care Reminders',
     desc: 'Allows gentle reminders if recent check-ins show sustained elevated strain.'
-  },
-  recommendations: {
-    label: 'Intervention Recommendations',
-    desc: 'Tailors breathing, grounding, and journaling suggestions based on what has proven helpful for you.'
-  },
-  trusted_contact_alert: {
-    label: 'Trusted Contact Coordination',
-    desc: 'Allows emergency contact notifications solely through your explicit initiation.'
-  },
-  data_retention: {
-    label: 'Continuous Data Retention',
-    desc: 'Enables saving your reflections across sessions. Revoking pauses history retention.'
   }
 };
 
@@ -63,7 +43,6 @@ export const PrivacyCenterModal: React.FC<PrivacyCenterModalProps> = ({
   const [appPin, setAppPin] = useState(() => localStorage.getItem('manas_app_pin') || '');
   const [pinInput, setPinInput] = useState('');
   const [pinSavedMessage, setPinSavedMessage] = useState('');
-  const [isExporting, setIsExporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -129,30 +108,6 @@ export const PrivacyCenterModal: React.FC<PrivacyCenterModalProps> = ({
         } catch (_) {}
       }
     } catch (_) {}
-  };
-
-  const handleExportData = async () => {
-    setIsExporting(true);
-    try {
-      const authToken = token || localStorage.getItem('manas_access_token');
-      const res = await fetch('/api/privacy/export', {
-        method: 'POST',
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `emoticare_manas_export_${new Date().toISOString().split('T')[0]}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch (_) {
-    } finally {
-      setIsExporting(false);
-    }
   };
 
   const handleDeleteAccount = async () => {
@@ -299,16 +254,11 @@ export const PrivacyCenterModal: React.FC<PrivacyCenterModalProps> = ({
               })}
             </div>
 
-            {/* Data Portability & Account Erasure */}
+            {/* Account Erasure & Data Management */}
             <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <button
-                onClick={handleExportData}
-                disabled={isExporting}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white flex items-center justify-center gap-2 transition-colors cursor-pointer"
-              >
-                <Download className="w-4 h-4 text-cyan-400" />
-                {isExporting ? 'Generating Archive...' : 'Export My Data (JSON)'}
-              </button>
+              <span className="text-[11px] font-mono text-white/40">
+                Zero Unauthorized Retention · DPDP Act Compliant
+              </span>
 
               {!showDeleteConfirm ? (
                 <button

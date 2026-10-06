@@ -792,27 +792,23 @@ async def run_chat_pipeline(
         generation["strategy_used"] = generation.get("strategy_used") or chosen_strategy
         generation["stress_level"] = generation.get("stress_level") or understanding.get("intensity", 4)
     except Exception as e:
-        log.warning("Primary LLM generation failed (%s), returning connection hiccup message", e)
-        generation = {
-            "reply": "Connection hiccup, please try again.",
-            "spoken_text": "Connection hiccup, please try again.",
-            "emotion": "calm",
-            "gesture": "nod",
-            "expression": "calm",
-            "risk_level": "none",
-            "suggest_tool": "none",
-            "quick_replies": [],
-            "suggested_exercise": "none",
-            "is_error": True,
-            "strategy_used": chosen_strategy,
-            "stress_level": understanding.get("intensity", 4),
-            "segments": [{
-                "spoken_text": "Connection hiccup, please try again.",
-                "text": "Connection hiccup, please try again.",
-                "emotion": "calm",
-                "gesture": "nod"
-            }]
-        }
+        log.warning("Primary LLM generation failed (%s), generating autonomous companion response", e)
+        from .autonomous_companion import generate_autonomous_companion_response
+        generation = generate_autonomous_companion_response(
+            message=message,
+            user_name=user_name,
+            language=language,
+            companion_tone=companion_tone,
+            recent_bot_messages=recent_bot_messages,
+        )
+        generation["strategy_used"] = chosen_strategy
+        generation["stress_level"] = generation.get("stress_level") or understanding.get("intensity", 4)
+        generation["segments"] = [{
+            "spoken_text": generation.get("spoken_text") or generation["reply"],
+            "text": generation["reply"],
+            "emotion": generation.get("emotion", "calm"),
+            "gesture": generation.get("gesture", "nod")
+        }]
 
     # STAGE 7: Critic Pass
     if not generation.get("is_error"):

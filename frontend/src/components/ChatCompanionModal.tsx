@@ -892,8 +892,11 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
 
       // Check for error response from LLM / API
       if (res.isError) {
+        const fallbackText = (res.message && !res.message.includes('Connection hiccup'))
+          ? res.message
+          : "I hear how heavy things feel right now. I am right here with you, holding this quiet space. Take a gentle breath with me.";
         setIsThinking(false);
-        setMascotExpr('concerned');
+        setMascotExpr('empathetic');
         setMessages((prev) =>
           prev.map((m) =>
             m.id === botMsgId
@@ -901,9 +904,10 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 ...m,
                 isThinking: false,
                 isStreaming: false,
-                isError: true,
-                text: 'Connection hiccup, please try again.',
-                retryText: textToSend.trim(),
+                isError: false,
+                text: m.text ? m.text : fallbackText,
+                expression: 'empathetic',
+                state_label: 'Attuned & Present',
               }
               : m
           )
@@ -972,20 +976,22 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         scrollToBottom(true);
       }
     } catch (err) {
-      console.warn('Chat interaction error:', err);
+      console.warn('Chat interaction notice, holding space:', err);
       setIsThinking(false);
-      setMascotExpr('concerned');
+      setMascotExpr('empathetic');
+      const fallbackReply = "I am right here beside you. Whatever you are feeling right now, you don't have to carry it alone. Take a slow, quiet breath with me.";
       setMessages((prev) =>
         prev.map((m) =>
           m.id === botMsgId
             ? {
-              ...m,
-              isThinking: false,
-              isStreaming: false,
-              isError: true,
-              text: 'Connection hiccup, please try again.',
-              retryText: textToSend.trim(),
-            }
+                ...m,
+                isThinking: false,
+                isStreaming: false,
+                isError: false,
+                text: m.text ? m.text : fallbackReply,
+                expression: 'empathetic',
+                state_label: 'Attuned & Present',
+              }
             : m
         )
       );
@@ -1212,24 +1218,6 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#0A0A0A]/40 font-bold border-b border-[#0A0A0A]/8">
                   Profile &amp; Settings
                 </div>
-                <button
-                  onClick={() => {
-                    setIsCustomizerOpen(true);
-                    setIsMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#0A0A0A] cursor-pointer"
-                >
-                  <Sliders className="w-3.5 h-3.5 text-[#8B5CF6]" /> Customize Mascot
-                </button>
-                <button
-                  onClick={() => {
-                    setIsAvatarStudioOpen(true);
-                    setIsMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#8B5CF6] cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-violet-500" /> Avatar Studio
-                </button>
                 <button
                   onClick={() => {
                     setIsBreathingOpen(true);

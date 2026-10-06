@@ -17,9 +17,11 @@ import re
 import json
 import logging
 import asyncio
+import codecs
 from typing import Dict, Any, List, Optional, AsyncGenerator, Tuple
 import httpx
 from dotenv import load_dotenv
+from .autonomous_companion import stream_autonomous_companion, generate_autonomous_companion_response
 
 load_dotenv()
 logger = logging.getLogger("manas.gemini_provider")
@@ -30,6 +32,7 @@ FALLBACK_MODELS = [
     "gemini-3.8-flash",
     "gemini-flash-latest",
     "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
 ]
 MODELS_CHAIN = list(dict.fromkeys(FALLBACK_MODELS))
@@ -561,16 +564,16 @@ class GeminiProvider:
           ("error", error_message) on API failure
         """
         if not self.is_configured():
-            logger.warning("Gemini API key is not configured")
-            yield ("token", "Connection hiccup, please try again.")
-            yield ("meta", {
-                "reply": "Connection hiccup, please try again.",
-                "emotion": "calm",
-                "suggest_tool": "none",
-                "quick_replies": [],
-                "risk_level": "none",
-                "is_error": True,
-            })
+            logger.warning("Gemini API key is not configured, streaming via autonomous companion")
+            async for kind, payload in stream_autonomous_companion(
+                message=message,
+                user_name=user_name,
+                language=language,
+                companion_tone=companion_tone,
+                recent_bot_messages=recent_bot_messages,
+                turns_since_name_used=turns_since_name_used,
+            ):
+                yield (kind, payload)
             return
 
         system_instruction = build_companion_system_prompt(
@@ -662,60 +665,80 @@ class GeminiProvider:
                                 payload["generationConfig"].pop("thinkingConfig", None)
                             continue
 
-                        async for line in response.aiter_lines():
-                            if not line.startswith("data:"):
-                                continue
-                            chunk_text = line[5:].strip()
-                            if not chunk_text or chunk_text == "[DONE]":
-                                continue
-
-                            try:
-                                chunk_json = json.loads(chunk_text)
-                                candidates = chunk_json.get("candidates", [])
-                                if not candidates:
+                        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                        line_buffer = ""
+                        async for chunk_bytes in response.aiter_bytes():
+                            line_buffer += decoder.decode(chunk_bytes)
+                            while "\n" in line_buffer:
+                                line, line_buffer = line_buffer.split("\n", 1)
+                                line = line.strip()
+                                if not line.startswith("data:"):
                                     continue
-                                parts = candidates[0].get("content", {}).get("parts", [])
-                                for p in parts:
-                                    part_text = p.get("text", "")
-                                    if not part_text:
-                                        continue
-                                    raw_accumulated += part_text
+                                chunk_text = line[5:].strip()
+                                if not chunk_text or chunk_text == "[DONE]":
+                                    continue
 
-                                    # Parse reply field streaming in real time
-                                    if not reply_started:
-                                        m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
-                                        if m:
-                                            reply_started = True
-                                            content_after = raw_accumulated[m.end():]
-                                            end_m = re.search(r'(?<!\\)"', content_after)
-                                            if end_m:
-                                                reply_token = content_after[:end_m.start()]
-                                                reply_finished = True
-                                                if reply_token:
-                                                    yield ("token", reply_token)
-                                            else:
-                                                if content_after:
-                                                    yield ("token", content_after)
-                                                    yielded_len = len(content_after)
-                                    elif not reply_finished:
-                                        m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
-                                        if m:
-                                            content_after = raw_accumulated[m.end():]
-                                            end_m = re.search(r'(?<!\\)"', content_after)
-                                            if end_m:
-                                                full_reply = content_after[:end_m.start()]
-                                                new_token = full_reply[yielded_len:]
-                                                if new_token:
-                                                    yield ("token", new_token)
-                                                reply_finished = True
-                                            else:
-                                                new_token = content_after[yielded_len:]
-                                                if new_token:
-                                                    yield ("token", new_token)
-                                                    yielded_len = len(content_after)
-                            except Exception as parse_err:
-                                logger.debug("Chunk JSON parse note: %s", parse_err)
-                                continue
+                                try:
+                                    chunk_json = json.loads(chunk_text)
+                                    candidates = chunk_json.get("candidates", [])
+                                    if not candidates:
+                                        continue
+                                    parts = candidates[0].get("content", {}).get("parts", [])
+                                    for p in parts:
+                                        part_text = p.get("text", "")
+                                        if not part_text:
+                                            continue
+                                        raw_accumulated += part_text
+
+                                        # Parse reply field streaming in real time
+                                        if not reply_started:
+                                            m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
+                                            if m:
+                                                reply_started = True
+                                                content_after = raw_accumulated[m.end():]
+                                                end_m = re.search(r'(?<!\\)"', content_after)
+                                                if end_m:
+                                                    reply_token = content_after[:end_m.start()]
+                                                    reply_finished = True
+                                                    if reply_token:
+                                                        yield ("token", reply_token)
+                                                else:
+                                                    if content_after:
+                                                        yield ("token", content_after)
+                                                        yielded_len = len(content_after)
+                                        elif not reply_finished:
+                                            m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
+                                            if m:
+                                                content_after = raw_accumulated[m.end():]
+                                                end_m = re.search(r'(?<!\\)"', content_after)
+                                                if end_m:
+                                                    full_reply = content_after[:end_m.start()]
+                                                    new_token = full_reply[yielded_len:]
+                                                    if new_token:
+                                                        yield ("token", new_token)
+                                                    reply_finished = True
+                                                else:
+                                                    new_token = content_after[yielded_len:]
+                                                    if new_token:
+                                                        yield ("token", new_token)
+                                                        yielded_len = len(content_after)
+                                except Exception as parse_err:
+                                    logger.debug("Chunk JSON parse note: %s", parse_err)
+                                    continue
+
+                        # Flush any remaining buffer from incremental decoder
+                        line_buffer += decoder.decode(b"", final=True)
+                        if line_buffer.strip().startswith("data:"):
+                            chunk_text = line_buffer.strip()[5:].strip()
+                            if chunk_text and chunk_text != "[DONE]":
+                                try:
+                                    chunk_json = json.loads(chunk_text)
+                                    parts = chunk_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                                    for p in parts:
+                                        if p.get("text"):
+                                            raw_accumulated += p["text"]
+                                except Exception:
+                                    pass
 
                 # Parse finalized JSON payload
                 parsed_data: Dict[str, Any] = {}
@@ -727,23 +750,36 @@ class GeminiProvider:
                     logger.warning("Failed to parse final JSON from Gemini: %s", final_parse_err)
 
                 final_reply = parsed_data.get("reply")
+                final_speech_text = parsed_data.get("speech_text")
                 if not final_reply and raw_accumulated:
                     rep_match = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', raw_accumulated, re.DOTALL)
                     if rep_match:
                         try:
-                            final_reply = rep_match.group(1).encode('utf-8').decode('unicode_escape')
+                            # Safely unescape standard JSON escapes without corrupting raw UTF-8 bytes
+                            final_reply = json.loads(f'"{rep_match.group(1)}"')
                         except Exception:
-                            final_reply = rep_match.group(1)
+                            final_reply = rep_match.group(1).replace('\\"', '"').replace('\\n', '\n').strip()
                     else:
                         clean_unparsed = raw_accumulated.strip()
                         if clean_unparsed.startswith('{') or '"reply"' in clean_unparsed:
                             m_loose = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)', clean_unparsed, re.DOTALL)
                             if m_loose:
-                                final_reply = m_loose.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
+                                try:
+                                    final_reply = json.loads(f'"{m_loose.group(1)}"')
+                                except Exception:
+                                    final_reply = m_loose.group(1).replace('\\"', '"').replace('\\n', ' ').strip()
                             else:
                                 final_reply = "I'm right here beside you, listening with all my heart. Take all the time you need, I'm here."
                         else:
                             final_reply = clean_unparsed
+
+                if not final_speech_text and raw_accumulated:
+                    sp_match = re.search(r'"speech_text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw_accumulated, re.DOTALL)
+                    if sp_match:
+                        try:
+                            final_speech_text = json.loads(f'"{sp_match.group(1)}"')
+                        except Exception:
+                            final_speech_text = sp_match.group(1).replace('\\"', '"').replace('\\n', '\n').strip()
 
                 if final_reply:
                     final_emotion = parsed_data.get("emotion") if parsed_data.get("emotion") in ("calm", "empathetic", "encouraging", "concerned") else "calm"
@@ -759,6 +795,7 @@ class GeminiProvider:
 
                     yield ("meta", {
                         "reply": final_reply,
+                        "speech_text": final_speech_text or final_reply,
                         "emotion": final_emotion,
                         "suggest_tool": final_tool,
                         "quick_replies": final_quick[:3],
@@ -772,17 +809,16 @@ class GeminiProvider:
                 continue
 
         if not stream_succeeded:
-            logger.error("All Gemini streaming models exhausted or unavailable.")
-            yield ("error", "Connection hiccup, please try again.")
-            yield ("token", "Connection hiccup, please try again.")
-            yield ("meta", {
-                "reply": "Connection hiccup, please try again.",
-                "emotion": "calm",
-                "suggest_tool": "none",
-                "quick_replies": [],
-                "risk_level": "none",
-                "is_error": True,
-            })
+            logger.warning("All Gemini streaming models exhausted or unavailable, activating autonomous companion.")
+            async for kind, payload in stream_autonomous_companion(
+                message=message,
+                user_name=user_name,
+                language=language,
+                companion_tone=companion_tone,
+                recent_bot_messages=recent_bot_messages,
+                turns_since_name_used=turns_since_name_used,
+            ):
+                yield (kind, payload)
 
     async def summarize_session(self, messages: List[Dict[str, str]]) -> Dict[str, str]:
         """

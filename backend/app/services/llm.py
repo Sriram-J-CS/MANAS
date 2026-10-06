@@ -74,25 +74,21 @@ async def generate_chat_response(
                 }]
             }
 
-    # Friendly connection hiccup message on failure — never canned therapy reply
-    return {
-        "reply": "Connection hiccup, please try again.",
-        "spoken_text": "Connection hiccup, please try again.",
-        "emotion": "calm",
-        "gesture": "nod",
-        "expression": "calm",
-        "risk_level": "none",
-        "suggest_tool": "none",
-        "quick_replies": [],
-        "suggested_exercise": "none",
-        "is_error": True,
-        "segments": [{
-            "spoken_text": "Connection hiccup, please try again.",
-            "text": "Connection hiccup, please try again.",
-            "emotion": "calm",
-            "gesture": "nod"
-        }]
-    }
+    # Fallback to autonomous companion on failure — empathetic care is always preserved
+    from .autonomous_companion import generate_autonomous_companion_response
+    auto_res = generate_autonomous_companion_response(
+        message=message,
+        user_name=user_name,
+        language=language,
+        companion_tone="gentle",
+    )
+    auto_res["segments"] = [{
+        "spoken_text": auto_res.get("spoken_text") or auto_res["reply"],
+        "text": auto_res["reply"],
+        "emotion": auto_res.get("emotion", "calm"),
+        "gesture": auto_res.get("gesture", "nod")
+    }]
+    return auto_res
 
 async def gemini_health_check() -> Dict[str, Any]:
     """Check status of Gemini provider."""

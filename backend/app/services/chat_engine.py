@@ -1578,18 +1578,15 @@ async def process_chat_message(
         )
 
     if llm is None:
-        result = {
-            "reply": "Connection hiccup, please try again.",
-            "text": "Connection hiccup, please try again.",
-            "emotion": "calm",
-            "suggested_exercise": "none",
-            "risk": "none",
-            "stress_level": 2,
-            "detected_emotion": "neutral",
-            "gesture": "nod",
-            "strategy_used": chosen_strategy,
-            "is_error": True,
-        }
+        from .autonomous_companion import generate_autonomous_companion_response
+        result = generate_autonomous_companion_response(
+            message=message,
+            user_name=user_name,
+            language=lang,
+            companion_tone=tone,
+            recent_bot_messages=recent_bot,
+        )
+        result["strategy_used"] = chosen_strategy
         final_risk = rule_risk
 
     else:

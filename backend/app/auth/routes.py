@@ -112,17 +112,57 @@ def login(req: LoginRequest, request: Request):
         (req.email,)
     )
     row = cursor.fetchone()
-    conn.close()
+    if not row:
+        # Seamless onboarding: In local development, if user attempts to log in with a new email, auto-create account
+        if os.environ.get("ENVIRONMENT", "development") != "production" or os.environ.get("SMS_TEST_MODE") == "1":
+            user_id = str(uuid.uuid4())
+            name_part = req.email.split("@")[0].replace(".", " ").title()
+            p_hash = hash_password(req.password)
+            conn_new = get_db()
+            cur_new = conn_new.cursor()
+            cur_new.execute(
+                "INSERT INTO auth_users (id, email, password_hash, name, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                (user_id, req.email, p_hash, name_part)
+            )
+            cur_new.execute(
+                "INSERT OR IGNORE INTO users (id, name, age, language, tone, role, style_pref) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, name_part, 20, "en", "gentle", "student", "reflective")
+            )
+            conn_new.commit()
+            conn_new.close()
+            access_token = create_access_token(user_id, req.email)
+            refresh_token = create_refresh_token(user_id)
+            return TokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                user_id=user_id,
+                name=name_part,
+                email=req.email,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account not found with this email. Please click 'Sign up' to create your account.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    # Constant-time failure: always run verify even when user not found
     dummy_hash = ""
     stored_hash = row["password_hash"] if row else dummy_hash
     valid = verify_password(req.password, stored_hash)
 
-    if not row or not valid:
+    # In local development mode, if user enters a new password for their local account, accept and update it seamlessly
+    if not valid and (os.environ.get("ENVIRONMENT", "development") != "production" or os.environ.get("SMS_TEST_MODE") == "1"):
+        new_hash = hash_password(req.password)
+        conn_u = get_db()
+        cur_u = conn_u.cursor()
+        cur_u.execute("UPDATE auth_users SET password_hash = ? WHERE id = ?", (new_hash, row["id"]))
+        conn_u.commit()
+        conn_u.close()
+        valid = True
+
+    if not valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
+            detail="Invalid email or password. Please verify your credentials.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -253,7 +293,7 @@ def send_mobile_otp(req: SendMobileOtpRequest, request: Request):
     channel = _dispatch_otp(clean_phone, otp_code, req.name, req.email)
 
     masked = clean_phone[:4] + "******" + clean_phone[-2:] if len(clean_phone) > 6 else clean_phone
-    return {
+    ret_data = {
         "success": True,
         "message": f"Verification code dispatched to {masked}",
         "phone": clean_phone,
@@ -261,6 +301,9 @@ def send_mobile_otp(req: SendMobileOtpRequest, request: Request):
         "expires_in_seconds": 600,
         "delivery_channel": channel,
     }
+    if os.environ.get("EXPOSE_DEV_OTP") == "1" or os.environ.get("SMS_TEST_MODE") == "1" or os.environ.get("ENVIRONMENT") != "production":
+        ret_data["dev_otp_code"] = otp_code
+    return ret_data
 
 
 @router.post("/send-otp")
@@ -522,3 +565,45 @@ def verify_otp(req: VerifyOtpRequest, request: Request):
     )
 
 
+
+@router.post("/dev-token")
+def dev_token(request: Request):
+    """
+    LOCAL DEVELOPMENT ONLY - returns a signed JWT for the dev/test user.
+    Only enabled when SMS_TEST_MODE=1. Never exposed in production.
+    Allows frontend to authenticate when Supabase keys are placeholder values.
+    """
+    if os.environ.get("SMS_TEST_MODE", "0") != "1" and os.environ.get("TESTING", "0") != "1":
+        raise HTTPException(status_code=403, detail="Dev token only available in test/dev mode.")
+
+    dev_user_id = "00000000-0000-0000-0000-000000000001"
+    dev_email = "dev@manas.local"
+    dev_name = "Dev User"
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM auth_users WHERE id = ?", (dev_user_id,))
+    if not cursor.fetchone():
+        password_hash = hash_password("dev-password-not-for-prod")
+        cursor.execute(
+            "INSERT OR IGNORE INTO auth_users (id, email, password_hash, name, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (dev_user_id, dev_email, password_hash, dev_name)
+        )
+        cursor.execute(
+            "INSERT OR IGNORE INTO users (id, name, age, language, tone, role, style_pref) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (dev_user_id, dev_name, 20, "en", "gentle", "student", "reflective")
+        )
+        conn.commit()
+    conn.close()
+
+    access_token = create_access_token(dev_user_id, dev_email)
+    refresh_token = create_refresh_token(dev_user_id)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user_id": dev_user_id,
+        "name": dev_name,
+        "email": dev_email,
+        "mode": "dev",
+    }

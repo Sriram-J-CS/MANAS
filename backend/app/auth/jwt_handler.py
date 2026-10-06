@@ -26,6 +26,47 @@ _SECRETS = list(filter(None, [
     "dev-jwt-secret-manas-mindful-wellness-token-key-2026",
 ]))
 
+_LOCAL_JWT_SECRET = (
+    os.environ.get("JWT_SECRET_KEY")
+    or os.environ.get("AUTH_SECRET")
+    or os.environ.get("SUPABASE_JWT_SECRET")
+    or "dev-jwt-secret-manas-mindful-wellness-token-key-2026"
+)
+_LOCAL_JWT_ALGORITHM = "HS256"
+_ACCESS_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+_REFRESH_EXPIRE_DAYS = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+
+
+def create_access_token(user_id: str, email: str = "") -> str:
+    """
+    Issue a short-lived HS256 JWT access token for the local (SQLite) auth system.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=_ACCESS_EXPIRE_MINUTES)).timestamp()),
+        "type": "access",
+    }
+    return jwt.encode(payload, _LOCAL_JWT_SECRET, algorithm=_LOCAL_JWT_ALGORITHM)
+
+
+def create_refresh_token(user_id: str) -> str:
+    """
+    Issue a long-lived HS256 JWT refresh token for the local (SQLite) auth system.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(days=_REFRESH_EXPIRE_DAYS)).timestamp()),
+        "type": "refresh",
+        "jti": str(uuid.uuid4()),
+    }
+    return jwt.encode(payload, _LOCAL_JWT_SECRET, algorithm=_LOCAL_JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> Optional[Dict[str, Any]]:
     """
     Decodes and validates JWT using Supabase secret or known HMAC secrets.

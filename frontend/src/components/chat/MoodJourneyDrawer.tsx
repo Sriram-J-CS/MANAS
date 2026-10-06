@@ -168,30 +168,13 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
 
           {/* Drawer Body */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
-            {/* Quick Check-in Banner */}
-            <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-white/50 block mb-2">
-                Quick Log · How are you feeling right now?
+            {/* Auto-inferred Info Pill */}
+            <div className="p-3 rounded-2xl bg-cyan-950/20 border border-cyan-500/20 text-xs font-mono flex items-center justify-between">
+              <span className="text-cyan-300 font-semibold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                Auto-Inferred Rhythms
               </span>
-              <div className="flex items-center justify-between gap-1">
-                {moodLevels.map((lvl) => (
-                  <button
-                    key={lvl.num}
-                    onClick={() => {
-                      triggerHaptic(20);
-                      onSelectMood(lvl.num);
-                    }}
-                    className={`flex-1 py-2 px-1 rounded-xl flex flex-col items-center gap-1 border transition-all ${
-                      currentMood === lvl.num
-                        ? 'bg-cyan-500/20 border-cyan-400 text-white scale-105 shadow-md shadow-cyan-500/20'
-                        : 'bg-black/40 border-white/10 hover:border-white/30 text-white/70 hover:scale-105'
-                    }`}
-                  >
-                    <span className="text-lg">{lvl.emoji}</span>
-                    <span className="text-[9px] font-mono leading-none text-white/60">{lvl.label}</span>
-                  </button>
-                ))}
-              </div>
+              <span className="text-[10px] text-white/40">From your chat sessions</span>
             </div>
 
             {/* 7-Day Interactive SVG Mini Chart */}
@@ -206,12 +189,15 @@ export const MoodJourneyDrawer: React.FC<MoodJourneyDrawerProps> = ({
                 </span>
               </div>
 
-              {/* Chart SVG or Honest Empty State */}
+              {/* Chart SVG or Clean Empty State */}
               <div className="w-full flex justify-center py-2 min-h-[120px] items-center">
                 {!hasData ? (
-                  <div className="text-center p-4 text-white/40 text-xs font-mono">
-                    <p className="font-semibold text-white/60">No check-ins logged yet</p>
-                    <p className="text-[10px] text-white/40 mt-1">Select an emoji above to record your first mood score.</p>
+                  <div className="text-center py-6 px-4 text-white/50 text-xs font-mono space-y-2">
+                    <Sparkles className="w-6 h-6 text-cyan-400 mx-auto opacity-70" />
+                    <p className="font-bold text-white/80">No Mood Events Yet</p>
+                    <p className="text-[11px] text-white/40 max-w-xs mx-auto leading-relaxed">
+                      Your emotional trend curve is automatically inferred from your conversations with your companion. Talk freely in chat to reveal your emotional rhythm.
+                    </p>
                   </div>
                 ) : chartPoints.length === 1 ? (
                   <div className="text-center p-4 text-white/60 text-xs font-mono">

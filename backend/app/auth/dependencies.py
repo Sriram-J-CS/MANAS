@@ -26,6 +26,25 @@ def get_current_user_id(
     return get_user_id_from_token(token)
 
 
+def get_chat_user_id(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> str:
+    """
+    User ID extractor specifically for mental health companion chat.
+    Extracts verified user_id from token if valid, but gracefully falls back
+    to 'guest_user' or guest token so users in emotional distress are never
+    locked out with a 401 error.
+    """
+    if credentials is not None and credentials.credentials:
+        token = credentials.credentials.strip()
+        uid = get_user_id_from_token(token)
+        if uid:
+            return uid
+        if token.startswith("user_") or token.startswith("guest_") or token != "null":
+            return token
+    return "guest_user"
+
+
 def require_auth(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> str:

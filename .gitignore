@@ -26,7 +26,9 @@ token.json
 *.db-wal
 *.db-shm
 backend/manas_twin.db
+backend/manas_twin.db.backup*
 backend/cache/
+scratch/
 
 # Dependencies
 node_modules/
