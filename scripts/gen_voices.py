@@ -155,42 +155,42 @@ FIXED_LINES = {
     },
     "hi": {
         "girl": {
-            "step_1_language": "नमस्ते! अपनी पसंदीदा भाषा चुनें, ताकि हम खुलकर बात कर सकें।",
+            "step_1_language": "मानस में आपका स्वागत है। मैं मानस हूँ, आपकी साथी। कृपया अपनी पसंदीदा भाषा चुनें, ताकि हम खुलकर बात कर सकें।",
             "step_2_name": "अपना प्यारा नाम बताइए, मैं आपको किस नाम से पुकारूँ?",
             "step_3_age": "अपनी उम्र बताइए, इससे आपको बेहतर समझने में मदद मिलेगी।",
             "step_4_contact": "अपनी संपर्क जानकारी दर्ज करें, आपकी जानकारी पूरी तरह सुरक्षित रहेगी।",
             "step_5_photo": "अपनी तस्वीर अपलोड करें या अपना पसंदीदा अवतार चुनें।",
             "step_6_voice": "अपनी पसंदीदा आवाज़ चुनें, हम रोज़ बातें करेंगे।",
-            "greeting_companion": "नमस्ते! मैं आपकी साथी हूँ, हमेशा आपकी बात सुनने और साथ देने के लिए यहीं हूँ।"
+            "greeting_companion": "नमस्ते! मैं मानस हूँ, हमेशा आपकी बात सुनने और साथ देने के लिए यहीं हूँ।"
         },
         "boy": {
-            "step_1_language": "नमस्ते दोस्त! अपनी पसंदीदा भाषा चुनो, चलो बातचीत शुरू करते हैं।",
-            "step_2_name": "अपना नाम बताओ दोस्त, मैं तुम्हें किस नाम से बुलाऊँ?",
-            "step_3_age": "अपनी उम्र बताओ दोस्त, ताकि हम बेहतर तरीके से जुड़ सकें।",
+            "step_1_language": "मानस में आपका स्वागत है। मैं मानस हूँ, आपका साथी। कृपया अपनी पसंदीदा भाषा चुनें, चलो बातचीत शुरू करते हैं।",
+            "step_2_name": "अपना नाम बताइए, मैं आपको किस नाम से बुलाऊँ?",
+            "step_3_age": "अपनी उम्र बताओ, ताकि हम बेहतर तरीके से जुड़ सकें।",
             "step_4_contact": "अपनी संपर्क जानकारी दर्ज करो, सब कुछ एकदम सुरक्षित रहेगा।",
             "step_5_photo": "अपनी फोटो लगाओ या पसंदीदा अवतार चुनो।",
-            "step_6_voice": "अपनी पसंदीदा आवाज़ चुनो, हम हमेशा दोस्तों की तरह बात करेंगे।",
-            "greeting_companion": "नमस्ते दोस्त! तुम्हारे साथ के लिए मैं हमेशा यहीं हूँ, जब भी चाहो मुझसे बात करो।"
+            "step_6_voice": "अपनी पसंदीदा आवाज़ चुनो, हम हमेशा बात करेंगे।",
+            "greeting_companion": "नमस्ते! मैं मानस हूँ, आपके साथ के लिए हमेशा यहीं हूँ, जब भी चाहो मुझसे बात करो।"
         }
     },
     "en": {
         "girl": {
-            "step_1_language": "Welcome! Please select your preferred language so we can talk comfortably.",
+            "step_1_language": "Welcome to MANAS. I am MANAS, your supportive companion. Please select your preferred language so we can talk comfortably.",
             "step_2_name": "What should I call you? Please share your preferred name.",
             "step_3_age": "Please share your age so I can tailor the experience gently for you.",
             "step_4_contact": "Enter your contact details so your account remains completely private and secure.",
             "step_5_photo": "Upload a clear portrait photo or choose a custom companion avatar.",
             "step_6_voice": "Choose the voice that feels most comfortable and comforting to you.",
-            "greeting_companion": "Hello! I am your companion, always right here beside you to listen and support you."
+            "greeting_companion": "Hello! I am MANAS, always right here beside you to listen and support you."
         },
         "boy": {
-            "step_1_language": "Hey there! Pick your preferred language, and let us get started.",
-            "step_2_name": "What is your name, friend? How would you like me to call you?",
+            "step_1_language": "Welcome to MANAS. I am MANAS, your companion. Please choose your preferred language, and let us get started.",
+            "step_2_name": "What is your name? Please tell me how you would like me to call you.",
             "step_3_age": "Tell me your age so I can connect with you in the best way possible.",
             "step_4_contact": "Add your contact details to keep everything secure and safe.",
             "step_5_photo": "Upload your photo or choose an avatar that represents you.",
             "step_6_voice": "Pick your preferred companion voice, and let us chat anytime you want.",
-            "greeting_companion": "Hey friend! I am right here beside you, always ready to listen whenever you want to talk."
+            "greeting_companion": "Hello! I am MANAS, right here beside you, always ready to listen whenever you want to talk."
         }
     }
 }

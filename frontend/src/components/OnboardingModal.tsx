@@ -265,16 +265,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     ONBOARDING_FIXED_LINES.en[companionKey][currentLineId] ||
     'I am right here with you.';
 
-  // Speak step instruction via unified speechGateway with pre-generated audio
-  useEffect(() => {
-    if (isMuted) {
-      setMascotSpeaking(false);
-      return;
-    }
+  const speakCurrentGuide = (langOverride?: string) => {
+    if (isMuted) return;
+    const targetLang = langOverride || selectedLanguage;
+    const cleanLang = (targetLang || 'en').split('-')[0].toLowerCase();
+    const textToSpeak =
+      ONBOARDING_FIXED_LINES[cleanLang]?.[companionKey]?.[currentLineId] ||
+      ONBOARDING_FIXED_LINES.en[companionKey][currentLineId] ||
+      currentGuideText;
 
+    speechGateway.stopSpeaking();
     speechGateway.speak({
-      text: currentGuideText,
-      lang: selectedLanguage,
+      text: textToSpeak,
+      lang: targetLang,
       gender: companion || 'girl',
       purpose: 'onboarding_step',
       lineId: currentLineId,
@@ -291,6 +294,15 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         setMascotExpression('calm');
       }
     });
+  };
+
+  // Speak step instruction via unified speechGateway with pre-generated audio
+  useEffect(() => {
+    if (!isMuted) {
+      speakCurrentGuide();
+    } else {
+      setMascotSpeaking(false);
+    }
 
     return () => {
       speechGateway.stopSpeaking();
@@ -734,10 +746,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           </div>
 
           <div className="flex-1">
-            <div className="relative p-3 rounded-2xl bg-[#FFFFFF] dark:bg-[#1A2234] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 shadow-sm">
-              <p className="text-xs sm:text-sm text-[#0A0A0A]/85 dark:text-[#FFFFFF]/90 leading-relaxed font-normal">
-                {currentGuideText}
-              </p>
+            <div
+              onClick={() => speakCurrentGuide()}
+              title="Click to hear MANAS speak"
+              className="relative p-3 rounded-2xl bg-[#FFFFFF] dark:bg-[#1A2234] border border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 shadow-sm cursor-pointer hover:border-[#8B5CF6]/50 transition-colors group"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs sm:text-sm text-[#0A0A0A]/85 dark:text-[#FFFFFF]/90 leading-relaxed font-normal">
+                  {currentGuideText}
+                </p>
+                <span className="shrink-0 p-1 text-[#8B5CF6] group-hover:scale-110 transition-transform">
+                  <Volume2 className="w-3.5 h-3.5" />
+                </span>
+              </div>
               {/* Triangle pointer */}
               <div className="absolute top-4 -left-1.5 w-3 h-3 bg-[#FFFFFF] dark:bg-[#1A2234] border-l border-b border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 transform rotate-45" />
             </div>
@@ -773,7 +794,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       <button
                         key={lang.code}
                         type="button"
-                        onClick={() => setSelectedLanguage(lang.code)}
+                        onClick={() => {
+                          setSelectedLanguage(lang.code as SupportedLanguage);
+                          speakCurrentGuide(lang.code);
+                        }}
                         className={`p-3.5 rounded-2xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
                           isSelected
                             ? 'border-[#8B5CF6] bg-[#8B5CF6]/10 dark:bg-[#8B5CF6]/20 shadow-sm'
