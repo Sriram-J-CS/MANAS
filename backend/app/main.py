@@ -425,11 +425,11 @@ def delete_user_memory(user_id: str, memory_id: str, current_uid: str = Depends(
     return {"status": "success", "message": f"Memory {memory_id} deleted"}
 
 @app.post("/api/feedback")
-def submit_feedback(req: FeedbackRequest, current_uid: Optional[str] = Depends(get_current_user_id)):
+def submit_feedback(req: FeedbackRequest, current_uid: str = Depends(require_auth)):
     conn = get_db()
     cursor = conn.cursor()
     feedback_id = str(uuid.uuid4())
-    effective_uid = current_uid or req.user_id or "anonymous"
+    effective_uid = current_uid
     
     rating_val = req.rating
     felt_und = req.felt_understood
@@ -458,17 +458,27 @@ def submit_feedback(req: FeedbackRequest, current_uid: Optional[str] = Depends(g
     return {"status": "success", "feedback_id": feedback_id}
 
 @app.get("/api/admin/feedback")
-def get_admin_feedback(limit: int = 50, only_negative: bool = False, current_uid: Optional[str] = Depends(get_current_user_id)):
+def get_admin_feedback(limit: int = 50, only_negative: bool = False, current_uid: str = Depends(require_auth)):
     conn = get_db()
     cursor = conn.cursor()
-    query = """
-        SELECT id, message_id, user_id, rating, felt_understood, comment, user_consent, user_message, bot_reply, created_at
-        FROM message_feedback
-    """
+    # Check if admin
+    cursor.execute("SELECT is_admin FROM auth_users WHERE id = ?", (current_uid,))
+    admin_row = cursor.fetchone()
+    is_admin = bool(admin_row and admin_row["is_admin"])
+
+    if is_admin:
+        query = "SELECT id, message_id, user_id, rating, felt_understood, comment, user_consent, user_message, bot_reply, created_at FROM message_feedback WHERE 1=1"
+        params = []
+    else:
+        query = "SELECT id, message_id, user_id, rating, felt_understood, comment, user_consent, user_message, bot_reply, created_at FROM message_feedback WHERE user_id = ?"
+        params = [current_uid]
+
     if only_negative:
-        query += " WHERE rating = -1 OR felt_understood = 0"
+        query += " AND (rating = -1 OR felt_understood = 0)"
     query += " ORDER BY created_at DESC LIMIT ?"
-    cursor.execute(query, (limit,))
+    params.append(limit)
+
+    cursor.execute(query, tuple(params))
     rows = []
     for r in cursor.fetchall():
         d = dict(r)
@@ -482,21 +492,32 @@ def get_admin_feedback(limit: int = 50, only_negative: bool = False, current_uid
         d["user_consent"] = 1
         rows.append(d)
     
-    cursor.execute("""
-        SELECT 
-            count(*) as total_feedback,
-            sum(case when rating = 1 then 1 else 0 end) as positive_ratings,
-            sum(case when rating = -1 and felt_understood != 0 then 1 else 0 end) as negative_ratings,
-            sum(case when felt_understood = 0 then 1 else 0 end) as not_understood_count
-        FROM message_feedback
-    """)
+    if is_admin:
+        cursor.execute("""
+            SELECT 
+                count(*) as total_feedback,
+                sum(case when rating = 1 then 1 else 0 end) as positive_ratings,
+                sum(case when rating = -1 and felt_understood != 0 then 1 else 0 end) as negative_ratings,
+                sum(case when felt_understood = 0 then 1 else 0 end) as not_understood_count
+            FROM message_feedback
+        """)
+    else:
+        cursor.execute("""
+            SELECT 
+                count(*) as total_feedback,
+                sum(case when rating = 1 then 1 else 0 end) as positive_ratings,
+                sum(case when rating = -1 and felt_understood != 0 then 1 else 0 end) as negative_ratings,
+                sum(case when felt_understood = 0 then 1 else 0 end) as not_understood_count
+            FROM message_feedback
+            WHERE user_id = ?
+        """, (current_uid,))
     stats = dict(cursor.fetchone() or {})
     conn.close()
     return {"stats": stats, "feedback": rows}
 
 @app.post("/api/chat")
 @app.post("/api/chat/stream")
-async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = Depends(get_current_user_id)):
+async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(require_auth)):
     """
     Scale-ready streaming chat endpoint:
     - OpenTelemetry / trace correlation with X-Trace-ID
@@ -506,7 +527,7 @@ async def chat(req: ChatRequest, request: Request, current_uid: Optional[str] = 
     - Distributed job queue for background extraction and push notifications
     - Live Server-Sent Events (SSE) streaming tokens to UI with structured output metadata
     """
-    uid = current_uid or req.user_id or "anonymous"
+    uid = current_uid
     client_ip = request.client.host if request.client else "127.0.0.1"
 
     # Derive verified user name from server database identity if authenticated

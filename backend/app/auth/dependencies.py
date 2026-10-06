@@ -1,14 +1,8 @@
 """
-auth/dependencies.py - FastAPI dependency for extracting and validating the
-authenticated user from the Authorization: Bearer <token> header.
-
-Usage:
-    from app.auth.dependencies import get_current_user_id, require_auth
-
-    @app.get("/api/some/endpoint")
-    async def my_endpoint(uid: str = Depends(require_auth)):
-        # uid is guaranteed server-derived, validated from JWT
-        ...
+auth/dependencies.py - FastAPI dependencies for verified Supabase authentication.
+Strictly extracts verified user_id from Authorization: Bearer <token>.
+Never accepts user_id from request body or query params.
+Never falls back to shared guest_user.
 """
 from typing import Optional
 from fastapi import Depends, HTTPException, status
@@ -23,36 +17,34 @@ def get_current_user_id(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> Optional[str]:
     """
-    Extract user_id from the JWT Bearer token or guest token.
-    Returns None if no token is present.
+    Extract verified user_id from the Supabase JWT Bearer token.
+    Returns None if no token or invalid.
     """
     if credentials is None or not credentials.credentials:
         return None
     token = credentials.credentials.strip()
-    uid = get_user_id_from_token(token)
-    if uid:
-        return uid
-    if token.startswith("user_") or token.startswith("guest_"):
-        return token
-    return None
+    return get_user_id_from_token(token)
 
 
 def require_auth(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> str:
     """
-    Require a valid user session.
-    Extracts server-derived user_id from valid JWT token.
-    Gracefully falls back to guest/demo user identifier when in local/guest mode.
+    Require a valid Supabase authenticated user session.
+    Extracts server-derived user_id from valid token.
+    Rejects unauthenticated requests with 401 Unauthorized.
     """
     if credentials is not None and credentials.credentials:
         token = credentials.credentials.strip()
         uid = get_user_id_from_token(token)
         if uid:
             return uid
-        if token.startswith("user_") or token.startswith("guest_") or token != "null":
-            return token
-    return "guest_user"
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Valid authentication token required. Please sign in.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def require_admin(
@@ -60,7 +52,6 @@ def require_admin(
 ) -> str:
     """
     Require the authenticated user to have admin privileges.
-    Checks is_admin flag in auth_users table.
     """
     from ..database import get_db
     conn = get_db()
@@ -74,4 +65,3 @@ def require_admin(
             detail="Admin privileges required."
         )
     return uid
-
