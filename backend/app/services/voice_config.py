@@ -179,12 +179,40 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
 
 SARVAM_CONFIG = {
     "model": "bulbul:v3",
+    "pace": 0.92,
     "default_pace": 1.0,
     "calming_pace": 0.95,
-    "max_chars_per_chunk": 220,
-    "timeout_seconds": 7.0,
+    "max_chars_per_chunk": 2500,
+    "timeout_seconds": 6.0,
     "api_endpoint": "https://api.sarvam.ai/text-to-speech"
 }
+
+SARVAM_NATIVE_VOICE_MAP: Dict[str, Dict[str, str]] = {
+    "ta": {"girl": "ishita", "boy": "ratan", "female": "ishita", "male": "ratan"},
+    "te": {"girl": "priya", "boy": "shubh", "female": "priya", "male": "shubh"},
+    "kn": {"girl": "ishita", "boy": "shubh", "female": "ishita", "male": "shubh"},
+    "ml": {"girl": "pooja", "boy": "shubh", "female": "pooja", "male": "shubh"},
+    "bn": {"girl": "roopa", "boy": "rehan", "female": "roopa", "male": "rehan"},
+    "mr": {"girl": "priya", "boy": "ratan", "female": "priya", "male": "ratan"},
+}
+
+CHIRP3_FALLBACK_VOICE_MAP: Dict[str, Dict[str, str]] = {
+    "ta-IN": {"girl": "ta-IN-Chirp3-HD-F", "boy": "ta-IN-Chirp3-HD-M", "female": "ta-IN-Chirp3-HD-F", "male": "ta-IN-Chirp3-HD-M"},
+    "te-IN": {"girl": "te-IN-Chirp3-HD-F", "boy": "te-IN-Chirp3-HD-M", "female": "te-IN-Chirp3-HD-F", "male": "te-IN-Chirp3-HD-M"},
+    "kn-IN": {"girl": "kn-IN-Chirp3-HD-F", "boy": "kn-IN-Chirp3-HD-M", "female": "kn-IN-Chirp3-HD-F", "male": "kn-IN-Chirp3-HD-M"},
+    "ml-IN": {"girl": "ml-IN-Chirp3-HD-F", "boy": "ml-IN-Chirp3-HD-M", "female": "ml-IN-Chirp3-HD-F", "male": "ml-IN-Chirp3-HD-M"},
+    "bn-IN": {"girl": "bn-IN-Chirp3-HD-F", "boy": "bn-IN-Chirp3-HD-M", "female": "bn-IN-Chirp3-HD-F", "male": "bn-IN-Chirp3-HD-M"},
+    "mr-IN": {"girl": "mr-IN-Chirp3-HD-F", "boy": "mr-IN-Chirp3-HD-M", "female": "mr-IN-Chirp3-HD-F", "male": "mr-IN-Chirp3-HD-M"},
+    "hi-IN": {"girl": "hi-IN-Chirp3-HD-F", "boy": "hi-IN-Chirp3-HD-M", "female": "hi-IN-Chirp3-HD-F", "male": "hi-IN-Chirp3-HD-M"},
+    "en-IN": {"girl": "en-IN-Chirp3-HD-F", "boy": "en-IN-Chirp3-HD-M", "female": "en-IN-Chirp3-HD-F", "male": "en-IN-Chirp3-HD-M"},
+}
+
+def get_chirp3_fallback_voice(lang: str, gender: str = "girl") -> str:
+    bcp = lang if "-IN" in lang else f"{lang}-IN"
+    g_key = "boy" if (gender or "").lower() in ("boy", "male") else "girl"
+    if bcp in CHIRP3_FALLBACK_VOICE_MAP:
+        return CHIRP3_FALLBACK_VOICE_MAP[bcp][g_key]
+    return f"{bcp}-Chirp3-HD-{'M' if g_key == 'boy' else 'F'}"
 
 ALL_SUPPORTED_LANGUAGES = {"en", "hi", "ta", "te", "kn", "ml", "bn", "mr"}
 

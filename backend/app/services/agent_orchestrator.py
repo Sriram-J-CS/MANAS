@@ -234,7 +234,9 @@ async def match_avatar_photo(req: AvatarPhotoMatchRequest):
         "hair_length": "medium",
         "hair_style": "natural",
         "eye_color_hex": "#3D2314",
+        "lip_color_hex": "#C87D7D",
         "glasses": False,
+        "glasses_shape": "none",
         "facial_hair": "none",
         "face_shape": "oval",
         "age_range": "20-25",
@@ -255,9 +257,11 @@ async def match_avatar_photo(req: AvatarPhotoMatchRequest):
             '  "skin_tone_hex": "#RRGGBB",\n'
             '  "hair_color_hex": "#RRGGBB",\n'
             '  "hair_length": "short" | "medium" | "long",\n'
-            '  "hair_style": "string",\n'
+            '  "hair_style": "straight" | "wavy" | "curly",\n'
             '  "eye_color_hex": "#RRGGBB",\n'
+            '  "lip_color_hex": "#RRGGBB",\n'
             '  "glasses": true | false,\n'
+            '  "glasses_shape": "round" | "rectangle" | "oval" | "square" | "none",\n'
             '  "facial_hair": "none" | "stubble" | "beard" | "moustache",\n'
             '  "face_shape": "oval" | "round" | "square" | "heart",\n'
             '  "age_range": "string",\n'

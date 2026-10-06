@@ -516,8 +516,8 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
         {activeTab === 'upload' && (
           <div className="space-y-4">
             <MascotUploader
-              onUploadSuccess={({ url, fileType }) => {
-                setModelUrl(url);
+              onUploadSuccess={({ objectUrl, fileType }) => {
+                setModelUrl(objectUrl);
                 setModelType(fileType as any);
                 setConfig({ ...config, isCustomModel: true });
               }}

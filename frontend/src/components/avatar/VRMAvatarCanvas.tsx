@@ -37,29 +37,194 @@ export type MascotEmotion =
 
 export type MascotGesture = 'idle' | 'wave' | 'nod' | 'breathe' | 'thumbs_up' | 'base';
 
-export interface AvatarAppearanceAttributes {
-  skin_tone_hex?: string;
-  hair_color_hex?: string;
-  hair_length?: 'short' | 'medium' | 'long';
-  hair_style?: string;
-  eye_color_hex?: string;
-  glasses?: boolean;
-  facial_hair?: 'none' | 'stubble' | 'beard' | 'moustache';
-  face_shape?: string;
-  age_range?: string;
-  confidence?: number;
-}
+import type { AvatarAppearanceAttributes } from '../../lib/avatar/providers';
+export type { AvatarAppearanceAttributes };
 
 export const PHOTO_AVATAR_ENABLED = true;
 
 /**
+ * Procedural 3D glasses generator attached to VRM head bone.
+ */
+function createProceduralGlasses(shape: string = 'round', frameColorHex: string = '#1E1E24'): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'procedural-glasses';
+
+  const frameColor = new THREE.Color(frameColorHex);
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: frameColor,
+    roughness: 0.25,
+    metalness: 0.7,
+  });
+
+  const lensMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.18,
+    depthWrite: false,
+  });
+
+  const eyeOffsetX = 0.033; // Inter-pupillary half-distance
+  const rimRadius = 0.019;
+  const tubeRadius = 0.0022;
+
+  let leftRimGeom: THREE.BufferGeometry;
+  let rightRimGeom: THREE.BufferGeometry;
+  let lensGeom: THREE.BufferGeometry;
+
+  if (shape === 'rectangle' || shape === 'square') {
+    const w = 0.034;
+    const h = shape === 'square' ? 0.032 : 0.024;
+    const shapePath = new THREE.Shape();
+    const r = 0.004;
+    shapePath.moveTo(-w / 2 + r, -h / 2);
+    shapePath.lineTo(w / 2 - r, -h / 2);
+    shapePath.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+    shapePath.lineTo(w / 2, h / 2 - r);
+    shapePath.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
+    shapePath.lineTo(-w / 2 + r, h / 2);
+    shapePath.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+    shapePath.lineTo(-w / 2, -h / 2 + r);
+    shapePath.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+
+    const holePath = new THREE.Path();
+    const hr = 0.003;
+    const hw = w - 0.004;
+    const hh = h - 0.004;
+    holePath.moveTo(-hw / 2 + hr, -hh / 2);
+    holePath.lineTo(hw / 2 - hr, -hh / 2);
+    holePath.quadraticCurveTo(hw / 2, -hh / 2, hw / 2, -hh / 2 + hr);
+    holePath.lineTo(hw / 2, hh / 2 - hr);
+    holePath.quadraticCurveTo(hw / 2, hh / 2, hw / 2 - hr, hh / 2);
+    holePath.lineTo(-hw / 2 + hr, hh / 2);
+    holePath.quadraticCurveTo(-hw / 2, hh / 2, -hw / 2, hh / 2 - hr);
+    holePath.lineTo(-hw / 2, -hh / 2 + hr);
+    holePath.quadraticCurveTo(-hw / 2, -hh / 2, -hw / 2 + hr, -hh / 2);
+    shapePath.holes.push(holePath);
+
+    leftRimGeom = new THREE.ExtrudeGeometry(shapePath, { depth: 0.003, bevelEnabled: false });
+    rightRimGeom = leftRimGeom.clone();
+    lensGeom = new THREE.PlaneGeometry(hw, hh);
+  } else {
+    leftRimGeom = new THREE.TorusGeometry(rimRadius, tubeRadius, 16, 32);
+    rightRimGeom = new THREE.TorusGeometry(rimRadius, tubeRadius, 16, 32);
+    lensGeom = new THREE.CircleGeometry(rimRadius - 0.001, 24);
+  }
+
+  const leftRim = new THREE.Mesh(leftRimGeom, frameMat);
+  leftRim.position.set(-eyeOffsetX, 0, 0);
+
+  const rightRim = new THREE.Mesh(rightRimGeom, frameMat);
+  rightRim.position.set(eyeOffsetX, 0, 0);
+
+  if (shape === 'oval') {
+    leftRim.scale.set(1.15, 0.88, 1);
+    rightRim.scale.set(1.15, 0.88, 1);
+  }
+
+  const leftLens = new THREE.Mesh(lensGeom, lensMat);
+  leftLens.position.set(-eyeOffsetX, 0, 0.001);
+
+  const rightLens = new THREE.Mesh(lensGeom, lensMat);
+  rightLens.position.set(eyeOffsetX, 0, 0.001);
+
+  // Center bridge
+  const bridgeGeom = new THREE.CylinderGeometry(tubeRadius, tubeRadius, eyeOffsetX, 8);
+  const bridge = new THREE.Mesh(bridgeGeom, frameMat);
+  bridge.rotation.z = Math.PI / 2;
+  bridge.position.set(0, shape === 'rectangle' ? 0.002 : 0, 0);
+
+  // Temples extending backward along -Z toward ears
+  const templeLength = 0.095;
+  const templeGeom = new THREE.CylinderGeometry(tubeRadius * 0.8, tubeRadius * 0.8, templeLength, 8);
+
+  const leftTemple = new THREE.Mesh(templeGeom, frameMat);
+  leftTemple.rotation.x = Math.PI / 2;
+  leftTemple.position.set(-eyeOffsetX - rimRadius + 0.002, 0, -templeLength / 2);
+
+  const rightTemple = new THREE.Mesh(templeGeom, frameMat);
+  rightTemple.rotation.x = Math.PI / 2;
+  rightTemple.position.set(eyeOffsetX + rimRadius - 0.002, 0, -templeLength / 2);
+
+  group.add(leftRim, rightRim, leftLens, rightLens, bridge, leftTemple, rightTemple);
+
+  // Position precisely on the nose bridge right in front of avatar eyes
+  group.position.set(0, 0.082, 0.096);
+
+  return group;
+}
+
+/**
+ * Tints an MToon/Standard material by ratio target/original average color,
+ * preserving underlying texture luminance while shifting tone, and adjusting shadeColor.
+ */
+function tintMaterial(mat: any, targetHex?: string): void {
+  if (!targetHex || !mat || !mat.color) return;
+  const target = new THREE.Color(targetHex);
+  const orig = mat.userData.originalColor || mat.color;
+  const origAvg = Math.max(0.01, (orig.r + orig.g + orig.b) / 3);
+
+  // Ratio target/original average
+  const ratioR = target.r / origAvg;
+  const ratioG = target.g / origAvg;
+  const ratioB = target.b / origAvg;
+
+  mat.color.setRGB(
+    Math.min(1, Math.max(0, orig.r * ratioR)),
+    Math.min(1, Math.max(0, orig.g * ratioG)),
+    Math.min(1, Math.max(0, orig.b * ratioB))
+  );
+
+  // Adjust shadeColor for MToon cell-shading depth
+  if (mat.shadeColor) {
+    const origShade = mat.userData.originalShadeColor || mat.shadeColor;
+    const shadeAvg = Math.max(0.01, (origShade.r + origShade.g + origShade.b) / 3);
+    const shadeTarget = target.clone().multiplyScalar(0.72);
+    mat.shadeColor.setRGB(
+      Math.min(1, Math.max(0, origShade.r * (shadeTarget.r / shadeAvg))),
+      Math.min(1, Math.max(0, origShade.g * (shadeTarget.g / shadeAvg))),
+      Math.min(1, Math.max(0, origShade.b * (shadeTarget.b / shadeAvg)))
+    );
+  }
+  mat.needsUpdate = true;
+}
+
+/**
  * Applies procedural appearance attributes to any VRM instance via MToon materials
- * and optional accessory overlays. Respects sample model license by only applying to
- * custom VRM models when provided.
+ * and optional procedural 3D glasses attached to the head bone.
  */
 export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttributes | null): void {
-  if (!vrm || !attrs) return;
+  if (!vrm) return;
 
+  const headBone = vrm.humanoid?.getNormalizedBoneNode('head') || vrm.humanoid?.getBoneNode('head');
+
+  // 1. Procedural 3D glasses attached to head bone
+  if (headBone) {
+    const existingGlasses = headBone.getObjectByName('procedural-glasses');
+    if (attrs?.glasses) {
+      const shape = attrs.glasses_shape || 'round';
+      const color = attrs.glasses_color_hex || '#1E1E24';
+      if (!existingGlasses || existingGlasses.userData?.shape !== shape || existingGlasses.userData?.color !== color) {
+        if (existingGlasses) {
+          headBone.remove(existingGlasses);
+          existingGlasses.traverse((o: any) => {
+            o.geometry?.dispose();
+            o.material?.dispose();
+          });
+        }
+        const newGlasses = createProceduralGlasses(shape, color);
+        newGlasses.userData = { shape, color };
+        headBone.add(newGlasses);
+      }
+    } else if (existingGlasses) {
+      headBone.remove(existingGlasses);
+      existingGlasses.traverse((o: any) => {
+        o.geometry?.dispose();
+        o.material?.dispose();
+      });
+    }
+  }
+
+  // 2. MToon Material Tinting (face skin, body skin, hair, hair back, iris)
   vrm.scene.traverse((obj) => {
     if ((obj as THREE.Mesh).isMesh) {
       const mesh = obj as THREE.Mesh;
@@ -67,22 +232,47 @@ export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttribu
 
       materials.forEach((mat: any) => {
         if (!mat) return;
+
+        // Cache original colors on first load
+        if (!mat.userData.originalColor && mat.color) {
+          mat.userData.originalColor = mat.color.clone();
+        }
+        if (!mat.userData.originalShadeColor && mat.shadeColor) {
+          mat.userData.originalShadeColor = mat.shadeColor.clone();
+        }
+
+        if (!attrs) {
+          // Reset to default
+          if (mat.userData.originalColor && mat.color) {
+            mat.color.copy(mat.userData.originalColor);
+          }
+          if (mat.userData.originalShadeColor && mat.shadeColor) {
+            mat.shadeColor.copy(mat.userData.originalShadeColor);
+          }
+          mat.needsUpdate = true;
+          return;
+        }
+
         const name = (mat.name || '').toLowerCase();
 
-        // 1. Skin tone
+        // 1. Skin tone (face and body skin)
         if (
           attrs.skin_tone_hex &&
           (name.includes('skin') || name.includes('face') || name.includes('body')) &&
           !name.includes('eye') &&
           !name.includes('mouth') &&
-          !name.includes('brow')
+          !name.includes('brow') &&
+          !name.includes('hair')
         ) {
-          if (mat.color?.set) mat.color.set(attrs.skin_tone_hex);
+          tintMaterial(mat, attrs.skin_tone_hex);
         }
 
-        // 2. Hair color
-        if (attrs.hair_color_hex && name.includes('hair')) {
-          if (mat.color?.set) mat.color.set(attrs.hair_color_hex);
+        // 2. Hair color (hair, hair back, bangs)
+        if (
+          attrs.hair_color_hex &&
+          (name.includes('hair') || name.includes('hairback') || name.includes('hair_back') || name.includes('bangs'))
+        ) {
+          tintMaterial(mat, attrs.hair_color_hex);
         }
 
         // 3. Eye Iris color
@@ -90,7 +280,15 @@ export function applyAppearance(vrm: VRM | null, attrs?: AvatarAppearanceAttribu
           attrs.eye_color_hex &&
           (name.includes('iris') || name.includes('eyeiris') || name.includes('eye_iris'))
         ) {
-          if (mat.color?.set) mat.color.set(attrs.eye_color_hex);
+          tintMaterial(mat, attrs.eye_color_hex);
+        }
+
+        // 4. Lip color
+        if (
+          attrs.lip_color_hex &&
+          (name.includes('mouth') || name.includes('lip'))
+        ) {
+          tintMaterial(mat, attrs.lip_color_hex);
         }
       });
     }
@@ -322,7 +520,14 @@ function VRMModelInner({
         vrmRef.current = null;
       }
     };
-  }, [activeGender, scene, camera, appearanceAttributes]);
+  }, [activeGender, scene, camera]);
+
+  // Re-apply appearance attributes instantly on dynamic slider/preset change
+  useEffect(() => {
+    if (vrmRef.current) {
+      applyAppearance(vrmRef.current, appearanceAttributes);
+    }
+  }, [appearanceAttributes]);
 
   // Main 60fps Animation, Posing, and Lip-Sync Loop
   useFrame((_, delta) => {

@@ -108,6 +108,26 @@ export const PrivacyCenterModal: React.FC<PrivacyCenterModalProps> = ({
           granted: newVal === 1
         })
       });
+
+      // If photo processing consent is revoked, clear stored avatar appearance attributes
+      if (consentType === 'photo_processing' && newVal === 0) {
+        try {
+          const saved = localStorage.getItem('manas_twin_profile');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            delete parsed.appearanceAttributes;
+            localStorage.setItem('manas_twin_profile', JSON.stringify(parsed));
+          }
+          await fetch('/api/user/profile', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+            },
+            body: JSON.stringify({ appearance_attributes: null })
+          });
+        } catch (_) {}
+      }
     } catch (_) {}
   };
 

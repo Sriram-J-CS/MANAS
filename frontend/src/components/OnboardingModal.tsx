@@ -29,6 +29,8 @@ import { speechEngine } from '../lib/voice/speechEngine';
 import { speechGateway } from '../lib/voice/speechGateway';
 import { ONBOARDING_FIXED_LINES } from '../lib/voice/onboardingVoiceLines';
 
+import type { AvatarAppearanceAttributes } from '../lib/avatar/providers';
+
 export interface UserProfile {
   id?: string;
   name: string;
@@ -44,6 +46,7 @@ export interface UserProfile {
   avatarUrl?: string;
   avatarType?: string;
   isCustomAvatar?: boolean;
+  appearanceAttributes?: AvatarAppearanceAttributes | null;
   outfit?: string;
   mascotEnabled?: boolean;
   mascotPosition?: 'left' | 'right';
@@ -96,8 +99,6 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   existingProfile,
   onDeleteData
 }) => {
-  if (!isOpen) return null;
-
   // Step state (1: Name, 2: Age, 3: Language, 4: Contact & OTP, 5: Photo, 6: Voice)
   const [step, setStep] = useState<number>(() => {
     try {
@@ -653,6 +654,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       }
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#0A0A0A]/85 backdrop-blur-md overflow-y-auto">

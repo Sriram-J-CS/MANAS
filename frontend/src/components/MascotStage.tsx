@@ -5,6 +5,7 @@ import { avatar } from '../lib/avatar/avatarConfigService';
 import { speechEngine } from '../lib/voice/speechEngine';
 import { speechGateway } from '../lib/voice/speechGateway';
 import { Camera, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import type { AvatarAppearanceAttributes } from '../lib/avatar/providers';
 
 const VRMAvatarCanvas = React.lazy(() => import('./avatar/VRMAvatarCanvas'));
 
@@ -31,6 +32,8 @@ export interface MascotStageProps {
   onGenderChange?: (gender: MascotGender) => void;
   className?: string;
   prefer3D?: boolean;
+  appearanceAttributes?: AvatarAppearanceAttributes | null;
+  onOpenPhotoAvatar?: () => void;
 }
 
 // WebGL support detector
@@ -85,6 +88,8 @@ export const MascotStage: React.FC<MascotStageProps> = ({
   onGenderChange,
   className = '',
   prefer3D = true,
+  appearanceAttributes,
+  onOpenPhotoAvatar,
 }) => {
   const [currentGender, setCurrentGender] = useState<MascotGender>(gender);
   const [activeOutfit, setActiveOutfit] = useState<OutfitType>(initialOutfit);
@@ -297,6 +302,7 @@ export const MascotStage: React.FC<MascotStageProps> = ({
                 isUserTyping={isUserTyping}
                 isThinking={isThinking}
                 audioEnergy={audioEnergy}
+                appearanceAttributes={appearanceAttributes}
                 onWaveEnd={() => setActiveGesture('idle')}
                 onError={() => setWebGLAvailable(false)}
               />
@@ -341,9 +347,15 @@ export const MascotStage: React.FC<MascotStageProps> = ({
           <button
             type="button"
             disabled={isAnalyzingPhoto}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (onOpenPhotoAvatar) {
+                onOpenPhotoAvatar();
+              } else {
+                fileInputRef.current?.click();
+              }
+            }}
             className="px-2.5 py-1 rounded-full text-[10px] font-mono tracking-wider bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
-            title="Upload your photo to personalize your twin avatar"
+            title="Open Avatar Studio to personalize your twin avatar from photo or camera"
           >
             {isAnalyzingPhoto ? (
               <Loader2 className="w-3 h-3 animate-spin text-violet-600" />

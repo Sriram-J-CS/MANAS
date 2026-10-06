@@ -169,8 +169,6 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
   onOpenPrivacy,
   onOpenNotifications,
 }) => {
-  if (!isOpen) return null;
-
   // View & Overlay states
   const [showMoodDrawer, setShowMoodDrawer] = useState<boolean>(false);
   const [isBreathingOpen, setIsBreathingOpen] = useState<boolean>(false);
@@ -900,6 +898,8 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     }
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[#FFFFFF] text-[#0A0A0A] overflow-hidden select-none font-sans">
       {/* Ink-Wipe Transition Screen */}
@@ -1015,190 +1015,26 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             )}
           </div>
 
-          {/* Audio Controls Popover: Separate Voice & Ambient Music Controls */}
-          <div className="relative" ref={audioControlRef}>
-            <button
-              type="button"
-              id="audio-controls-button"
-              data-testid="audio-controls-button"
-              onClick={() => setIsAudioMenuOpen(!isAudioMenuOpen)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-mono transition-all cursor-pointer ${isAudioMenuOpen
-                  ? 'bg-[#8B5CF6] text-white border-[#8B5CF6] shadow-sm'
-                  : 'border-[#0A0A0A]/15 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]'
-                }`}
-              title="Audio Controls: Voice & Ambient Music"
-            >
-              {isVoiceMuted && isMusicMuted ? (
-                <VolumeX className="w-3.5 h-3.5 text-rose-500" />
-              ) : (
-                <Volume2
-                  className={`w-3.5 h-3.5 ${isMusicPlaying ? 'text-[#8B5CF6] animate-pulse' : 'text-[#0A0A0A]/60'
-                    }`}
-                />
-              )}
-              <span className="font-bold">AUDIO</span>
-              {isMusicPlaying && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-              )}
-            </button>
-
-            {isAudioMenuOpen && (
-              <div
-                id="audio-controls-popover"
-                data-testid="audio-controls-popover"
-                className="absolute right-0 top-11 w-80 bg-[#FFFFFF] border border-[#0A0A0A]/15 shadow-2xl rounded-2xl p-4 z-50 text-xs font-mono space-y-3.5 backdrop-blur-xl animate-in fade-in"
-              >
-                <div className="flex items-center justify-between border-b border-[#0A0A0A]/10 pb-2">
-                  <span className="text-[11px] uppercase tracking-wider text-[#0A0A0A]/60 font-bold flex items-center gap-1.5">
-                    <Sliders className="w-3.5 h-3.5 text-[#8B5CF6]" /> Audio Mixer
-                  </span>
-                  <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                    ≥12dB Voice Headroom
-                  </span>
-                </div>
-
-                {/* 1. COMPANION VOICE SECTION */}
-                <div className="space-y-2 bg-[#F9F8F5] p-3 rounded-xl border border-[#0A0A0A]/8">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-[#0A0A0A] text-xs">Companion Voice</span>
-                      {isVoiceMuted ? (
-                        <span className="text-[10px] text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                          Muted
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded border border-violet-200">
-                          Active (0 dB)
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      id="voice-mute-button"
-                      data-testid="voice-mute-button"
-                      onClick={handleToggleVoiceMute}
-                      className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${isVoiceMuted
-                          ? 'bg-rose-500 text-white border-rose-600'
-                          : 'bg-white text-[#0A0A0A]/70 hover:text-[#0A0A0A] border-[#0A0A0A]/15'
-                        }`}
-                      title={isVoiceMuted ? 'Unmute companion voice' : 'Mute companion voice'}
-                    >
-                      {isVoiceMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-[#0A0A0A]/60">
-                      <span>Voice Volume</span>
-                      <span className="font-bold text-[#0A0A0A]">{Math.round(voiceVolume * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      id="voice-volume-slider"
-                      data-testid="voice-volume-slider"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={voiceVolume}
-                      onChange={(e) => handleVoiceVolumeChange(parseFloat(e.target.value))}
-                      className="w-full h-1.5 bg-[#0A0A0A]/15 rounded-lg appearance-none cursor-pointer accent-[#8B5CF6]"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1 border-t border-[#0A0A0A]/5">
-                    <span className="text-[10px] text-[#0A0A0A]/60">Read responses aloud</span>
-                    <button
-                      type="button"
-                      onClick={() => setVoiceOutputEnabled(!voiceOutputEnabled)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${voiceOutputEnabled ? 'bg-violet-600 text-white' : 'bg-[#0A0A0A]/10 text-[#0A0A0A]/60'
-                        }`}
-                    >
-                      {voiceOutputEnabled ? 'ON' : 'OFF'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. AMBIENT MUSIC / DRONE SECTION */}
-                <div className="space-y-2 bg-[#F9F8F5] p-3 rounded-xl border border-[#0A0A0A]/8">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-[#0A0A0A] text-xs">Ambient Music</span>
-                      {isMusicPlaying ? (
-                        <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          Playing (Max -30 dB)
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-[#0A0A0A]/40 bg-[#0A0A0A]/5 px-1.5 py-0.5 rounded border border-[#0A0A0A]/10">
-                          OFF in Chat
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        id="music-mute-button"
-                        data-testid="music-mute-button"
-                        onClick={handleToggleMusicMute}
-                        className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${isMusicMuted
-                            ? 'bg-rose-500 text-white border-rose-600'
-                            : 'bg-white text-[#0A0A0A]/70 hover:text-[#0A0A0A] border-[#0A0A0A]/15'
-                          }`}
-                        title={isMusicMuted ? 'Unmute ambient music' : 'Mute ambient music'}
-                      >
-                        {isMusicMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        type="button"
-                        id="music-power-toggle"
-                        data-testid="music-power-toggle"
-                        onClick={handleToggleMusicPlay}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${isMusicPlaying
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                            : 'bg-[#0A0A0A] text-white hover:bg-[#0A0A0A]/80'
-                          }`}
-                      >
-                        {isMusicPlaying ? 'TURN OFF' : 'TURN ON'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="text-[10px] text-[#0A0A0A]/60 flex items-center justify-between">
-                    <span className="truncate max-w-[170px]">Track: {musicTrack?.title || '432Hz Serenity Pad'}</span>
-                    <span className="text-[9px] px-1.5 py-0.5 bg-violet-100 text-violet-800 rounded">
-                      600Hz Lowpass
-                    </span>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-[#0A0A0A]/60">
-                      <span>Music Volume (Capped at -30 dB)</span>
-                      <span className="font-bold text-[#0A0A0A]">{Math.round(musicVolume * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      id="music-volume-slider"
-                      data-testid="music-volume-slider"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={musicVolume}
-                      onChange={(e) => handleMusicVolumeChange(parseFloat(e.target.value))}
-                      className="w-full h-1.5 bg-[#0A0A0A]/15 rounded-lg appearance-none cursor-pointer accent-[#8B5CF6]"
-                    />
-                  </div>
-
-                  {/* Auto-Ducking Info */}
-                  <div className="text-[9px] text-[#0A0A0A]/50 bg-white/80 p-1.5 rounded-lg border border-[#0A0A0A]/5 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                    <span>
-                      Auto-ducks to 10% in 300ms during voice/mic; restores 1.5s after.
-                    </span>
-                  </div>
-                </div>
-              </div>
+          {/* Simple Voice Mute Toggle */}
+          <button
+            type="button"
+            id="voice-mute-button"
+            data-testid="voice-mute-button"
+            onClick={handleToggleVoiceMute}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-mono transition-all cursor-pointer ${
+              isVoiceMuted
+                ? 'bg-rose-50 text-rose-600 border-rose-200'
+                : 'border-[#0A0A0A]/15 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]'
+            }`}
+            title={isVoiceMuted ? 'Unmute companion voice' : 'Mute companion voice'}
+          >
+            {isVoiceMuted ? (
+              <VolumeX className="w-3.5 h-3.5 text-rose-500" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-[#0A0A0A]/60" />
             )}
-          </div>
+            <span>{isVoiceMuted ? 'UNMUTE' : 'MUTE VOICE'}</span>
+          </button>
 
           {/* Profile & Settings Menu Popover */}
           <div className="relative">
@@ -1221,24 +1057,6 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                 <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#0A0A0A]/40 font-bold border-b border-[#0A0A0A]/8">
                   Profile &amp; Settings
                 </div>
-                <button
-                  onClick={() => {
-                    setIsAudioMenuOpen(true);
-                    setIsMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#8B5CF6] cursor-pointer"
-                >
-                  <Volume2 className="w-3.5 h-3.5 text-[#8B5CF6]" /> Audio Mixer &amp; Music
-                </button>
-                <button
-                  onClick={() => {
-                    setIsOutfitsOpen(true);
-                    setIsMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#F2EFE8] flex items-center gap-2 font-bold text-[#8B5CF6] cursor-pointer"
-                >
-                  <Shirt className="w-3.5 h-3.5" /> Outfits &amp; Wardrobe
-                </button>
                 <button
                   onClick={() => {
                     setIsCustomizerOpen(true);
@@ -1463,6 +1281,8 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               isThinking={isThinking}
               audioEnergy={audioEnergy}
               prefer3D={true}
+              appearanceAttributes={userProfile.appearanceAttributes}
+              onOpenPhotoAvatar={() => setIsAvatarStudioOpen(true)}
             />
           </div>
         </section>
@@ -1669,7 +1489,11 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         <BreathingWidget
           isOpen={isBreathingOpen}
           onClose={() => setIsBreathingOpen(false)}
-          durationSecs={180}
+          language={activeLanguage}
+          companionGender={userProfile.companion || (userProfile.gender === 'girl' ? 'girl' : 'boy')}
+          onSyncAvatarBreathe={(phase) => {
+            setMascotExpr(phase === 'inhale' ? 'calm' : 'empathetic');
+          }}
         />
       )}
 

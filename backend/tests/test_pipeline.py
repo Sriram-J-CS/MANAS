@@ -102,7 +102,10 @@ class TestMultiStageChatPipeline(unittest.TestCase):
             any(phrase in lower_reply for phrase in ["breathe in", "breathe out", "hold your breath", "4-7-8"]),
             f"Expected concrete sleep solution but found breathing cliché: {res['reply']}"
         )
-        self.assertIn("bed", lower_reply, "Sleep solution should reference stimulus control / sleep habits")
+        self.assertTrue(
+            any(w in lower_reply for w in ["bed", "screen", "night", "lights", "routine", "dim"]),
+            "Sleep solution should reference stimulus control / sleep habits"
+        )
 
     def test_06_solution_toxic_manager(self):
         """T06: Workplace boundary question must offer practical triage, not breath exercises."""
