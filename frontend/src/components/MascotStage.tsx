@@ -103,6 +103,8 @@ export const MascotStage: React.FC<MascotStageProps> = ({
   }, [gender]);
 
   const handleToggleGender = (newGender: MascotGender) => {
+    speechEngine.stopSpeaking();
+    speechGateway.stopSpeaking();
     setCurrentGender(newGender);
     onGenderChange?.(newGender);
   };

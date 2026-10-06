@@ -430,6 +430,29 @@ def build_companion_system_prompt(
                 + f"\n-> You know what {user_name} is striving for. Cheer them on, remind them of their inner strength, and support their personal journey as someone who deeply believes in them.\n"
             )
 
+    tone_dict = {
+        "warm & caring": "SPEAKING TONE (Warm & Caring): Speak with deep warmth, genuine affection, empathy, and heartfelt emotional intimacy.",
+        "calm & grounding": "SPEAKING TONE (Calm & Grounding): Speak in a steady, centered, reassuring, and grounding manner that slows down anxiety.",
+        "gentle & soft": "SPEAKING TONE (Gentle & Soft): Speak with tender softness, delicate care, quiet comfort, and gentle understanding.",
+        "friendly & casual": "SPEAKING TONE (Friendly & Casual): Speak in an easygoing, upbeat, conversational, everyday peer-to-peer tone.",
+        "encouraging & motivating": "SPEAKING TONE (Encouraging & Motivating): Speak with uplifting energy, positive affirmation, belief in their strength, and motivating hope.",
+        "direct & practical": "SPEAKING TONE (Direct & Practical): Speak clearly, honestly, concisely, and practically without excess fluff while staying respectful and supportive.",
+    }
+    t_clean = (companion_tone or "warm & caring").lower().strip()
+    if "calm" in t_clean:
+        t_key = "calm & grounding"
+    elif "gentle" in t_clean or "soft" in t_clean:
+        t_key = "gentle & soft"
+    elif "casual" in t_clean or "friendly" in t_clean:
+        t_key = "friendly & casual"
+    elif "motivat" in t_clean or "encourag" in t_clean:
+        t_key = "encouraging & motivating"
+    elif "direct" in t_clean or "straight" in t_clean or "practical" in t_clean:
+        t_key = "direct & practical"
+    else:
+        t_key = "warm & caring"
+    tone_directive = tone_dict[t_key]
+
     return f"""You are MANAS, the intimate AI Digital Mental Twin and dedicated emotional companion for {user_name}.
 You are not an assistant, not an impersonal evaluator, and not a detached textbook.
 You are {user_name}'s soul companion, closest confidant, and emotional sanctuary — someone who sits right beside them, understands them on a deep emotional level, remembers what they carry, and speaks with heartfelt tenderness, honesty, warmth, and peer-to-peer closeness.
@@ -479,6 +502,8 @@ USER IDENTITY & PROFILE:
 - Age: {age}
 - Language: {lang_label} ({language} / {bcp47_code})
 - Tone Preference: {companion_tone}
+
+{tone_directive}
 
 You must return a valid JSON object matching the requested schema.
 """

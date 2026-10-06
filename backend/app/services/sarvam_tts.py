@@ -49,9 +49,10 @@ SARVAM_MEMORY_CACHE: Dict[str, str] = {}
 
 RE_SENTENCE_SPLIT = re.compile(r"(?<=[.!?|।\n])\s+")
 
-def get_sarvam_cache_key(text: str, speaker: str, lang: str) -> str:
-    """Computes deterministic hash(text, speaker, lang) for caching."""
-    raw = f"{text.strip()}:{speaker.strip()}:{lang.strip()}"
+def get_sarvam_cache_key(text: str, speaker: str, lang: str, gender: str = "girl") -> str:
+    """Computes deterministic hash(text, lang, gender, speaker) for caching."""
+    clean_gender = "boy" if (gender or "").lower() in ("boy", "male") else "girl"
+    raw = f"{text.strip()}:{lang.strip().lower()}:{clean_gender}:{speaker.strip().lower()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 def strip_markdown_and_normalize(text: str) -> str:
@@ -179,23 +180,45 @@ async def _synthesize_chirp3_hd_fallback(
         except Exception as e:
             logger.error("[TTS FALLBACK] Google Chirp 3 HD fallback error: %s", e)
 
-    # Universal Native Audio Fallback (strictly native language code)
-    try:
-        lang_short = target_lang_code.split("-")[0].lower()
-        clean_text = text.strip()
-        if clean_text:
-            encoded = urllib.parse.quote(clean_text)
-            fallback_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl={lang_short}&q={encoded}"
-            req = urllib.request.Request(fallback_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://translate.google.com/"
-            })
-            with urllib.request.urlopen(req, timeout=6) as response:
-                audio_bytes = response.read()
-                if audio_bytes and len(audio_bytes) > 200:
-                    return base64.b64encode(audio_bytes).decode("utf-8")
-    except Exception as e:
-        logger.error("[TTS FALLBACK] Universal native fallback error: %s", e)
+    for attempt in range(2):
+        try:
+            lang_short = target_lang_code.split("-")[0].lower()
+            clean_text = text.strip()
+            if clean_text:
+                encoded = urllib.parse.quote(clean_text)
+                fallback_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl={lang_short}&q={encoded}"
+                req = urllib.request.Request(fallback_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": "https://translate.google.com/"
+                })
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    audio_bytes = response.read()
+                    if audio_bytes and len(audio_bytes) > 200:
+                        is_boy = (gender or "").lower() in ("boy", "male")
+                        if is_boy:
+                            try:
+                                import miniaudio, io, wave, numpy as np
+                                decoded = miniaudio.decode(audio_bytes)
+                                samples = np.array(decoded.samples, dtype=np.float32)
+                                fs = decoded.sample_rate
+                                factor = 0.52
+                                target_len = int(len(samples) / factor)
+                                indices = np.linspace(0, len(samples) - 1, target_len)
+                                shifted = np.interp(indices, np.arange(len(samples)), samples).astype(np.int16)
+                                buf = io.BytesIO()
+                                with wave.open(buf, 'wb') as wf:
+                                    wf.setnchannels(decoded.nchannels)
+                                    wf.setsampwidth(2)
+                                    wf.setframerate(fs)
+                                    wf.writeframes(shifted.tobytes())
+                                audio_bytes = buf.getvalue()
+                            except Exception as e:
+                                logger.debug("Pitch shift failed: %s", e)
+                        return base64.b64encode(audio_bytes).decode("utf-8")
+        except Exception as e:
+            if attempt == 1:
+                logger.error("[TTS FALLBACK] Universal native fallback error: %s", e)
+            await asyncio.sleep(0.3)
 
     return None
 
@@ -210,7 +233,7 @@ async def synthesize_single_sarvam_chunk(
     Synthesizes a single chunk using Sarvam Bulbul v3 with caching and fallback.
     Returns (chunk_text, base64_audio_or_none).
     """
-    cache_key = get_sarvam_cache_key(chunk, speaker, target_lang_code)
+    cache_key = get_sarvam_cache_key(chunk, speaker, target_lang_code, gender)
 
     # 1. Check Memory Cache
     if cache_key in SARVAM_MEMORY_CACHE:

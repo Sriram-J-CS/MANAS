@@ -33,7 +33,10 @@ export interface SpeakOptions {
   purpose?: 'onboarding_step' | 'onboarding_greeting' | 'chat_reply' | 'voice_sample' | 'avatar_greeting' | 'breathing' | 'test' | string;
   lineId?: string;
   voiceSpeed?: number;
+  speed?: number;
   pitch?: number;
+  voice_gender?: string;
+  speaking_style?: string;
   voiceName?: string;
   emotion?: string;
   onStart?: () => void;
@@ -49,6 +52,8 @@ export interface VoiceDebugEntry {
   bcp47: string;
   engine: 'pregenerated_mp3' | 'sarvam_bulbul_v3' | 'google_chirp3_hd' | 'web_speech' | 'banned_fallback';
   speaker: string;
+  companion: string;
+  voice_gender: string;
   gender: string;
   tone: string;
   text: string;
@@ -75,18 +80,43 @@ export const SARVAM_SPEAKER_MAP: Record<string, { girl: string; boy: string }> =
 export const NATIVE_6_LANGS = new Set(['ta', 'te', 'kn', 'ml', 'bn', 'mr']);
 export const ALL_8_LANGS = new Set(['en', 'hi', 'ta', 'te', 'kn', 'ml', 'bn', 'mr']);
 
-/** Reads companion and voiceTone from localStorage at call-time. Never stale. */
-function resolveCompanionFromProfile(): { companion: string; voiceTone: string } {
+/** Reads companion and voice profile preferences from localStorage at call-time. Never stale. */
+export function resolveCompanionFromProfile(): {
+  companion: 'boy' | 'girl';
+  voiceGender: 'boy' | 'girl';
+  voiceTone: string;
+  speakingStyle: string;
+  voiceSpeed: number;
+  replyLength: string;
+  voiceFollowsCompanion: boolean;
+} {
   try {
-    const raw = localStorage.getItem('manas_twin_profile');
+    const raw = localStorage.getItem('manas_user_profile_v2') || localStorage.getItem('manas_twin_profile');
     if (raw) {
       const p = JSON.parse(raw);
-      const companion = (p.companion || p.avatarType || 'girl').toLowerCase();
-      const voiceTone = (p.voiceTone || '').toLowerCase();
-      return { companion, voiceTone };
+      const isBoy = (p.companion || p.avatarType || p.gender) === 'boy';
+      const companion: 'boy' | 'girl' = isBoy ? 'boy' : 'girl';
+      const voiceFollowsCompanion = p.voice_follows_companion ?? p.voiceFollowsCompanion ?? true;
+      const rawVg = p.voice_gender || p.voiceGender;
+      const voiceGender: 'boy' | 'girl' = voiceFollowsCompanion
+        ? companion
+        : (rawVg === 'boy' || rawVg === 'male' ? 'boy' : 'girl');
+      const voiceTone = (p.voice_tone || p.voiceTone || p.voicePref || (voiceGender === 'boy' ? 'aarav' : 'ananya')).toLowerCase();
+      const speakingStyle = p.speaking_style || p.speakingStyle || 'Warm & Caring';
+      const voiceSpeed = Number(p.voice_speed || p.voiceSpeed || 1.0);
+      const replyLength = p.reply_length || p.replyLength || 'Balanced';
+      return { companion, voiceGender, voiceTone, speakingStyle, voiceSpeed, replyLength, voiceFollowsCompanion };
     }
   } catch (_) {}
-  return { companion: 'girl', voiceTone: '' };
+  return {
+    companion: 'girl',
+    voiceGender: 'girl',
+    voiceTone: 'ananya',
+    speakingStyle: 'Warm & Caring',
+    voiceSpeed: 1.0,
+    replyLength: 'Balanced',
+    voiceFollowsCompanion: true,
+  };
 }
 
 class VoiceDebugStore {
@@ -203,17 +233,24 @@ class SpeechGateway {
     const targetBcp47 = `${cleanLang}-IN`;
 
     // ── Gender + Tone resolution at call-time (never stale) ──────────────────
-    // Priority: opts.companion > opts.gender > localStorage profile
-    const { companion: profileCompanion, voiceTone: profileTone } = resolveCompanionFromProfile();
-    const explicitGender = (opts.companion || opts.gender || '').toLowerCase().trim();
-    const companionStr = explicitGender || (profileCompanion || 'girl').toLowerCase().trim();
-    const isBoy = companionStr === 'boy' || companionStr === 'male';
-    const genderKey: 'boy' | 'girl' = isBoy ? 'boy' : 'girl';
-    const resolvedTone = (opts.tone || profileTone || '').toLowerCase().trim();
+    // Single source of truth: profile.companion (boy|girl) and profile.voice_gender (defaults to companion)
+    const profile = resolveCompanionFromProfile();
+    const explicitCompanion = opts.companion?.toLowerCase().trim();
+    const companionKey: 'boy' | 'girl' = explicitCompanion
+      ? (explicitCompanion === 'boy' || explicitCompanion === 'male' ? 'boy' : 'girl')
+      : profile.companion;
 
-    // Default speaker from map; the server will override using tone if provided
-    const defaultSpeaker = SARVAM_SPEAKER_MAP[cleanLang]?.[genderKey]
-      || (isBoy ? 'ratan' : 'ishita');
+    const explicitVoiceGender = opts.gender?.toLowerCase().trim();
+    const voiceGenderKey: 'boy' | 'girl' = explicitVoiceGender
+      ? (explicitVoiceGender === 'boy' || explicitVoiceGender === 'male' ? 'boy' : 'girl')
+      : profile.voiceGender;
+
+    const isBoyVoice = voiceGenderKey === 'boy';
+    const resolvedTone = (opts.tone || profile.voiceTone || (isBoyVoice ? 'aarav' : 'ananya')).toLowerCase().trim();
+
+    // Default speaker from map for current voice gender
+    const defaultSpeaker = SARVAM_SPEAKER_MAP[cleanLang]?.[voiceGenderKey]
+      || (isBoyVoice ? 'ratan' : 'ishita');
 
     const rawText = opts.text?.trim() || '';
     if (!rawText) {
@@ -242,10 +279,11 @@ class SpeechGateway {
 
     // Step 1: Pre-generated audio (onboarding fixed lines)
     if (opts.lineId) {
-      const pregenUrl = getPreGeneratedAudioPath(cleanLang, genderKey, opts.lineId);
+      const pregenUrl = getPreGeneratedAudioPath(cleanLang, voiceGenderKey, opts.lineId);
       const played = await this.tryPlayAudioUrl(pregenUrl, opts, {
         lang: cleanLang, bcp47: targetBcp47, engine: 'pregenerated_mp3',
-        speaker: defaultSpeaker, gender: genderKey, tone: resolvedTone,
+        speaker: defaultSpeaker, companion: companionKey, voice_gender: voiceGenderKey,
+        gender: voiceGenderKey, tone: resolvedTone,
         text: rawText, startTime, hasLatin, hasDigits, isWarning, warningReason,
         purpose: opts.purpose,
       }, sessionId);
@@ -261,9 +299,12 @@ class SpeechGateway {
       const ttsBody: Record<string, any> = {
         text: rawText,
         language: targetBcp47,
-        gender: isBoy ? 'male' : 'female',
+        gender: isBoyVoice ? 'male' : 'female',
         emotion: opts.emotion || 'calm',
-        companion: genderKey,
+        companion: companionKey,
+        voice_gender: isBoyVoice ? 'male' : 'female',
+        speaking_style: profile.speakingStyle,
+        speed: opts.voiceSpeed || profile.voiceSpeed || 1.0,
       };
       if (opts.engine) ttsBody.engine = opts.engine;
       // Only pass tone if set — server will use it to pick exact Sarvam speaker
@@ -301,8 +342,10 @@ class SpeechGateway {
             bcp47: targetBcp47,
             engine: engineTag,
             speaker: usedSpeaker,
-            gender: genderKey,
-            tone: resolvedTone || '(default)',
+            companion: companionKey,
+            voice_gender: voiceGenderKey,
+            gender: voiceGenderKey,
+            tone: resolvedTone || profile.speakingStyle || '(default)',
             text: rawText,
             latencyMs,
             hasLatin,
@@ -312,7 +355,7 @@ class SpeechGateway {
             purpose: opts.purpose,
           });
           console.log(
-            `[VOICE GATEWAY] lang=${cleanLang} gender=${genderKey} tone=${resolvedTone || 'default'} speaker=${usedSpeaker} latency=${latencyMs}ms`
+            `[VOICE GATEWAY] lang=${cleanLang} companion=${companionKey} voice_gender=${voiceGenderKey} tone=${resolvedTone} speaker=${usedSpeaker} latency=${latencyMs}ms`
           );
           await this.playBase64Audio(data.audio_base64, opts, sessionId);
           return;
@@ -337,7 +380,11 @@ class SpeechGateway {
         id: Math.random().toString(36).slice(2),
         timestamp: new Date().toLocaleTimeString(),
         lang: cleanLang, bcp47: targetBcp47, engine: 'banned_fallback',
-        speaker: 'none (silenced)', gender: genderKey, tone: resolvedTone || '(default)',
+        speaker: 'none (silenced)',
+        companion: companionKey,
+        voice_gender: voiceGenderKey,
+        gender: voiceGenderKey,
+        tone: resolvedTone || '(default)',
         text: rawText, latencyMs, hasLatin, hasDigits, isWarning: true,
         warningReason: `Browser TTS BANNED for ${cleanLang}. Showing text without audio.`,
         purpose: opts.purpose,
@@ -354,13 +401,16 @@ class SpeechGateway {
         id: Math.random().toString(36).slice(2),
         timestamp: new Date().toLocaleTimeString(),
         lang: cleanLang, bcp47: targetBcp47, engine: 'web_speech',
-        speaker: 'browser_system_voice', gender: genderKey,
+        speaker: 'browser_system_voice',
+        companion: companionKey,
+        voice_gender: voiceGenderKey,
+        gender: voiceGenderKey,
         tone: resolvedTone || '(default)',
         text: rawText, latencyMs, hasLatin, hasDigits, isWarning: true,
         warningReason: 'Browser SpeechSynthesis used as last resort for en/hi.',
         purpose: opts.purpose,
       });
-      this.speakBrowserWebSpeech(rawText, targetBcp47, isBoy, opts, sessionId);
+      this.speakBrowserWebSpeech(rawText, targetBcp47, isBoyVoice, opts, sessionId);
       return;
     }
 
@@ -387,7 +437,10 @@ class SpeechGateway {
         id: Math.random().toString(36).slice(2),
         timestamp: new Date().toLocaleTimeString(),
         lang: debugInfo.lang, bcp47: debugInfo.bcp47, engine: 'pregenerated_mp3',
-        speaker: `${debugInfo.speaker} (cached mp3)`, gender: debugInfo.gender,
+        speaker: `${debugInfo.speaker} (cached mp3)`,
+        companion: debugInfo.companion || 'girl',
+        voice_gender: debugInfo.voice_gender || 'girl',
+        gender: debugInfo.gender,
         tone: debugInfo.tone || '(default)',
         text: debugInfo.text, latencyMs,
         hasLatin: debugInfo.hasLatin, hasDigits: debugInfo.hasDigits,

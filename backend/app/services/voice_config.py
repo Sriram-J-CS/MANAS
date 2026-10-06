@@ -24,7 +24,10 @@ Features:
 """
 
 import os
+import logging
 from typing import Dict, List, Optional, Any
+
+logger = logging.getLogger("manas.voice_config")
 
 # Flag controlling legacy engine fallback: e.g. "en,hi" or empty for 100% Sarvam
 LEGACY_TTS_FOR: List[str] = [
@@ -36,10 +39,11 @@ LEGACY_TTS_FOR: List[str] = [
 # Tone filter rule: "companion" (filter tones strictly by companion girl/boy)
 TONE_FILTER: str = os.environ.get("TONE_FILTER", "companion").lower()
 
+# Strict sets of authorized Sarvam speakers per gender
+MALE_SARVAM_SPEAKERS = {"shubh", "ratan", "rohan", "rehan"}
+FEMALE_SARVAM_SPEAKERS = {"priya", "ishita", "ritu", "neha", "pooja", "roopa", "suhani"}
+
 # Default Sarvam Bulbul v3 speakers by language and gender
-# Defaults specified:
-# hi: priya/shubh, en: ishita/ratan, ta: ishita/ratan, te: priya/shubh,
-# kn: ishita/shubh, ml: pooja/shubh, bn: roopa/rehan, mr: priya/ratan
 SARVAM_DEFAULT_SPEAKERS: Dict[str, Dict[str, str]] = {
     "en": {"girl": "ishita", "boy": "ratan", "female": "ishita", "male": "ratan"},
     "hi": {"girl": "priya",  "boy": "shubh", "female": "priya",  "male": "shubh"},
@@ -51,8 +55,6 @@ SARVAM_DEFAULT_SPEAKERS: Dict[str, Dict[str, str]] = {
     "mr": {"girl": "priya",  "boy": "ratan", "female": "priya",  "male": "ratan"},
 }
 
-# Full Sarvam Bulbul v3 Speaker Catalog by Gender & Quality Tiers
-# From Sarvam documentation: https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/how-to/change-the-speaker-voice.md
 SARVAM_VOICE_CATALOG = {
     "female": [
         {"id": "priya",   "tier": 1, "cer": 0.13, "description": "Warm, highly natural, versatile"},
@@ -60,122 +62,141 @@ SARVAM_VOICE_CATALOG = {
         {"id": "roopa",   "tier": 2, "cer": 0.26, "description": "Gentle, soothing melodic tone"},
         {"id": "pooja",   "tier": 2, "cer": 0.30, "description": "Calm, empathetic, steady"},
         {"id": "suhani",  "tier": 3, "cer": 0.46, "description": "Soft, comforting, sweet"},
-        {"id": "simran",  "tier": 3, "cer": 0.46, "description": "Bright, uplifting, youthful"},
-        {"id": "shreya",  "tier": 3, "cer": 0.46, "description": "Reflective, warm, reassuring"},
         {"id": "neha",    "tier": 3, "cer": 0.53, "description": "Patient, gentle, peaceful"},
         {"id": "ritu",    "tier": 3, "cer": 0.53, "description": "Grounding, serene, friendly"},
-        {"id": "rupali",  "tier": 3, "cer": 0.50, "description": "Crisp, reassuring, encouraging"},
     ],
     "male": [
-        {"id": "mani",     "tier": 1, "cer": 0.00, "description": "Deep, clear, empathetic"},
         {"id": "shubh",    "tier": 2, "cer": 0.30, "description": "Calm, grounding, warm friend"},
         {"id": "ratan",    "tier": 2, "cer": 0.33, "description": "Steady, compassionate, elder brotherly"},
+        {"id": "rohan",    "tier": 2, "cer": 0.33, "description": "Conversational, approachable, clear"},
         {"id": "rehan",    "tier": 2, "cer": 0.33, "description": "Soft, understanding, thoughtful"},
-        {"id": "sunny",    "tier": 2, "cer": 0.33, "description": "Bright, upbeat, supportive"},
-        {"id": "ashutosh", "tier": 2, "cer": 0.40, "description": "Resonant, patient, reassuring"},
-        {"id": "amit",     "tier": 2, "cer": 0.40, "description": "Friendly, approachable, steady"},
-        {"id": "rahul",    "tier": 2, "cer": 0.40, "description": "Gentle, reflective, conversational"},
-        {"id": "aditya",   "tier": 3, "cer": 0.46, "description": "Kind, peaceful, attentive"},
-        {"id": "anand",    "tier": 3, "cer": 0.46, "description": "Mature, calm, dependable"},
-        {"id": "kabir",    "tier": 3, "cer": 0.53, "description": "Warm, steady, comforting presence"},
-        {"id": "dev",      "tier": 3, "cer": 0.60, "description": "Youthful, earnest, relatable"},
     ]
 }
 
-# Step 6 Voice Tones mapped to real Sarvam speakers per language
-# Girl tones: Ananya (Warm & Empathetic), Diya (Gentle & Soft), Meera (Bright & Encouraging)
+# Voice Tones mapped strictly to real Sarvam speakers per language:
+# Girl tones: Ananya (Warm & Caring), Diya (Gentle & Soft), Meera (Bright & Encouraging)
 # Boy tones:  Aarav (Calm & Grounding), Kabir (Warm & Steady), Arjun (Soft & Friendly)
-# Where a language has fewer unique suitable voices, only genuine unique voices are mapped (minimum 1).
 VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
     "en": {
         "girl": {
-            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "priya",  "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "simran", "label": "Meera",  "style": "Bright & Encouraging"},
+            "meera":  {"speaker": "suhani", "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "amit",   "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "shubh",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "hi": {
         "girl": {
-            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "suhani", "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "shreya", "label": "Meera",  "style": "Bright & Encouraging"},
+            "meera":  {"speaker": "ritu",   "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
-            "aarav":  {"speaker": "shubh",    "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "ashutosh", "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rahul",    "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "ta": {
         "girl": {
-            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "ritu",   "label": "Diya",   "style": "Gentle & Soft"},
             "meera":  {"speaker": "priya",  "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
             "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "amit",   "label": "Arjun",  "style": "Soft & Friendly"},
+            "arjun":  {"speaker": "rehan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "te": {
         "girl": {
-            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "neha",   "label": "Diya",   "style": "Gentle & Soft"},
             "meera":  {"speaker": "ishita", "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
             "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "amit",   "label": "Arjun",  "style": "Soft & Friendly"},
+            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "kn": {
         "girl": {
-            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "neha",   "label": "Diya",   "style": "Gentle & Soft"},
             "meera":  {"speaker": "priya",  "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
             "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rehan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "ml": {
         "girl": {
-            "ananya": {"speaker": "pooja",  "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "pooja",  "label": "Ananya", "style": "Warm & Caring"},
+            "diya":   {"speaker": "priya",  "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "suhani", "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rehan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "bn": {
         "girl": {
-            "ananya": {"speaker": "roopa",  "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "roopa",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "suhani", "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "priya",  "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "rehan",  "label": "Aarav",  "style": "Calm & Grounding"},
             "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "ratan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "mr": {
         "girl": {
-            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Empathetic"},
+            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "ritu",   "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "rupali", "label": "Meera",  "style": "Bright & Encouraging"},
+            "meera":  {"speaker": "neha",   "label": "Meera",  "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
             "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
         }
     }
 }
+
+# Speaking tone to TTS pace mapping per specification:
+# Calm/Gentle 0.92, Warm/Casual 1.0, Encouraging 1.05, Direct 1.0
+SPEAKING_TONE_PACE: Dict[str, float] = {
+    "warm & caring": 1.0,
+    "warm": 1.0,
+    "calm & grounding": 0.92,
+    "calm": 0.92,
+    "gentle & soft": 0.92,
+    "gentle": 0.92,
+    "friendly & casual": 1.0,
+    "casual": 1.0,
+    "encouraging & motivating": 1.05,
+    "encouraging": 1.05,
+    "direct & practical": 1.0,
+    "direct": 1.0,
+}
+
+def get_tone_pace(tone_or_style: Optional[str]) -> float:
+    if not tone_or_style:
+        return 1.0
+    clean = tone_or_style.strip().lower()
+    return SPEAKING_TONE_PACE.get(clean, 1.0)
 
 SARVAM_CONFIG = {
     "model": "bulbul:v3",
@@ -231,21 +252,40 @@ def should_use_legacy_tts(language: str) -> bool:
 def get_sarvam_speaker(language: str, gender: str = "girl", tone: Optional[str] = None) -> str:
     """
     Resolves the exact Sarvam speaker by language, companion gender (boy/girl), and optional tone.
-    Guarantees male companion gets male speaker, and female companion gets female speaker.
+    Strictly guarantees:
+    - Male companion NEVER resolves to a female speaker.
+    - Female companion NEVER resolves to a male speaker.
+    - If a tone has no speaker for that language, falls back to another speaker of the SAME gender, and logs it.
     """
     lang_code = normalize_lang_code(language)
-    g_key = "boy" if (gender or "").lower() in ("boy", "male") else "girl"
+    is_boy = (gender or "").lower() in ("boy", "male")
+    g_key = "boy" if is_boy else "girl"
+    valid_gender_set = MALE_SARVAM_SPEAKERS if is_boy else FEMALE_SARVAM_SPEAKERS
+
+    # Canonical default for fallback
+    mapping = SARVAM_DEFAULT_SPEAKERS.get(lang_code, SARVAM_DEFAULT_SPEAKERS["en"])
+    default_speaker = mapping.get(g_key, "ratan" if is_boy else "ishita")
 
     # If a specific tone was selected, look up that exact mapped speaker
     if tone:
         clean_tone = tone.lower().strip()
         lang_tones = VOICE_TONE_SPEAKER_MAP.get(lang_code, {}).get(g_key, {})
         if clean_tone in lang_tones:
-            return lang_tones[clean_tone]["speaker"]
+            candidate = lang_tones[clean_tone]["speaker"]
+            if candidate in valid_gender_set:
+                return candidate
+            else:
+                logger.warning(
+                    "[SPEAKER GENDER MISMATCH] Tone '%s' in '%s' resolved to '%s' which is not in %s set! Falling back to '%s'",
+                    clean_tone, lang_code, candidate, g_key, default_speaker
+                )
+        else:
+            logger.warning(
+                "[SPEAKER RESOLUTION FALLBACK] No speaker for tone '%s' in lang '%s' (gender '%s'); falling back to same-gender default '%s'",
+                clean_tone, lang_code, g_key, default_speaker
+            )
 
-    # Fallback to the canonical default speaker for this language and gender
-    mapping = SARVAM_DEFAULT_SPEAKERS.get(lang_code, SARVAM_DEFAULT_SPEAKERS["en"])
-    return mapping.get(g_key, mapping["girl"])
+    return default_speaker
 
 def get_tones_for_companion(language: str, companion: str = "girl") -> List[Dict[str, str]]:
     """

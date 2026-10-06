@@ -1392,11 +1392,17 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
             <MascotStage
               gender={userProfile.companion || (userProfile.gender === 'girl' ? 'girl' : 'boy')}
               onGenderChange={(newGender) => {
+                speechEngine.stopSpeaking();
+                speechGateway.stopSpeaking();
+                const follows = userProfile.voiceFollowsCompanion ?? true;
+                const newVoice = follows ? newGender : (userProfile.voiceGender || newGender);
+                const newTone = follows ? (newGender === 'boy' ? 'aarav' : 'ananya') : (userProfile.voiceTone || (newVoice === 'boy' ? 'aarav' : 'ananya'));
                 _onUpdateProfile?.({
                   companion: newGender,
                   gender: newGender,
                   avatarType: newGender,
-                  voiceGender: newGender,
+                  voiceGender: newVoice,
+                  voiceTone: newTone,
                 });
                 try {
                   const saved = localStorage.getItem('manas_user_profile_v2');
@@ -1404,8 +1410,14 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
                   parsed.companion = newGender;
                   parsed.gender = newGender;
                   parsed.avatarType = newGender;
-                  parsed.voiceGender = newGender;
+                  if (follows) {
+                    parsed.voiceGender = newGender;
+                    parsed.voice_gender = newGender;
+                    parsed.voiceTone = newTone;
+                    parsed.voice_tone = newTone;
+                  }
                   localStorage.setItem('manas_user_profile_v2', JSON.stringify(parsed));
+                  localStorage.setItem('manas_twin_profile', JSON.stringify(parsed));
                 } catch (_) { }
               }}
               emotion={

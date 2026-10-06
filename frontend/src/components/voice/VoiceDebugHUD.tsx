@@ -133,8 +133,8 @@ export const VoiceDebugHUD: React.FC = () => {
                 >
                   <div className="flex items-center justify-between text-[10px]">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-white px-1.5 py-0.5 rounded bg-white/10">
-                        {item.lang.toUpperCase()}
+                      <span className="font-bold text-white px-1.5 py-0.5 rounded bg-white/10" title="Language">
+                        lang:{item.lang.toUpperCase()}
                       </span>
                       <span
                         className={`px-1.5 py-0.5 rounded border text-[9px] uppercase tracking-wider ${getEngineBadge(
@@ -143,20 +143,24 @@ export const VoiceDebugHUD: React.FC = () => {
                       >
                         {item.engine}
                       </span>
-                      <span className="text-slate-400">{item.speaker}</span>
-                      {/* Gender badge */}
+                      <span className="px-1.5 py-0.5 rounded bg-indigo-950/70 text-indigo-300 text-[9px]" title="Companion avatar">
+                        comp:{item.companion || item.gender || 'girl'}
+                      </span>
                       <span
-                        className={`px-1 py-0.5 rounded text-[9px] font-semibold ${
-                          item.gender === 'boy'
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+                          (item.voice_gender || item.gender) === 'boy' || (item.voice_gender || item.gender) === 'male'
                             ? 'bg-blue-950/70 text-blue-300'
                             : 'bg-pink-950/70 text-pink-300'
                         }`}
+                        title="Voice gender"
                       >
-                        {item.gender}
+                        voice:{(item.voice_gender || item.gender) === 'boy' || (item.voice_gender || item.gender) === 'male' ? 'male' : 'female'}
                       </span>
-                      {/* Tone badge */}
-                      {item.tone && item.tone !== '(default)' && (
-                        <span className="px-1 py-0.5 rounded text-[9px] bg-violet-950/70 text-violet-300">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 text-emerald-300 text-[9px]" title="Resolved speaker">
+                        spk:{item.speaker}
+                      </span>
+                      {item.tone && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-violet-950/70 text-violet-300" title="Speaking tone">
                           tone:{item.tone}
                         </span>
                       )}

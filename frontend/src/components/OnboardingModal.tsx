@@ -67,6 +67,10 @@ export interface UserProfile {
   voiceGender?: 'boy' | 'girl';
   voiceTone?: string;
   voicePitch?: number;
+  voiceFollowsCompanion?: boolean;
+  speakingStyle?: string;
+  voiceSpeed?: number;
+  replyLength?: 'Short' | 'Balanced' | 'Detailed' | string;
   micGranted?: boolean;
   stylePref?: 'reflective' | 'brief' | 'warm';
   consentDisclaimer: boolean;

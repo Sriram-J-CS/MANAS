@@ -76,7 +76,12 @@ def init_db():
         ("tone", "TEXT DEFAULT 'gentle'"),
         ("consent_timestamp", "TEXT"),
         ("companion", "TEXT DEFAULT 'girl'"),
+        ("voice_gender", "TEXT DEFAULT 'girl'"),
         ("voice_tone", "TEXT DEFAULT 'ananya'"),
+        ("speaking_style", "TEXT DEFAULT 'Warm & Caring'"),
+        ("voice_speed", "REAL DEFAULT 1.0"),
+        ("reply_length", "TEXT DEFAULT 'Balanced'"),
+        ("voice_follows_companion", "INTEGER DEFAULT 1"),
         ("avatar_url", "TEXT"),
         ("appearance_attributes", "TEXT"),
     ]:

@@ -42,7 +42,8 @@ from .voice_config import (
     get_chirp3_fallback_voice,
     should_use_legacy_tts,
     SARVAM_DEFAULT_SPEAKERS,
-    SARVAM_CONFIG
+    SARVAM_CONFIG,
+    get_tone_pace
 )
 from .voice_validator import (
     validate_and_purify_speech_text,
@@ -743,7 +744,7 @@ async def synthesize_speech_provider(
     bcp47 = to_bcp47(language)
     style = get_speech_style(bcp47)
     lang_clean = language.split("-")[0].lower()
-    pace = 0.95 if (emotion or "").lower() in ("empathetic", "calm", "sad") else 1.0
+    pace = get_tone_pace(tone) if tone else (0.95 if (emotion or "").lower() in ("empathetic", "calm", "sad") else 1.0)
 
     use_legacy = (engine == "legacy") or (engine != "sarvam" and should_use_legacy_tts(language))
 

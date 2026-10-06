@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, User, Check, Volume2, Sparkles, ShieldCheck, Phone, AlertCircle, Lock } from 'lucide-react';
+import { X, User, Check, Volume2, ShieldCheck } from 'lucide-react';
 import type { UserProfile } from '../OnboardingModal';
-import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../../i18n/languages';
+import { SUPPORTED_LANGUAGES } from '../../i18n/languages';
 import { speechGateway } from '../../lib/voice/speechGateway';
 import {
   supabase,
   linkPhoneToUser,
   verifyPhoneLinkOtp,
   normalizePhone,
-  isSmsTestMode,
 } from '../../lib/supabase';
 
 interface EditProfileModalProps {
@@ -19,16 +18,25 @@ interface EditProfileModalProps {
   onUpdateProfile: (updated: Partial<UserProfile>) => void;
 }
 
-const GIRL_TONES = [
+const GIRL_VOICES = [
   { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
   { id: 'diya',   name: 'Diya',   style: 'Gentle & Soft' },
   { id: 'meera',  name: 'Meera',  style: 'Bright & Encouraging' },
 ];
 
-const BOY_TONES = [
+const BOY_VOICES = [
   { id: 'aarav', name: 'Aarav', style: 'Calm & Grounding' },
   { id: 'kabir', name: 'Kabir', style: 'Warm & Steady' },
   { id: 'arjun', name: 'Arjun', style: 'Soft & Friendly' },
+];
+
+const SPEAKING_TONES = [
+  { id: 'warm_caring', label: 'Warm & Caring', pace: 1.0, desc: 'Deep warmth & comforting empathy' },
+  { id: 'calm_grounding', label: 'Calm & Grounding', pace: 0.92, desc: 'Steady, centered & reassuring' },
+  { id: 'gentle_soft', label: 'Gentle & Soft', pace: 0.92, desc: 'Tender softness, delicate & soothing' },
+  { id: 'friendly_casual', label: 'Friendly & Casual', pace: 1.0, desc: 'Easygoing, relatable peer buddy' },
+  { id: 'encouraging_motivating', label: 'Encouraging & Motivating', pace: 1.05, desc: 'Uplifting hope & inspiring energy' },
+  { id: 'direct_practical', label: 'Direct & Practical', pace: 1.0, desc: 'Clear, honest & action-focused' },
 ];
 
 export const EditProfileModal: React.FC<EditProfileModalProps> = ({
@@ -46,12 +54,25 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [companion, setCompanion] = useState<'girl' | 'boy'>(
     userProfile.companion === 'boy' || userProfile.gender === 'boy' ? 'boy' : 'girl'
   );
+  const [voiceFollowsCompanion, setVoiceFollowsCompanion] = useState<boolean>(
+    userProfile.voiceFollowsCompanion ?? true
+  );
   const [voiceGender, setVoiceGender] = useState<'girl' | 'boy'>(
     userProfile.voiceGender || (userProfile.companion === 'boy' ? 'boy' : 'girl')
   );
   const [voiceTone, setVoiceTone] = useState<string>(
     userProfile.voiceTone || userProfile.voicePref || (voiceGender === 'boy' ? 'aarav' : 'ananya')
   );
+  const [speakingStyle, setSpeakingStyle] = useState<string>(
+    userProfile.speakingStyle || 'Warm & Caring'
+  );
+  const [voiceSpeed, setVoiceSpeed] = useState<number>(
+    userProfile.voiceSpeed || 1.0
+  );
+  const [replyLength, setReplyLength] = useState<'Short' | 'Balanced' | 'Detailed'>(
+    (userProfile.replyLength as any) || 'Balanced'
+  );
+
   const [isPlayingTest, setIsPlayingTest] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -73,37 +94,180 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       setLanguage(userProfile.language || 'en');
       const c = userProfile.companion === 'boy' || userProfile.gender === 'boy' ? 'boy' : 'girl';
       setCompanion(c);
-      const vg = userProfile.voiceGender || c;
+      const vfc = userProfile.voiceFollowsCompanion ?? true;
+      setVoiceFollowsCompanion(vfc);
+      const vg = vfc ? c : (userProfile.voiceGender || c);
       setVoiceGender(vg);
       setVoiceTone(userProfile.voiceTone || userProfile.voicePref || (vg === 'boy' ? 'aarav' : 'ananya'));
+      setSpeakingStyle(userProfile.speakingStyle || 'Warm & Caring');
+      setVoiceSpeed(userProfile.voiceSpeed || 1.0);
+      setReplyLength((userProfile.replyLength as any) || 'Balanced');
       setSaveSuccess(false);
 
-      // Check if user is anonymous
       supabase.auth.getUser().then(({ data: { user } }) => {
-        if (user?.is_anonymous) {
-          setIsAnonymous(true);
-        } else {
-          setIsAnonymous(false);
-        }
+        setIsAnonymous(!!user?.is_anonymous);
       });
     }
   }, [isOpen, userProfile]);
 
   if (!isOpen) return null;
 
-  const currentTones = voiceGender === 'boy' ? BOY_TONES : GIRL_TONES;
+  const currentVoices = voiceGender === 'boy' ? BOY_VOICES : GIRL_VOICES;
+
+  const playPreviewLine = (
+    vg: 'girl' | 'boy',
+    vTone: string,
+    vStyle: string,
+    vSpeed: number
+  ) => {
+    speechGateway.stopSpeaking();
+    setIsPlayingTest(true);
+    const SAMPLES: Record<string, string> = {
+      en: `Hello ${name}! I am ${companionName}, speaking in a ${vStyle} tone.`,
+      hi: `नमस्ते ${name}! मैं ${companionName} हूँ, हमेशा आपके साथ।`,
+      ta: `வணக்கம் ${name}! நான் ${companionName}, எப்போதும் உங்க கூடவே இருப்பேன்.`,
+      te: `నమస్కారం ${name}! నేను ${companionName}, ఎల్లప్పుడూ మీ తోడుగా ఉంటాను.`,
+      kn: `ನಮಸ್ಕಾರ ${name}! ನಾನು ${companionName}, ಯಾವಾಗಲೂ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.`,
+      ml: `നമസ്കാരം ${name}! ഞാൻ ${companionName}, എപ്പോഴും നിങ്ങളുടെ കൂടെയുണ്ട്.`,
+      bn: `নমস্কার ${name}! আমি ${companionName}, সবসময় আপনার পাশে আছি।`,
+      mr: `नमस्कार ${name}! मी ${companionName}, नेहमी तुमच्या सोबत आहे.`,
+    };
+
+    const text = SAMPLES[language] || SAMPLES.en;
+
+    speechGateway.speak({
+      text,
+      lang: language,
+      gender: vg,
+      companion,
+      tone: vTone,
+      speaking_style: vStyle,
+      speed: vSpeed,
+      purpose: 'preview',
+      pitch: vg === 'girl' ? 1.15 : 0.9,
+      onEnd: () => setIsPlayingTest(false),
+      onError: () => setIsPlayingTest(false),
+    });
+  };
+
+  const persistToStorageAndDb = (patch: Partial<UserProfile>) => {
+    onUpdateProfile(patch);
+    try {
+      const saved1 = localStorage.getItem('manas_user_profile_v2');
+      const p1 = saved1 ? JSON.parse(saved1) : {};
+      Object.assign(p1, patch);
+      localStorage.setItem('manas_user_profile_v2', JSON.stringify(p1));
+
+      const saved2 = localStorage.getItem('manas_twin_profile');
+      const p2 = saved2 ? JSON.parse(saved2) : {};
+      Object.assign(p2, patch);
+      localStorage.setItem('manas_twin_profile', JSON.stringify(p2));
+
+      const token = localStorage.getItem('manas_access_token');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      fetch('/api/user/profile', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          voice_gender: patch.voiceGender,
+          voice_tone: patch.voiceTone,
+          speaking_style: patch.speakingStyle,
+          voice_speed: patch.voiceSpeed,
+          reply_length: patch.replyLength,
+          voice_follows_companion: patch.voiceFollowsCompanion,
+        }),
+      }).catch((e) => console.warn('Background sync failed:', e));
+    } catch (_) {}
+  };
 
   const handleCompanionChange = (newCompanion: 'girl' | 'boy') => {
-    // Only updates avatar model; does NOT change voiceGender manually set
+    speechGateway.stopSpeaking();
     setCompanion(newCompanion);
+    let nextVoiceGender = voiceGender;
+    let nextVoiceTone = voiceTone;
+    if (voiceFollowsCompanion) {
+      nextVoiceGender = newCompanion;
+      nextVoiceTone = newCompanion === 'boy' ? 'aarav' : 'ananya';
+      setVoiceGender(nextVoiceGender);
+      setVoiceTone(nextVoiceTone);
+      playPreviewLine(nextVoiceGender, nextVoiceTone, speakingStyle, voiceSpeed);
+    }
+    persistToStorageAndDb({
+      companion: newCompanion,
+      gender: newCompanion,
+      avatarType: newCompanion,
+      voiceGender: nextVoiceGender,
+      voiceTone: nextVoiceTone,
+      voicePref: nextVoiceTone,
+    });
   };
 
   const handleVoiceGenderChange = (newVoiceGender: 'girl' | 'boy') => {
     setVoiceGender(newVoiceGender);
-    const validTones = newVoiceGender === 'boy' ? BOY_TONES : GIRL_TONES;
-    if (!validTones.some((t) => t.id === voiceTone)) {
-      setVoiceTone(validTones[0].id);
+    const validVoices = newVoiceGender === 'boy' ? BOY_VOICES : GIRL_VOICES;
+    let nextTone = voiceTone;
+    if (!validVoices.some((v) => v.id === voiceTone)) {
+      nextTone = validVoices[0].id;
+      setVoiceTone(nextTone);
     }
+    playPreviewLine(newVoiceGender, nextTone, speakingStyle, voiceSpeed);
+    persistToStorageAndDb({
+      voiceGender: newVoiceGender,
+      voiceTone: nextTone,
+      voicePref: nextTone,
+    });
+  };
+
+  const handleVoiceFollowsCompanionChange = (checked: boolean) => {
+    setVoiceFollowsCompanion(checked);
+    let nextVoiceGender = voiceGender;
+    let nextVoiceTone = voiceTone;
+    if (checked) {
+      nextVoiceGender = companion;
+      nextVoiceTone = companion === 'boy' ? 'aarav' : 'ananya';
+      setVoiceGender(nextVoiceGender);
+      setVoiceTone(nextVoiceTone);
+      playPreviewLine(nextVoiceGender, nextVoiceTone, speakingStyle, voiceSpeed);
+    }
+    persistToStorageAndDb({
+      voiceFollowsCompanion: checked,
+      voiceGender: nextVoiceGender,
+      voiceTone: nextVoiceTone,
+      voicePref: nextVoiceTone,
+    });
+  };
+
+  const handleVoiceSelect = (vId: string) => {
+    setVoiceTone(vId);
+    playPreviewLine(voiceGender, vId, speakingStyle, voiceSpeed);
+    persistToStorageAndDb({
+      voiceTone: vId,
+      voicePref: vId,
+    });
+  };
+
+  const handleToneSelect = (toneLabel: string) => {
+    setSpeakingStyle(toneLabel);
+    playPreviewLine(voiceGender, voiceTone, toneLabel, voiceSpeed);
+    persistToStorageAndDb({
+      speakingStyle: toneLabel,
+    });
+  };
+
+  const handleSpeedChange = (speed: number) => {
+    setVoiceSpeed(speed);
+    persistToStorageAndDb({
+      voiceSpeed: speed,
+    });
+  };
+
+  const handleReplyLengthChange = (len: 'Short' | 'Balanced' | 'Detailed') => {
+    setReplyLength(len);
+    persistToStorageAndDb({
+      replyLength: len,
+    });
   };
 
   const handleSendSecureOtp = async () => {
@@ -146,34 +310,6 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
   };
 
-  const handleTestVoice = () => {
-    setIsPlayingTest(true);
-    const samples: Record<string, string> = {
-      en: `Hello ${name}! I am ${companionName}, your companion with ${voiceTone} voice tone.`,
-      hi: `नमस्ते ${name}! मैं ${companionName} हूँ, और मैं हमेशा आपके साथ हूँ।`,
-      ta: `வணக்கம் ${name}! நான் ${companionName}, எப்போதும் உங்கள் துணையாக இருப்பேன்.`,
-      te: `నమస్కారం ${name}! నేను ${companionName}, ఎల్లప్పుడూ మీ తోడుగా ఉంటాను.`,
-      kn: `ನಮಸ್ಕಾರ ${name}! ನಾನು ${companionName}, ಯಾವಾಗಲೂ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.`,
-      ml: `നമസ്കാരം ${name}! ഞാൻ ${companionName}, എപ്പോഴും കൂടെയുണ്ടാകും.`,
-      bn: `নমস্কার ${name}! আমি ${companionName}, সবসময় আপনার পাশে আছি।`,
-      mr: `नमस्कार ${name}! मी ${companionName}, नेहमी तुमच्या पाठीशी आहे.`,
-    };
-
-    const text = samples[language] || samples.en;
-
-    speechGateway.speak({
-      text,
-      lang: language,
-      gender: voiceGender,
-      companion,
-      tone: voiceTone,
-      purpose: 'preview',
-      pitch: voiceGender === 'girl' ? 1.15 : 0.9,
-      onEnd: () => setIsPlayingTest(false),
-      onError: () => setIsPlayingTest(false),
-    });
-  };
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
@@ -189,12 +325,26 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       voiceGender,
       voicePref: voiceTone,
       voiceTone,
+      voiceFollowsCompanion,
+      speakingStyle,
+      voiceSpeed,
+      replyLength,
       voicePitch: voiceGender === 'girl' ? 1.15 : 0.9,
     };
 
     onUpdateProfile(updated);
 
     try {
+      const saved1 = localStorage.getItem('manas_user_profile_v2');
+      const p1 = saved1 ? JSON.parse(saved1) : {};
+      Object.assign(p1, updated);
+      localStorage.setItem('manas_user_profile_v2', JSON.stringify(p1));
+
+      const saved2 = localStorage.getItem('manas_twin_profile');
+      const p2 = saved2 ? JSON.parse(saved2) : {};
+      Object.assign(p2, updated);
+      localStorage.setItem('manas_twin_profile', JSON.stringify(p2));
+
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user?.id) {
         await supabase.from('profiles').upsert({
@@ -223,6 +373,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           companion: updated.companion,
           voice_gender: updated.voiceGender,
           voice_tone: updated.voiceTone,
+          speaking_style: updated.speakingStyle,
+          voice_speed: updated.voiceSpeed,
+          reply_length: updated.replyLength,
+          voice_follows_companion: updated.voiceFollowsCompanion,
         }),
       });
     } catch (err) {
@@ -253,7 +407,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               </span>
               <div>
                 <h3 className="text-base font-bold text-[#0A0A0A] font-serif">Edit Profile</h3>
-                <p className="text-[11px] font-mono text-[#0A0A0A]/50">Companion, voice, name, age & language</p>
+                <p className="text-[11px] font-mono text-[#0A0A0A]/50">Companion, voice & tone, name, age & language</p>
               </div>
             </div>
             <button
@@ -266,7 +420,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+          <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
             {/* Secure Account Notice (Only for anonymous sessions) */}
             {isAnonymous && !secureSuccess && (
               <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 shadow-xs flex flex-col gap-2.5">
@@ -427,7 +581,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     <span className="text-xl">♀</span>
                     <div className="text-left">
                       <div className="text-xs font-bold font-mono">Girl Avatar</div>
-                      <div className="text-[10px] text-[#0A0A0A]/60">Maya / 3D Model</div>
+                      <div className="text-[10px] text-[#0A0A0A]/60">Ananya / 3D Model</div>
                     </div>
                   </div>
                   {companion === 'girl' && <Check className="w-4 h-4 text-[#8B5CF6]" />}
@@ -455,87 +609,198 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               </div>
             </div>
 
-            {/* 4. Voice Gender Toggle (Separate from Avatar) */}
-            <div className="space-y-1">
-              <label className="text-xs font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider block">
-                Companion Voice Gender (Separate Setting)
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleVoiceGenderChange('girl')}
-                  className={`p-3 rounded-2xl border flex items-center justify-between transition-all cursor-pointer ${
-                    voiceGender === 'girl'
-                      ? 'border-[#8B5CF6] bg-violet-50/80 ring-1 ring-[#8B5CF6]'
-                      : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="w-4 h-4 text-[#8B5CF6]" />
-                    <div className="text-left">
-                      <div className="text-xs font-bold font-mono">Female Speaker</div>
-                      <div className="text-[10px] text-[#0A0A0A]/60">Warm & Empathetic</div>
-                    </div>
-                  </div>
-                  {voiceGender === 'girl' && <Check className="w-4 h-4 text-[#8B5CF6]" />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleVoiceGenderChange('boy')}
-                  className={`p-3 rounded-2xl border flex items-center justify-between transition-all cursor-pointer ${
-                    voiceGender === 'boy'
-                      ? 'border-[#8B5CF6] bg-violet-50/80 ring-1 ring-[#8B5CF6]'
-                      : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Volume2 className="w-4 h-4 text-[#8B5CF6]" />
-                    <div className="text-left">
-                      <div className="text-xs font-bold font-mono">Male Speaker</div>
-                      <div className="text-[10px] text-[#0A0A0A]/60">Calm & Grounding</div>
-                    </div>
-                  </div>
-                  {voiceGender === 'boy' && <Check className="w-4 h-4 text-[#8B5CF6]" />}
-                </button>
-              </div>
-            </div>
-
-            {/* 5. Voice Tone (filtered strictly by voiceGender) */}
-            <div className="space-y-1.5">
+            {/* 4. Voice & Tone Section */}
+            <div className="pt-2 border-t border-[#0A0A0A]/10 space-y-3.5">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider">
-                  Voice Tone ({voiceGender === 'girl' ? 'Female' : 'Male'})
+                <div className="flex items-center gap-1.5">
+                  <Volume2 className="w-4 h-4 text-[#8B5CF6]" />
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#0A0A0A]">
+                    Voice & Tone
+                  </span>
+                </div>
+                {/* Voice follows companion checkbox */}
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs font-mono text-[#0A0A0A]/80 select-none">
+                  <input
+                    type="checkbox"
+                    checked={voiceFollowsCompanion}
+                    onChange={(e) => handleVoiceFollowsCompanionChange(e.target.checked)}
+                    className="rounded border-[#0A0A0A]/20 text-[#8B5CF6] focus:ring-[#8B5CF6] w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>Voice follows companion</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={handleTestVoice}
-                  disabled={isPlayingTest}
-                  className="text-xs font-mono text-[#8B5CF6] hover:text-[#7C3AED] flex items-center gap-1 cursor-pointer font-bold"
-                >
-                  <Volume2 className="w-3.5 h-3.5" />
-                  <span>{isPlayingTest ? 'Speaking...' : 'Test Voice'}</span>
-                </button>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                {currentTones.map((tone) => (
+              {/* Voice Gender Switch */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider block">
+                  Voice Gender
+                </label>
+                <div className="grid grid-cols-2 gap-2">
                   <button
-                    key={tone.id}
                     type="button"
-                    onClick={() => setVoiceTone(tone.id)}
-                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                      voiceTone === tone.id
-                        ? 'border-[#8B5CF6] bg-[#8B5CF6] text-white font-bold shadow-xs'
-                        : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]'
+                    id="voice-gender-female"
+                    onClick={() => handleVoiceGenderChange('girl')}
+                    className={`py-2 px-3 rounded-xl border flex items-center justify-center gap-2 text-xs font-mono transition-all cursor-pointer ${
+                      voiceGender === 'girl'
+                        ? 'border-[#8B5CF6] bg-violet-50 text-[#8B5CF6] font-bold ring-1 ring-[#8B5CF6]'
+                        : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]/80'
                     }`}
                   >
-                    <div className="text-xs font-mono">{tone.name}</div>
-                    <div className={`text-[10px] truncate ${voiceTone === tone.id ? 'text-white/80' : 'text-[#0A0A0A]/50'}`}>
-                      {tone.style}
-                    </div>
+                    <span>Female Voice</span>
+                    {voiceGender === 'girl' && <Check className="w-3.5 h-3.5" />}
                   </button>
-                ))}
+                  <button
+                    type="button"
+                    id="voice-gender-male"
+                    onClick={() => handleVoiceGenderChange('boy')}
+                    className={`py-2 px-3 rounded-xl border flex items-center justify-center gap-2 text-xs font-mono transition-all cursor-pointer ${
+                      voiceGender === 'boy'
+                        ? 'border-[#8B5CF6] bg-violet-50 text-[#8B5CF6] font-bold ring-1 ring-[#8B5CF6]'
+                        : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]/80'
+                    }`}
+                  >
+                    <span>Male Voice</span>
+                    {voiceGender === 'boy' && <Check className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Voice Cards (Filtered for Current Gender Only) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider">
+                    Voice ({voiceGender === 'girl' ? 'Female' : 'Male'})
+                  </label>
+                  <span className="text-[10px] font-mono text-[#0A0A0A]/50">
+                    Sample in {SUPPORTED_LANGUAGES.find((l) => l.code === language)?.englishName || language}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {currentVoices.map((voice) => {
+                    const isSelected = voiceTone === voice.id;
+                    return (
+                      <div
+                        key={voice.id}
+                        id={`voice-card-${voice.id}`}
+                        onClick={() => handleVoiceSelect(voice.id)}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative group flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-[#8B5CF6] bg-violet-50/90 ring-1 ring-[#8B5CF6] shadow-xs'
+                            : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6]'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="font-mono text-xs font-bold text-[#0A0A0A]">{voice.name}</div>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-[#8B5CF6]" />}
+                        </div>
+                        <div className="text-[10px] text-[#0A0A0A]/60 my-1 line-clamp-1">{voice.style}</div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleVoiceSelect(voice.id);
+                          }}
+                          className={`mt-1 py-1 px-2 rounded-lg text-[10px] font-mono font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-[#8B5CF6] text-white hover:bg-violet-700'
+                              : 'bg-black/5 hover:bg-black/10 text-[#0A0A0A]/80'
+                          }`}
+                        >
+                          <Volume2 className="w-3 h-3" />
+                          <span>{isPlayingTest && isSelected ? 'Playing' : 'Play'}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* How should they speak? (Tone of speaking) */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider block">
+                  How should they speak? (Tone)
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {SPEAKING_TONES.map((t) => {
+                    const isSelected = speakingStyle.toLowerCase() === t.label.toLowerCase();
+                    return (
+                      <button
+                        key={t.id}
+                        id={`tone-select-${t.id}`}
+                        type="button"
+                        onClick={() => handleToneSelect(t.label)}
+                        className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-[#8B5CF6] bg-[#8B5CF6] text-white font-bold shadow-xs'
+                            : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-xs font-mono">
+                          <span>{t.label}</span>
+                          <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${isSelected ? 'bg-white/20 text-white' : 'bg-black/5 text-[#0A0A0A]/60'}`}>
+                            {t.pace}x
+                          </span>
+                        </div>
+                        <div className={`text-[9px] mt-0.5 line-clamp-1 ${isSelected ? 'text-white/80' : 'text-[#0A0A0A]/60'}`}>
+                          {t.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Voice Speed Slider & Reply Length */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Speed Slider 0.85x - 1.15x */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider">
+                      Voice Speed
+                    </label>
+                    <span className="text-xs font-mono font-bold text-[#8B5CF6]">
+                      {voiceSpeed.toFixed(2)}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.85"
+                    max="1.15"
+                    step="0.05"
+                    value={voiceSpeed}
+                    onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
+                    className="w-full accent-[#8B5CF6] cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[9px] font-mono text-[#0A0A0A]/50">
+                    <span>0.85x (Calm)</span>
+                    <span>1.0x</span>
+                    <span>1.15x (Fast)</span>
+                  </div>
+                </div>
+
+                {/* Reply Length (Short / Balanced / Detailed) */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-mono font-bold text-[#0A0A0A]/70 uppercase tracking-wider block">
+                    Reply Length
+                  </label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['Short', 'Balanced', 'Detailed'] as const).map((len) => (
+                      <button
+                        key={len}
+                        id={`reply-len-${len.toLowerCase()}`}
+                        type="button"
+                        onClick={() => handleReplyLengthChange(len)}
+                        className={`py-1.5 px-1 rounded-xl border text-[11px] font-mono transition-all cursor-pointer text-center ${
+                          replyLength.toLowerCase() === len.toLowerCase()
+                            ? 'border-[#8B5CF6] bg-[#8B5CF6] text-white font-bold shadow-xs'
+                            : 'border-[#0A0A0A]/10 bg-[#FDFBF7] hover:bg-[#F3F0E6] text-[#0A0A0A]/80'
+                        }`}
+                      >
+                        {len}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 

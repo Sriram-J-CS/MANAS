@@ -675,17 +675,48 @@ function VRMModelInner({
     if (isWavingRef.current) {
       waveTimerRef.current += delta;
       const wT = waveTimerRef.current;
+      const totalWaveDuration = 2.0;
 
-      if (rightUpperArm && rightLowerArm && rightHand) {
-        // Raise arm to greeting position
-        rightUpperArm.rotation.set(-0.4, 0.2, 0.45);
-        rightLowerArm.rotation.set(0.1, 1.1, 0.2);
-        // Gentle side-to-side hand wave
-        rightHand.rotation.set(0, 0, Math.sin(wT * 9.0) * 0.38);
+      // Calculate blend envelope: smooth ease-in (0 to 0.3s) and ease-out (1.6 to 2.0s)
+      let blend = 1.0;
+      if (wT < 0.3) {
+        blend = wT / 0.3;
+      } else if (wT > 1.6) {
+        blend = Math.max(0, (totalWaveDuration - wT) / 0.4);
       }
 
-      // Wave lasts 1.8 seconds
-      if (wT >= 1.8) {
+      if (rightUpperArm && rightLowerArm && rightHand) {
+        // Wave target pose: arm raised beside head, palm facing forward
+        const targetUpperZ = THREE.MathUtils.lerp(1.25, -0.65, blend);
+        const targetUpperX = THREE.MathUtils.lerp(0, -0.45, blend);
+        const targetUpperY = THREE.MathUtils.lerp(0, 0.15, blend);
+        rightUpperArm.rotation.set(targetUpperX, targetUpperY, targetUpperZ);
+
+        const targetLowerX = THREE.MathUtils.lerp(0.20, 1.25, blend);
+        const targetLowerY = THREE.MathUtils.lerp(0, -0.25, blend);
+        const targetLowerZ = THREE.MathUtils.lerp(0, 0.10, blend);
+        rightLowerArm.rotation.set(targetLowerX, targetLowerY, targetLowerZ);
+
+        // Friendly hand waving motion (side to side)
+        const waveAngle = Math.sin(wT * 8.5) * 0.38 * blend;
+        rightHand.rotation.set(0, 0, waveAngle);
+      }
+
+      // Open waving fingers (uncurl for natural open palm greeting)
+      const rightFingers = [
+        'rightIndexProximal', 'rightIndexIntermediate',
+        'rightMiddleProximal', 'rightMiddleIntermediate',
+        'rightRingProximal', 'rightRingIntermediate',
+        'rightLittleProximal', 'rightLittleIntermediate',
+      ];
+      for (const fName of rightFingers) {
+        const b = humanoid.getNormalizedBoneNode(fName as any);
+        if (b) b.rotation.set(0.06, 0, 0);
+      }
+      if (rightThumb) rightThumb.rotation.set(0.08, -0.15, 0);
+
+      // Complete wave after duration
+      if (wT >= totalWaveDuration) {
         isWavingRef.current = false;
         waveTimerRef.current = 0;
         onWaveEndRef.current?.();

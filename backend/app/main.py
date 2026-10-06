@@ -332,7 +332,12 @@ class UserProfileUpdateRequest(BaseModel):
     age: Optional[int] = None
     language: Optional[str] = None
     companion: Optional[str] = None
+    voice_gender: Optional[str] = None
     voice_tone: Optional[str] = None
+    speaking_style: Optional[str] = None
+    voice_speed: Optional[float] = None
+    reply_length: Optional[str] = None
+    voice_follows_companion: Optional[bool] = None
     avatar_url: Optional[str] = None
     appearance_attributes: Optional[Dict[str, Any]] = None
 
@@ -341,14 +346,36 @@ def get_user_profile_endpoint(current_uid: str = Depends(require_auth)):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, name, age, is_minor, language, tone, role, voice_pref, companion, voice_tone, avatar_url, appearance_attributes
+        SELECT id, name, age, is_minor, language, tone, role, voice_pref, companion,
+               voice_gender, voice_tone, speaking_style, voice_speed, reply_length,
+               voice_follows_companion, avatar_url, appearance_attributes
         FROM users WHERE id = ?
     """, (current_uid,))
     row = cursor.fetchone()
     conn.close()
     if not row:
-        return {"id": current_uid, "name": "Friend", "age": 20, "language": "en", "companion": "girl", "voice_tone": "ananya"}
+        return {
+            "id": current_uid,
+            "name": "Friend",
+            "age": 20,
+            "language": "en",
+            "companion": "girl",
+            "voice_gender": "girl",
+            "voice_tone": "ananya",
+            "speaking_style": "Warm & Caring",
+            "voice_speed": 1.0,
+            "reply_length": "Balanced",
+            "voice_follows_companion": True,
+        }
     d = dict(row)
+    c = d.get("companion") or "girl"
+    d["companion"] = c
+    d["voice_gender"] = d.get("voice_gender") or ("boy" if c == "boy" else "girl")
+    d["voice_tone"] = d.get("voice_tone") or ("aarav" if d["voice_gender"] == "boy" else "ananya")
+    d["speaking_style"] = d.get("speaking_style") or "Warm & Caring"
+    d["voice_speed"] = float(d.get("voice_speed") or 1.0)
+    d["reply_length"] = d.get("reply_length") or "Balanced"
+    d["voice_follows_companion"] = bool(d.get("voice_follows_companion") if d.get("voice_follows_companion") is not None else 1)
     if d.get("appearance_attributes"):
         try:
             d["appearance_attributes"] = json.loads(d["appearance_attributes"])
@@ -364,6 +391,7 @@ def update_user_profile_endpoint(req: UserProfileUpdateRequest, current_uid: str
     cursor.execute("SELECT id FROM users WHERE id = ?", (current_uid,))
     existing = cursor.fetchone()
     app_attrs_json = json.dumps(req.appearance_attributes) if req.appearance_attributes is not None else None
+    v_follows = int(req.voice_follows_companion) if req.voice_follows_companion is not None else None
     if existing:
         cursor.execute("""
             UPDATE users
@@ -371,16 +399,37 @@ def update_user_profile_endpoint(req: UserProfileUpdateRequest, current_uid: str
                 age = COALESCE(?, age),
                 language = COALESCE(?, language),
                 companion = COALESCE(?, companion),
+                voice_gender = COALESCE(?, voice_gender),
                 voice_tone = COALESCE(?, voice_tone),
+                speaking_style = COALESCE(?, speaking_style),
+                voice_speed = COALESCE(?, voice_speed),
+                reply_length = COALESCE(?, reply_length),
+                voice_follows_companion = COALESCE(?, voice_follows_companion),
                 avatar_url = COALESCE(?, avatar_url),
                 appearance_attributes = COALESCE(?, appearance_attributes)
             WHERE id = ?
-        """, (req.name, req.age, req.language, req.companion, req.voice_tone, req.avatar_url, app_attrs_json, current_uid))
+        """, (
+            req.name, req.age, req.language, req.companion,
+            req.voice_gender, req.voice_tone, req.speaking_style,
+            req.voice_speed, req.reply_length, v_follows,
+            req.avatar_url, app_attrs_json, current_uid
+        ))
     else:
         cursor.execute("""
-            INSERT INTO users (id, name, age, language, companion, voice_tone, avatar_url, appearance_attributes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (current_uid, req.name or "Friend", req.age or 20, req.language or "en", req.companion or "girl", req.voice_tone or "ananya", req.avatar_url, app_attrs_json))
+            INSERT INTO users (
+                id, name, age, language, companion,
+                voice_gender, voice_tone, speaking_style, voice_speed, reply_length,
+                voice_follows_companion, avatar_url, appearance_attributes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            current_uid, req.name or "Friend", req.age or 20, req.language or "en", req.companion or "girl",
+            req.voice_gender or ("boy" if (req.companion == "boy") else "girl"),
+            req.voice_tone or ("aarav" if req.companion == "boy" else "ananya"),
+            req.speaking_style or "Warm & Caring", req.voice_speed or 1.0, req.reply_length or "Balanced",
+            v_follows if v_follows is not None else 1,
+            req.avatar_url, app_attrs_json
+        ))
     conn.commit()
     conn.close()
     return {"status": "success", "user_id": current_uid, **req.dict(exclude_none=True)}

@@ -83,6 +83,10 @@ export function App() {
           parsed.name = loggedInName;
         }
         if (loggedInId) parsed.id = loggedInId;
+        if (!parsed.speakingStyle) parsed.speakingStyle = 'Warm & Caring';
+        if (parsed.voiceFollowsCompanion === undefined) parsed.voiceFollowsCompanion = true;
+        if (parsed.voiceSpeed === undefined) parsed.voiceSpeed = 1.0;
+        if (!parsed.replyLength) parsed.replyLength = 'Balanced';
         return parsed;
       }
     } catch (_) { }
@@ -96,6 +100,13 @@ export function App() {
       tone: 'gentle',
       role: 'student',
       gender: 'boy',
+      companion: 'boy',
+      voiceGender: 'boy',
+      voiceTone: 'aarav',
+      speakingStyle: 'Warm & Caring',
+      voiceSpeed: 1.0,
+      replyLength: 'Balanced',
+      voiceFollowsCompanion: true,
       avatarType: 'cyber_manas',
       language: 'en',
       stylePref: 'reflective',
@@ -125,6 +136,42 @@ export function App() {
     avatar.loadConfigOnStartup();
     registerServiceWorker();
     const lenisInstance = initLenis();
+
+    // Load server-side user profile if available
+    const loadDbProfile = async () => {
+      try {
+        const token = localStorage.getItem('manas_access_token');
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch('/api/user/profile', { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.name) {
+            setUserProfile((prev) => {
+              const merged: UserProfile = {
+                ...prev,
+                name: data.name || prev.name,
+                age: data.age || prev.age,
+                language: data.language || prev.language,
+                companion: data.companion || prev.companion,
+                voiceGender: data.voice_gender || prev.voiceGender,
+                voiceTone: data.voice_tone || prev.voiceTone,
+                speakingStyle: data.speaking_style || prev.speakingStyle,
+                voiceSpeed: data.voice_speed !== undefined ? data.voice_speed : prev.voiceSpeed,
+                replyLength: data.reply_length || prev.replyLength,
+                voiceFollowsCompanion: data.voice_follows_companion !== undefined ? data.voice_follows_companion : prev.voiceFollowsCompanion,
+              };
+              try {
+                localStorage.setItem('manas_twin_profile', JSON.stringify(merged));
+                localStorage.setItem('manas_user_profile_v2', JSON.stringify(merged));
+              } catch (_) {}
+              return merged;
+            });
+          }
+        }
+      } catch (_) {}
+    };
+    loadDbProfile();
 
     // Direct chat opening or voice lab opening via URL query param or hash (/voice-test)
     const params = new URLSearchParams(window.location.search);
@@ -222,6 +269,7 @@ export function App() {
       const next = { ...prev, ...updated };
       try {
         localStorage.setItem('manas_twin_profile', JSON.stringify(next));
+        localStorage.setItem('manas_user_profile_v2', JSON.stringify(next));
       } catch (_) { }
       return next;
     });
