@@ -117,6 +117,9 @@ class VoiceDebugStore {
 export const voiceDebugStore = new VoiceDebugStore();
 
 class SpeechGateway {
+  private currentSessionId = 0;
+  private currentAbortController: AbortController | null = null;
+  private activeAudios: Set<HTMLAudioElement> = new Set();
   private currentAudio: HTMLAudioElement | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private analyserRAF: number | null = null;
@@ -132,14 +135,49 @@ class SpeechGateway {
   }
 
   public stopSpeaking(): void {
+    // 1. Invalidate current session so any pending async callbacks immediately exit
+    this.currentSessionId++;
+
+    // 2. Abort any active network requests
+    if (this.currentAbortController) {
+      try {
+        this.currentAbortController.abort();
+      } catch (_) {}
+      this.currentAbortController = null;
+    }
+
+    // 3. Immediately halt, silence, and clean up all active audio elements
+    this.activeAudios.forEach((audio) => {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.src = '';
+        audio.onended = null;
+        audio.onerror = null;
+      } catch (_) {}
+    });
+    this.activeAudios.clear();
+
     if (this.currentAudio) {
-      this.currentAudio.pause();
-      this.currentAudio.currentTime = 0;
+      try {
+        this.currentAudio.pause();
+        this.currentAudio.currentTime = 0;
+        this.currentAudio.src = '';
+        this.currentAudio.onended = null;
+        this.currentAudio.onerror = null;
+      } catch (_) {}
       this.currentAudio = null;
     }
+
+    // 4. Cancel browser speech synthesis if active
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (_) {}
     }
+    this.currentUtterance = null;
+
+    // 5. Cancel analyser loop
     if (this.analyserRAF) {
       cancelAnimationFrame(this.analyserRAF);
       this.analyserRAF = null;
@@ -153,6 +191,10 @@ class SpeechGateway {
    */
   public async speak(opts: SpeakOptions): Promise<void> {
     this.stopSpeaking();
+
+    const sessionId = this.currentSessionId;
+    const abortCtrl = new AbortController();
+    this.currentAbortController = abortCtrl;
 
     const startTime = performance.now();
     const rawLang = (opts.lang || 'en').toLowerCase().trim();
@@ -190,6 +232,11 @@ class SpeechGateway {
       console.warn(`[VOICE GATEWAY WARN] ${warningReason}: "${rawText.slice(0, 80)}"`);
     }
 
+    // Check session validity before proceeding
+    if (this.currentSessionId !== sessionId || abortCtrl.signal.aborted) {
+      return;
+    }
+
     // Step 1: Pre-generated audio (onboarding fixed lines)
     if (opts.lineId) {
       const pregenUrl = getPreGeneratedAudioPath(cleanLang, genderKey, opts.lineId);
@@ -198,8 +245,12 @@ class SpeechGateway {
         speaker: defaultSpeaker, gender: genderKey, tone: resolvedTone,
         text: rawText, startTime, hasLatin, hasDigits, isWarning, warningReason,
         purpose: opts.purpose,
-      });
-      if (played) return;
+      }, sessionId);
+      if (played || this.currentSessionId !== sessionId) return;
+    }
+
+    if (this.currentSessionId !== sessionId || abortCtrl.signal.aborted) {
+      return;
     }
 
     // Step 2: Server-side TTS via /api/voice/tts (ALL 8 languages → Sarvam Bulbul v3)
@@ -221,10 +272,19 @@ class SpeechGateway {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ttsBody),
+        signal: abortCtrl.signal,
       });
+
+      if (this.currentSessionId !== sessionId || abortCtrl.signal.aborted) {
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
+        if (this.currentSessionId !== sessionId || abortCtrl.signal.aborted) {
+          return;
+        }
+
         if (data.audio_base64) {
           const latencyMs = Math.round(performance.now() - startTime);
           const usedSpeaker = data.voice_used || data.speech_metadata?.speaker || defaultSpeaker;
@@ -251,12 +311,19 @@ class SpeechGateway {
           console.log(
             `[VOICE GATEWAY] lang=${cleanLang} gender=${genderKey} tone=${resolvedTone || 'default'} speaker=${usedSpeaker} latency=${latencyMs}ms`
           );
-          await this.playBase64Audio(data.audio_base64, opts);
+          await this.playBase64Audio(data.audio_base64, opts, sessionId);
           return;
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || this.currentSessionId !== sessionId) {
+        return;
+      }
       console.warn(`[VOICE GATEWAY] Server TTS fetch failed for ${targetBcp47}:`, err);
+    }
+
+    if (this.currentSessionId !== sessionId || abortCtrl.signal.aborted) {
+      return;
     }
 
     // Step 3: Fallback
@@ -290,7 +357,7 @@ class SpeechGateway {
         warningReason: 'Browser SpeechSynthesis used as last resort for en/hi.',
         purpose: opts.purpose,
       });
-      this.speakBrowserWebSpeech(rawText, targetBcp47, isBoy, opts);
+      this.speakBrowserWebSpeech(rawText, targetBcp47, isBoy, opts, sessionId);
       return;
     }
 
@@ -298,13 +365,19 @@ class SpeechGateway {
   }
 
   /** Attempts to play a pre-generated audio URL via AudioContext. */
-  private async tryPlayAudioUrl(url: string, opts: SpeakOptions, debugInfo: any): Promise<boolean> {
+  private async tryPlayAudioUrl(url: string, opts: SpeakOptions, debugInfo: any, sessionId: number): Promise<boolean> {
     try {
-      const headCheck = await fetch(url, { method: 'HEAD' });
-      if (!headCheck.ok) return false;
+      const headCheck = await fetch(url, {
+        method: 'HEAD',
+        signal: this.currentAbortController?.signal,
+      });
+      if (this.currentSessionId !== sessionId || !headCheck.ok) return false;
 
       const audio = new Audio(url);
+      if (this.currentSessionId !== sessionId) return false;
+
       this.currentAudio = audio;
+      this.activeAudios.add(audio);
       const latencyMs = Math.round(performance.now() - debugInfo.startTime);
 
       voiceDebugStore.addEntry({
@@ -319,8 +392,21 @@ class SpeechGateway {
         purpose: debugInfo.purpose,
       });
 
-      this.setupAudioPlayback(audio, opts);
+      this.setupAudioPlayback(audio, opts, sessionId);
+      if (this.currentSessionId !== sessionId) {
+        audio.pause();
+        audio.src = '';
+        this.activeAudios.delete(audio);
+        return false;
+      }
+
       await audio.play();
+      if (this.currentSessionId !== sessionId) {
+        audio.pause();
+        audio.src = '';
+        this.activeAudios.delete(audio);
+        return false;
+      }
       return true;
     } catch (_) {
       return false;
@@ -328,26 +414,47 @@ class SpeechGateway {
   }
 
   /** Plays base64 audio through shared AudioContext for lip-sync. */
-  private async playBase64Audio(base64Data: string, opts: SpeakOptions): Promise<void> {
+  private async playBase64Audio(base64Data: string, opts: SpeakOptions, sessionId: number): Promise<void> {
+    if (this.currentSessionId !== sessionId) return;
+
     const isMp3 = base64Data.startsWith('//O') || base64Data.startsWith('SUQz') || base64Data.startsWith('/+M');
     const mime = isMp3 ? 'audio/mp3' : 'audio/wav';
     const audioUrl = base64Data.startsWith('data:') ? base64Data : `data:${mime};base64,${base64Data}`;
 
     const audio = new Audio(audioUrl);
+    if (this.currentSessionId !== sessionId) return;
+
     this.currentAudio = audio;
-    this.setupAudioPlayback(audio, opts);
+    this.activeAudios.add(audio);
+    this.setupAudioPlayback(audio, opts, sessionId);
+
+    if (this.currentSessionId !== sessionId) {
+      audio.pause();
+      audio.src = '';
+      this.activeAudios.delete(audio);
+      return;
+    }
 
     try {
       await audio.play();
+      if (this.currentSessionId !== sessionId) {
+        audio.pause();
+        audio.src = '';
+        this.activeAudios.delete(audio);
+      }
     } catch (e) {
-      this.isSpeaking = false;
-      opts.onError?.(e);
-      opts.onEnd?.();
+      this.activeAudios.delete(audio);
+      if (this.currentSessionId === sessionId) {
+        this.isSpeaking = false;
+        opts.onError?.(e);
+        opts.onEnd?.();
+      }
     }
   }
 
   /** Connects HTML5 audio element to Web Audio analyser for VRM avatar visemes. */
-  private setupAudioPlayback(audio: HTMLAudioElement, opts: SpeakOptions): void {
+  private setupAudioPlayback(audio: HTMLAudioElement, opts: SpeakOptions, sessionId: number): void {
+    if (this.currentSessionId !== sessionId) return;
     this.isSpeaking = true;
     opts.onStart?.();
 
@@ -367,7 +474,7 @@ class SpeechGateway {
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       const poll = () => {
-        if (!this.isSpeaking || !this.analyserNode) return;
+        if (!this.isSpeaking || !this.analyserNode || this.currentSessionId !== sessionId) return;
         this.analyserNode.getByteFrequencyData(dataArray);
         const len = Math.min(80, dataArray.length);
         let sumSq = 0;
@@ -380,21 +487,28 @@ class SpeechGateway {
     } catch (_) {}
 
     audio.onended = () => {
-      this.isSpeaking = false;
-      opts.onEnergy?.(0);
-      opts.onEnd?.();
+      this.activeAudios.delete(audio);
+      if (this.currentSessionId === sessionId) {
+        this.isSpeaking = false;
+        opts.onEnergy?.(0);
+        opts.onEnd?.();
+      }
     };
 
     audio.onerror = (e) => {
-      this.isSpeaking = false;
-      opts.onEnergy?.(0);
-      opts.onError?.(e);
-      opts.onEnd?.();
+      this.activeAudios.delete(audio);
+      if (this.currentSessionId === sessionId) {
+        this.isSpeaking = false;
+        opts.onEnergy?.(0);
+        opts.onError?.(e);
+        opts.onEnd?.();
+      }
     };
   }
 
   /** Browser SpeechSynthesis ONLY for en and hi as last resort. */
-  private speakBrowserWebSpeech(text: string, bcp47: string, isBoy: boolean, opts: SpeakOptions): void {
+  private speakBrowserWebSpeech(text: string, bcp47: string, isBoy: boolean, opts: SpeakOptions, sessionId: number): void {
+    if (this.currentSessionId !== sessionId) return;
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     utt.lang = bcp47;
@@ -406,9 +520,29 @@ class SpeechGateway {
     const matched = voices.find((v) => v.lang.toLowerCase().startsWith(langPrefix));
     if (matched) utt.voice = matched;
 
-    utt.onstart = () => { this.isSpeaking = true; opts.onStart?.(); };
-    utt.onend = () => { this.isSpeaking = false; opts.onEnergy?.(0); opts.onEnd?.(); };
-    utt.onerror = (e) => { this.isSpeaking = false; opts.onEnergy?.(0); opts.onError?.(e); opts.onEnd?.(); };
+    utt.onstart = () => {
+      if (this.currentSessionId !== sessionId) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+        return;
+      }
+      this.isSpeaking = true;
+      opts.onStart?.();
+    };
+    utt.onend = () => {
+      if (this.currentSessionId === sessionId) {
+        this.isSpeaking = false;
+        opts.onEnergy?.(0);
+        opts.onEnd?.();
+      }
+    };
+    utt.onerror = (e) => {
+      if (this.currentSessionId === sessionId) {
+        this.isSpeaking = false;
+        opts.onEnergy?.(0);
+        opts.onError?.(e);
+        opts.onEnd?.();
+      }
+    };
 
     this.currentUtterance = utt;
     window.speechSynthesis.speak(utt);

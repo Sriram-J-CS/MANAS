@@ -265,9 +265,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     ONBOARDING_FIXED_LINES.en[companionKey][currentLineId] ||
     'I am right here with you.';
 
+  const lastSpokenKeyRef = useRef<string>('');
+
   const speakCurrentGuide = (langOverride?: string) => {
     if (isMuted) return;
     const targetLang = langOverride || selectedLanguage;
+    const speechKey = `${step}:${targetLang}:${companion}`;
+    lastSpokenKeyRef.current = speechKey;
+
     const cleanLang = (targetLang || 'en').split('-')[0].toLowerCase();
     const textToSpeak =
       ONBOARDING_FIXED_LINES[cleanLang]?.[companionKey]?.[currentLineId] ||
@@ -298,9 +303,13 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
   // Speak step instruction via unified speechGateway with pre-generated audio
   useEffect(() => {
+    const speechKey = `${step}:${selectedLanguage}:${companion}`;
     if (!isMuted) {
-      speakCurrentGuide();
+      if (lastSpokenKeyRef.current !== speechKey) {
+        speakCurrentGuide();
+      }
     } else {
+      speechGateway.stopSpeaking();
       setMascotSpeaking(false);
     }
 
