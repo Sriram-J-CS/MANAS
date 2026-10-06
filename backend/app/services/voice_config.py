@@ -74,14 +74,14 @@ SARVAM_VOICE_CATALOG = {
 }
 
 # Voice Tones mapped strictly to real Sarvam speakers per language:
-# Girl tones: Ananya (Warm & Caring), Diya (Gentle & Soft), Meera (Bright & Encouraging)
+# Girl tones: Ananya (Warm & Caring), Diya (Gentle & Soft), Janani (Bright & Encouraging)
 # Boy tones:  Aarav (Calm & Grounding), Kabir (Warm & Steady), Arjun (Soft & Friendly)
 VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
     "en": {
         "girl": {
             "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "priya",  "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "suhani", "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "suhani", "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -93,7 +93,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "suhani", "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "ritu",   "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "ritu",   "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -105,7 +105,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "ritu",   "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "priya",  "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "priya",  "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -117,7 +117,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "neha",   "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "ishita", "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "ishita", "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -129,7 +129,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "neha",   "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "priya",  "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "priya",  "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -141,7 +141,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "pooja",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "priya",  "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "suhani", "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "suhani", "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -153,7 +153,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "roopa",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "suhani", "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "priya",  "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "priya",  "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "rehan",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -165,7 +165,7 @@ VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
         "girl": {
             "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
             "diya":   {"speaker": "ritu",   "label": "Diya",   "style": "Gentle & Soft"},
-            "meera":  {"speaker": "neha",   "label": "Meera",  "style": "Bright & Encouraging"},
+            "janani": {"speaker": "neha",   "label": "Janani", "style": "Bright & Encouraging"},
         },
         "boy": {
             "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
@@ -269,6 +269,8 @@ def get_sarvam_speaker(language: str, gender: str = "girl", tone: Optional[str] 
     # If a specific tone was selected, look up that exact mapped speaker
     if tone:
         clean_tone = tone.lower().strip()
+        if clean_tone == "meera":
+            clean_tone = "janani"
         lang_tones = VOICE_TONE_SPEAKER_MAP.get(lang_code, {}).get(g_key, {})
         if clean_tone in lang_tones:
             candidate = lang_tones[clean_tone]["speaker"]

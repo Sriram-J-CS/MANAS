@@ -34,7 +34,7 @@ export interface MascotCustomizerProps {
 const GIRL_TONES = [
   { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
   { id: 'diya', name: 'Diya', style: 'Gentle & Soft' },
-  { id: 'meera', name: 'Meera', style: 'Bright & Encouraging' },
+  { id: 'janani', name: 'Janani', style: 'Bright & Encouraging' },
 ];
 
 const BOY_TONES = [

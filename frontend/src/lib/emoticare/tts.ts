@@ -26,7 +26,7 @@ const BROWSER_VOICE_HINTS: Record<string, string[]> = {
 };
 
 // Gender keywords to scan in voice.name
-const FEMALE_KEYWORDS = ['female', 'woman', 'girl', 'ananya', 'meera', 'divya', 'priya', 'lekha'];
+const FEMALE_KEYWORDS = ['female', 'woman', 'girl', 'ananya', 'janani', 'meera', 'divya', 'priya', 'lekha'];
 const MALE_KEYWORDS   = ['male', 'man', 'boy', 'achal', 'arjun', 'karan', 'raj'];
 
 export async function speak(
