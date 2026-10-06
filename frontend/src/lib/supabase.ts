@@ -125,6 +125,52 @@ export async function verifyPhoneOtp(phoneNumber: string, token: string): Promis
 }
 
 /**
+ * Link phone number to existing user account (updateUser)
+ */
+export async function linkPhoneToUser(phoneNumber: string): Promise<{ success: boolean; error?: string }> {
+  const formatted = normalizePhone(phoneNumber);
+  try {
+    const { error } = await supabase.auth.updateUser({
+      phone: formatted,
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update phone' };
+  }
+}
+
+/**
+ * Verify OTP for phone linking / phone change
+ */
+export async function verifyPhoneLinkOtp(phoneNumber: string, token: string): Promise<{ success: boolean; error?: string }> {
+  const formatted = normalizePhone(phoneNumber);
+  try {
+    const { error } = await supabase.auth.verifyOtp({
+      phone: formatted,
+      token: token.trim(),
+      type: 'phone_change',
+    });
+    if (error) {
+      // Fallback to 'sms' type verification
+      const fallback = await supabase.auth.verifyOtp({
+        phone: formatted,
+        token: token.trim(),
+        type: 'sms',
+      });
+      if (fallback.error) {
+        return { success: false, error: error.message };
+      }
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Phone verification failed' };
+  }
+}
+
+/**
  * Create an anonymous session for "Skip for now" onboarding
  * Ensures each anonymous visitor has a completely isolated user_id UUID.
  */
