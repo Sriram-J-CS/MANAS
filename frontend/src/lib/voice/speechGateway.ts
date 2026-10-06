@@ -232,6 +232,9 @@ class SpeechGateway {
       console.warn(`[VOICE GATEWAY WARN] ${warningReason}: "${rawText.slice(0, 80)}"`);
     }
 
+    // Ensure voice master gain is unmuted
+    sharedAudioManager.setVoiceMute(false);
+
     // Check session validity before proceeding
     if (this.currentSessionId !== sessionId || abortCtrl.signal.aborted) {
       return;
@@ -463,27 +466,30 @@ class SpeechGateway {
       if (ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.7;
+      // If context is running, route to viseme analyser and voice master gain node
+      if (ctx.state === 'running') {
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.7;
 
-      const source = ctx.createMediaElementSource(audio);
-      source.connect(analyser);
-      analyser.connect(sharedAudioManager.getVoiceMasterGainNode());
-      this.analyserNode = analyser;
+        const source = ctx.createMediaElementSource(audio);
+        source.connect(analyser);
+        analyser.connect(sharedAudioManager.getVoiceMasterGainNode());
+        this.analyserNode = analyser;
 
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const poll = () => {
-        if (!this.isSpeaking || !this.analyserNode || this.currentSessionId !== sessionId) return;
-        this.analyserNode.getByteFrequencyData(dataArray);
-        const len = Math.min(80, dataArray.length);
-        let sumSq = 0;
-        for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
-        const rms = Math.sqrt(sumSq / len);
-        opts.onEnergy?.(Math.min(1.0, Math.max(0.0, rms * 2.2)));
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const poll = () => {
+          if (!this.isSpeaking || !this.analyserNode || this.currentSessionId !== sessionId) return;
+          this.analyserNode.getByteFrequencyData(dataArray);
+          const len = Math.min(80, dataArray.length);
+          let sumSq = 0;
+          for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
+          const rms = Math.sqrt(sumSq / len);
+          opts.onEnergy?.(Math.min(1.0, Math.max(0.0, rms * 2.2)));
+          this.analyserRAF = requestAnimationFrame(poll);
+        };
         this.analyserRAF = requestAnimationFrame(poll);
-      };
-      this.analyserRAF = requestAnimationFrame(poll);
+      }
     } catch (_) {}
 
     audio.onended = () => {

@@ -27,6 +27,7 @@ import { useI18n, SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import type { Language, MascotExpression } from '../types';
 import { speechEngine } from '../lib/voice/speechEngine';
 import { speechGateway } from '../lib/voice/speechGateway';
+import { sharedAudioManager } from '../lib/audio/sharedAudioContext';
 import { ONBOARDING_FIXED_LINES } from '../lib/voice/onboardingVoiceLines';
 
 import type { AvatarAppearanceAttributes } from '../lib/avatar/providers';
@@ -182,9 +183,23 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   const availableTones = companion === 'boy' ? BOY_TONES : GIRL_TONES;
 
   // Mascot Guide & Speech Synthesis
-  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(() => {
+    return sharedAudioManager.getIsVoiceMuted();
+  });
   const [mascotSpeaking, setMascotSpeaking] = useState<boolean>(false);
   const [mascotExpression, setMascotExpression] = useState<MascotExpression>('happy');
+
+  const toggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    sharedAudioManager.setVoiceMute(nextMuted);
+    if (nextMuted) {
+      speechGateway.stopSpeaking();
+      setMascotSpeaking(false);
+    } else {
+      speakCurrentGuide();
+    }
+  };
 
   // Choose companion handler: waves once + speaks short greeting in user's language with lip-sync
   // When companion gender changes, reset voiceTone to the first valid tone for new gender
@@ -265,19 +280,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     ONBOARDING_FIXED_LINES.en[companionKey][currentLineId] ||
     'I am right here with you.';
 
-  const lastSpokenKeyRef = useRef<string>('');
-
   const speakCurrentGuide = (langOverride?: string) => {
     if (isMuted) return;
     const targetLang = langOverride || selectedLanguage;
-    const speechKey = `${step}:${targetLang}:${companion}`;
-    lastSpokenKeyRef.current = speechKey;
-
     const cleanLang = (targetLang || 'en').split('-')[0].toLowerCase();
     const textToSpeak =
       ONBOARDING_FIXED_LINES[cleanLang]?.[companionKey]?.[currentLineId] ||
       ONBOARDING_FIXED_LINES.en[companionKey][currentLineId] ||
       currentGuideText;
+
+    // Ensure audio manager has voice unmuted and volume at 1.0
+    sharedAudioManager.setVoiceMute(false);
+    sharedAudioManager.setVoiceVolume(1.0);
 
     speechGateway.stopSpeaking();
     speechGateway.speak({
@@ -301,22 +315,38 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     });
   };
 
-  // Speak step instruction via unified speechGateway with pre-generated audio
+  // Speak step instruction when entering step or when modal opens
   useEffect(() => {
-    const speechKey = `${step}:${selectedLanguage}:${companion}`;
-    if (!isMuted) {
-      if (lastSpokenKeyRef.current !== speechKey) {
-        speakCurrentGuide();
-      }
-    } else {
-      speechGateway.stopSpeaking();
-      setMascotSpeaking(false);
+    if (isOpen && !isMuted) {
+      speakCurrentGuide();
     }
+  }, [step, isOpen]);
 
+  // Clean up speech only when modal unmounts
+  useEffect(() => {
     return () => {
       speechGateway.stopSpeaking();
     };
-  }, [step, selectedLanguage, isMuted, companion, currentGuideText, currentLineId]);
+  }, []);
+
+  // Unlock audio context on user interaction
+  useEffect(() => {
+    const unlockAudio = () => {
+      try {
+        const ctx = sharedAudioManager.getAudioContext();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+      } catch (_) {}
+    };
+
+    window.addEventListener('click', unlockAudio, { capture: true, once: true });
+    window.addEventListener('keydown', unlockAudio, { capture: true, once: true });
+    return () => {
+      window.removeEventListener('click', unlockAudio, { capture: true });
+      window.removeEventListener('keydown', unlockAudio, { capture: true });
+    };
+  }, []);
 
   // Clean up camera on unmount or step change
   useEffect(() => {
@@ -706,7 +736,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsMuted(!isMuted)}
+              onClick={toggleMute}
               title={isMuted ? 'Unmute Mascot Guide' : 'Mute Mascot Guide'}
               className="p-2 rounded-full hover:bg-[#0A0A0A]/5 dark:hover:bg-[#FFFFFF]/5 text-[#0A0A0A]/70 dark:text-[#FFFFFF]/70 transition-colors"
             >
