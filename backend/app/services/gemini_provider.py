@@ -597,6 +597,7 @@ class GeminiProvider:
                 companion_tone=companion_tone,
                 recent_bot_messages=recent_bot_messages,
                 turns_since_name_used=turns_since_name_used,
+                saved_memories=saved_memories,
             ):
                 yield (kind, payload)
             return

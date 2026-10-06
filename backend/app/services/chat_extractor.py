@@ -750,6 +750,98 @@ def undo_auto_save_action(user_id: str, action_id: str) -> Dict[str, Any]:
         conn.close()
         return {"status": "error", "success": False, "message": str(e)}
 
+def extract_local_memories_and_tools(user_message: str) -> List[Dict[str, Any]]:
+    """
+    Local deterministic memory & factual disclosure extractor.
+    Operates completely on its own without needing external cloud LLMs.
+    Extracts user identity, studies, jobs, family/relationships, triggers, coping habits, goals.
+    """
+    tool_calls: List[Dict[str, Any]] = []
+    text = (user_message or "").strip()
+    if not text or len(text) < 3:
+        return tool_calls
+    clean = text.lower()
+
+    # 1. User Name / Identity
+    name_m = re.search(r"\b(?:my name is|i am|call me|i'm called)\s+([A-Z][a-z]+)\b", text)
+    if not name_m:
+        name_m = re.search(r"(?:என் பெயர்|मेरा नाम|నా పేరు|ನನ್ನ ಹೆಸರು|എന്റെ പേര്|আমার নাম|माझे नाव)\s+([^\s,.]+)", text)
+    if name_m:
+        val = name_m.group(1).strip()
+        if val.lower() not in ("tired", "sad", "stressed", "feeling", "here", "okay", "fine", "depressed", "anxious", "sorry", "ready"):
+            tool_calls.append({
+                "name": "save_memory",
+                "args": {"category": "people", "fact": f"User's name is {val}", "confidence": 0.95}
+            })
+
+    # 2. Academic / Studies / Exams
+    study_m = re.search(r"\b(?:studying|study|major in|major is|course in|pursuing)\s+([a-zA-Z\s]{3,35})\b", clean)
+    if study_m:
+        val = study_m.group(1).strip()
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "goals", "fact": f"Studying {val}", "confidence": 0.90}
+        })
+    elif re.search(r"\b(?:exam|exams|midterm|midterms|finals|assignment|viva|interview|quiz|test tomorrow|test next week)\b", clean):
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "triggers", "fact": "Has upcoming academic exams or evaluations", "confidence": 0.85}
+        })
+
+    # 3. Work / Career
+    work_m = re.search(r"\b(?:i work as|my job is|i am an?|working as)\s+([a-zA-Z\s]{3,35})\b", clean)
+    if work_m:
+        val = work_m.group(1).strip()
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "preferences", "fact": f"Works as {val}", "confidence": 0.88}
+        })
+
+    # 4. Relationships (Family, Partner, Friends)
+    rel_m = re.search(r"\b(?:my\s+(?:mom|mother|dad|father|sister|brother|friend|partner|husband|wife|girlfriend|boyfriend))\s+(?:is|was|feels?|has|said|told)\s+([^.!?]{3,50})", clean)
+    if rel_m:
+        val = rel_m.group(0).strip()
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "people", "fact": val.capitalize(), "confidence": 0.85}
+        })
+    elif re.search(r"\b(?:broke up|breakup|divorce|separation)\b", clean):
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "people", "fact": "Dealing with relationship breakup or separation", "confidence": 0.90}
+        })
+
+    # 5. Coping / Hobbies / Calming activities
+    coping_m = re.search(r"\b(?:listening to music|painting|reading|walking|drawing|cooking|gym|cycling|gaming|praying|meditation|gardening|journaling)\b", clean)
+    if coping_m and any(w in clean for w in ("like", "love", "help", "calm", "relax", "peace", "enjoy")):
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "coping", "fact": f"Finds calm and comfort in {coping_m.group(0)}", "confidence": 0.88}
+        })
+
+    # 6. Triggers / Sleep issues
+    if re.search(r"\b(?:can'?t sleep|insomnia|sleepless|haven'?t slept)\b", clean):
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "triggers", "fact": "Struggling with insomnia and sleep difficulties", "confidence": 0.90}
+        })
+    if re.search(r"\b(?:crowds?|public speaking|deadlines?|isolation)\b", clean) and any(w in clean for w in ("scared", "fear", "anxious", "panic", "stress")):
+        tool_calls.append({
+            "name": "save_memory",
+            "args": {"category": "triggers", "fact": f"Stress/anxiety triggered in context of {clean[:40]}", "confidence": 0.82}
+        })
+
+    # 7. Goals
+    goal_m = re.search(r"\b(?:i want to|my goal is to|i am trying to)\s+([a-zA-Z\s]{4,40})\b", clean)
+    if goal_m:
+        val = goal_m.group(1).strip()
+        tool_calls.append({
+            "name": "add_goal",
+            "args": {"text": val.capitalize()}
+        })
+
+    return tool_calls
+
 async def run_chat_background_extraction(
     user_id: str,
     user_message: str,
@@ -757,12 +849,23 @@ async def run_chat_background_extraction(
     api_key: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Top-level entrypoint called in background after user message."""
-    tool_calls = await extract_chat_features_gemini(
+    # 1. Deterministic local extraction (always runs, 0ms, zero external dependencies)
+    local_tool_calls = extract_local_memories_and_tools(user_message)
+
+    # 2. LLM extraction if Gemini available
+    llm_tool_calls = await extract_chat_features_gemini(
         user_id=user_id,
         user_message=user_message,
         recent_history=recent_history,
         api_key=api_key
     )
-    if not tool_calls:
+
+    # Merge calls without duplicates
+    merged = local_tool_calls[:]
+    for call in llm_tool_calls:
+        if not any(c.get("name") == call.get("name") and c.get("args") == call.get("args") for c in merged):
+            merged.append(call)
+
+    if not merged:
         return []
-    return execute_extraction_actions(user_id=user_id, tool_calls=tool_calls)
+    return execute_extraction_actions(user_id=user_id, tool_calls=merged)

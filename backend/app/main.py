@@ -24,7 +24,7 @@ from .database import (
     get_latest_session_summary,
     delete_user_session_summaries
 )
-from .safety.rules import check_safety
+from .safety.rules import check_safety, get_polite_inappropriate_response
 from .safety.templates import get_crisis_response, get_medication_response
 from .services.gemini_provider import gemini
 from .services.chat_engine import process_chat_message, stream_tokens
@@ -690,6 +690,67 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
 
         return StreamingResponse(
             crisis_stream(),
+            media_type="text/event-stream; charset=utf-8",
+            headers={
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    # Inappropriate / offensive / boundary check: respond politely on its own
+    if safety_res.get("is_inappropriate"):
+        target_lang = req.language or "en"
+        inappropriate_reply = get_polite_inappropriate_response(target_lang)
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO chat_messages (id, user_id, sender, text, language, typing_speed)
+            VALUES (?, ?, 'user', ?, ?, ?)
+        """, (user_msg_id, uid, encrypt_user_text(uid, req.message), req.language, req.typing_cps))
+        cur.execute("""
+            INSERT INTO chat_messages (
+                id, user_id, sender, text, language, emotion, risk_level, expression
+            ) VALUES (?, ?, 'mascot', ?, ?, 'calm', 'none', 'calm')
+        """, (bot_msg_id, uid, encrypt_user_text(uid, inappropriate_reply), req.language))
+        conn.commit()
+        conn.close()
+
+        async def inappropriate_stream():
+            bcp47_code = to_bcp47(req.language)
+            spoken = sanitize_spoken_text(inappropriate_reply, req.language)
+            native_voice = pick_native_voice(bcp47_code)
+            meta = {
+                "id": bot_msg_id,
+                "reply": inappropriate_reply,
+                "display_text": inappropriate_reply,
+                "speech_text": spoken,
+                "spoken_text": spoken,
+                "speech_metadata": {
+                    "style": get_speech_style(bcp47_code),
+                    "language_code": bcp47_code,
+                    "voice_name": native_voice,
+                },
+                "bcp47": bcp47_code,
+                "emotion": "calm",
+                "expression": "calm",
+                "suggest_tool": "none",
+                "quick_replies": ["I understand", "Let's talk about my day", "How can you help me?"],
+                "risk_level": "none",
+                "state_label": "Respectful Boundary",
+                "gesture": "listening",
+            }
+            yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
+            words = inappropriate_reply.split(" ")
+            for i in range(0, len(words), 3):
+                chunk = " ".join(words[i:i+3]) + (" " if i + 3 < len(words) else "")
+                yield f"event: token\ndata: {json.dumps({'token': chunk}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.015)
+            yield "event: done\ndata: {}\n\n"
+
+        return StreamingResponse(
+            inappropriate_stream(),
             media_type="text/event-stream; charset=utf-8",
             headers={
                 "Content-Type": "text/event-stream; charset=utf-8",
