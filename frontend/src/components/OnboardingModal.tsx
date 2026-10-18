@@ -121,7 +121,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       const uid = localStorage.getItem('manas_user_id');
       const phone = localStorage.getItem('manas_user_phone');
       const email = localStorage.getItem('manas_user_email');
-      return Boolean(uid && (phone || email));
+      const paramAuth = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('signed_in') === 'true';
+      return Boolean(paramAuth || (uid && (phone || email)));
     } catch (_) {
       return false;
     }

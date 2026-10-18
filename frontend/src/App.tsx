@@ -217,6 +217,9 @@ export function App() {
     if (params.get('chat') === 'open' || window.location.hash === '#chat') {
       setIsCompanionOpen(true);
     }
+    if (params.get('onboarding') === 'open' || window.location.hash === '#onboarding') {
+      setIsOnboardingOpen(true);
+    }
     const isVoiceTest =
       window.location.pathname === '/voice-test' ||
       window.location.pathname.startsWith('/voice-test') ||
