@@ -165,6 +165,8 @@ export const ChatSettingsModal: React.FC<ChatSettingsModalProps> = ({
     const sample = SAMPLE_PHRASES[lang] || SAMPLE_PHRASES.en;
     speechEngine.speak(sample, lang, {
       gender,
+      companion: gender,
+      tone: userProfile.voiceTone || userProfile.voicePref || (gender === 'boy' ? 'aarav' : 'ananya'),
       pitch,
       onEnd: () => setIsPlayingVoiceTest(false),
       onError: () => setIsPlayingVoiceTest(false),

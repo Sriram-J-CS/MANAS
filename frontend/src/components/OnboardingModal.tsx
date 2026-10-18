@@ -209,9 +209,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   // Step 6: Voice & Audio Setup
   const [micStatus, setMicStatus] = useState<'idle' | 'testing' | 'granted' | 'denied'>('idle');
   const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [selectedVoice, setSelectedVoice] = useState<string>(
-    existingProfile?.voicePref || ''
-  );
+  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
+    return existingProfile?.voiceTone || existingProfile?.voicePref || (companion === 'boy' ? 'aarav' : 'ananya');
+  });
   const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState<boolean>(false);
 
   // Voice tone cards per companion gender (Part C specification)
@@ -559,40 +559,114 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
   };
 
-  // Step 6: Voice Preview — uses exact companion+tone so user hears real speaker
-  const playVoiceSample = () => {
+  // Distinct sample phrases for each companion voice tone across all 8 languages (pure native script for native-6)
+  const VOICE_TONE_SAMPLES: Record<string, Record<string, string>> = {
+    ananya: {
+      en: "Hi, I am Ananya. I am right here with a warm and caring voice whenever you need to talk.",
+      hi: "नमस्ते, मैं अनन्या हूँ। मैं गर्मजोशी और सहानुभूति भरी आवाज़ में हमेशा आपकी बात सुनने के लिए तैयार हूँ।",
+      ta: "வணக்கம், நான் அனன்யா. எப்போதும் அன்பான, கனிவான குரலில் உங்களுடன் துணை நிற்பேன்.",
+      te: "నమస్కారం, నేను అనన్య. ఎల్లప్పుడూ ఆప్యాయతతో కూడిన స్వరంతో మీకు తోడుగా ఉంటాను.",
+      kn: "ನಮಸ್ಕಾರ, ನಾನು ಅನನ್ಯ. ಯಾವಾಗಲೂ ಪ್ರೀತಿ ಮತ್ತು ಕಾಳಜಿಯ ಧ್ವನಿಯಲ್ಲಿ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.",
+      ml: "നമസ്കാരം, ഞാൻ അനന്യ. എപ്പോഴും സ്നേഹത്തോടെ നിങ്ങളുടെ കൂടെയുണ്ടാകും.",
+      bn: "নমস্কার, আমি অনন্যা। সর্বদা সহানুভূতিশীল কণ্ঠে আপনার পাশে আছি।",
+      mr: "नमस्कार, मी अनन्या. नेहमी आपुलकीच्या स्वरात तुमच्या पाठीशी आहे.",
+    },
+    diya: {
+      en: "Hello, I am Diya. I speak in a gentle and soft voice to bring you calm and peace.",
+      hi: "नमस्ते, मैं दिया हूँ। शांत और कोमल आवाज़ में आपके मन को सुकून देने के लिए उपस्थित हूँ।",
+      ta: "வணக்கம், நான் தியா. உங்கள் மனதை அமைதிப்படுத்த மென்மையான குரலில் பேசுவேன்.",
+      te: "నమస్కారం, నేను దియా. మీ మనస్సుకు ప్రశాంతతను చేకూర్చడానికి మృదువైన స్వరంతో మాట్లాడుతాను.",
+      kn: "ನಮಸ್ಕಾರ, ನಾನು ದಿಯಾ. ನಿಮ್ಮ ಮನಸ್ಸಿಗೆ ನೆಮ್ಮದಿ ನೀಡಲು ಮೃದುವಾದ ಧ್ವನಿಯಲ್ಲಿ ಮಾತನಾಡುತ್ತೇನೆ.",
+      ml: "നമസ്കാരം, ഞാൻ ദിയ. ശാന്തവും സൗമ്യവുമായ സ്വരത്തിൽ ഞാൻ നിങ്ങളോട് സംസാരിക്കും.",
+      bn: "নমস্কার, আমি দিয়া। আপনার মনে শান্তি ফিরিয়ে আনতে কোমল কণ্ঠে কথা বলব।",
+      mr: "नमस्कार, मी दिया. तुमच्या मनाला शांतता देण्यासाठी हळूवार आणि शांत स्वरात बोलेन.",
+    },
+    meera: {
+      en: "Hey there, I am Meera! I am here with an encouraging and motivating voice to uplift your spirit.",
+      hi: "नमस्ते, मैं मीरा हूँ! उत्साह और प्रेरणा भरी आवाज़ में आपका हौसला बढ़ाने के लिए यहाँ हूँ!",
+      ta: "வணக்கம், நான் மீரா! உங்களுக்கு உற்சாகமும் நம்பிக்கையும் தரும் குரலில் எப்போதும் பேசுவேன்!",
+      te: "నమస్కారం, నేను మీరా! మీకు ధైర్యాన్ని మరియు ఉత్సాహాన్ని అందించే స్వరంతో ఎల్లప్పుడూ ఉంటాను!",
+      kn: "ನಮಸ್ಕಾರ, ನಾನು ಮೀರಾ! ನಿಮಗೆ ಚೈತನ್ಯ ಮತ್ತು ಪ್ರೇರಣೆ ನೀಡುವ ಧ್ವನಿಯಲ್ಲಿ ಸದಾ ಜತೆಗಿರುವೆ!",
+      ml: "നമസ്കാരം, ഞാൻ മീര! നിങ്ങൾക്ക് ആത്മവിശ്വാസവും പ്രതീക്ഷയും നൽകുന്ന സ്വരത്തിൽ ഞാൻ ഒപ്പമുണ്ട്!",
+      bn: "নমস্কার, আমি মীরা! উৎসাহ ও উদ্দীপনা ভরা কণ্ঠে আপনার আত্মবিশ্বাস বাড়াতে পাশে আছি!",
+      mr: "नमस्कार, मी मीरा! तुम्हाला नवी उमेद आणि प्रेरणा देणाऱ्या स्वरात नेहमी सोबत आहे!",
+    },
+    aarav: {
+      en: "Hey, I am Aarav. I speak in a calm and grounding voice to help you relax and unwind.",
+      hi: "नमस्ते, मैं आरव हूँ। शांत और स्थिर आवाज़ में हमेशा आपका साथ देने के लिए तैयार हूँ।",
+      ta: "வணக்கம், நான் ஆரவ். அமைதியான, உறுதியான குரலில் உங்களுடன் பேசுவேன்.",
+      te: "నమస్కారం, నేను ఆరవ్. ప్రశాంతమైన స్వరంతో మీకు ఎల్లప్పుడూ అండగా ఉంటాను.",
+      kn: "ನಮಸ್ಕಾರ, ನಾನು ಆರವ್. ಶಾಂತ ಧ್ವನಿಯಲ್ಲಿ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.",
+      ml: "നമസ്കാരം, ഞാൻ ആരവ്. ശാന്തമായ സ്വരത്തിൽ നിങ്ങളുടെ കൂടെയുണ്ട്.",
+      bn: "নমস্কার, আমি আরভ। শান্ত ও অবিচল কণ্ঠে আপনার পাশে আছি।",
+      mr: "नमस्कार, मी आरव. शांत आणि स्थिर स्वरात तुमच्या सोबत आहे.",
+    },
+    kabir: {
+      en: "Hello, I am Kabir. I am right here with a warm and steady voice to walk beside you.",
+      hi: "नमस्ते, मैं कबीर हूँ। एक सच्चे और विश्वस्त मित्र की तरह आपकी हर बात सुनने के लिए तैयार हूँ।",
+      ta: "வணக்கம், நான் கபீர். உறுதியான மற்றும் அன்பான குரலில் உங்கள் துணை நிற்பேன்.",
+      te: "నమస్కారం, నేను కబీర్. ఆప్యాయత నిండిన స్వరంతో మీకు అండగా ఉంటాను.",
+      kn: "ನಮಸ್ಕಾರ, ನಾನು ಕಬೀರ್. ಬೆಂಬಲ ನೀಡುವ ಧ್ವನಿಯಲ್ಲಿ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.",
+      ml: "നമസ്കാരം, ഞാൻ കബീർ. ആശ്വാസമേകുന്ന സ്വരത്തിൽ നിങ്ങളുടെ കൂടെയുണ്ട്.",
+      bn: "নমস্কার, আমি কবির। উষ্ণ ও বিশ্বস্ত কণ্ঠে সর্বদা আপনার পাশে আছি।",
+      mr: "नमस्कार, मी कबीर. विश्वासाच्या स्वरात तुमच्या पाठीशी उभा आहे.",
+    },
+    arjun: {
+      en: "Hey, I am Arjun! I speak in a soft and friendly tone, ready to talk about anything on your mind.",
+      hi: "नमस्ते, मैं अर्जुन हूँ! दोस्ताना और सरल आवाज़ में बात करने के लिए हमेशा मौजूद हूँ।",
+      ta: "வணக்கம், நான் அர்ஜுன்! நட்பான, இனிய குரலில் உங்களுடன் உரையாட காத்திருக்கிறேன்.",
+      te: "నమస్కారం, నేను అర్జున్! స్నేహపూర్వక స్వరంతో మీతో మాట్లాడటానికి సిద్ధంగా ఉన్నాను.",
+      kn: "ನಮಸ್ಕಾರ, ನಾನು ಅರ್ಜುನ್! ಆತ್ಮೀಯ ಗೆಳೆಯನಂತೆ ನಿಮ್ಮೊಂದಿಗೆ ಮಾತನಾಡಲು ಸಿದ್ಧನಿದ್ದೇನೆ.",
+      ml: "നമസ്കാരം, ഞാൻ അർജുൻ! സൗഹൃദ സ്വരത്തിൽ സംസാരിക്കാൻ ഞാൻ തയ്യാറാണ്.",
+      bn: "নমস্কার, আমি অর্জুন! বন্ধুসুলভ কণ্ঠে আপনার মনের কথা শোনার জন্য প্রস্তুত।",
+      mr: "नमस्कार, मी अर्जुन! मैत्रीपूर्ण स्वरात तुमच्याशी संवाद साधायला तयार आहे.",
+    },
+  };
+
+  // Step 6: Voice Preview — speaks in chosen tone and speaker with distinct introductory sentence
+  const playVoiceSample = (toneIdOverride?: string) => {
+    const activeTone = (toneIdOverride || selectedVoice || (companion === 'boy' ? 'aarav' : 'ananya')).toLowerCase().trim();
     setIsAudioPreviewPlaying(true);
 
-    const sampleText =
-      selectedLanguage === 'ta'
-        ? 'வணக்கம், நான் எப்போதும் உங்களுடன் துணை நிற்பேன்.'
-        : selectedLanguage === 'hi'
-        ? 'नमस्ते, मैं हमेशा आपकी बात सुनने के लिए उपस्थित हूँ।'
-        : selectedLanguage === 'te'
-        ? 'నమస్కారం, నేను ఎల్లప్పుడూ మీకు తోడుగా ఉంటాను.'
-        : selectedLanguage === 'kn'
-        ? 'ನಮಸ್ಕಾರ, ನಾನು ಯಾವಾಗಲೂ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.'
-        : selectedLanguage === 'ml'
-        ? 'നമസ്കാരം, ഞാൻ എപ്പോഴും നിങ്ങളുടെ കൂടെയുണ്ടാകും.'
-        : selectedLanguage === 'bn'
-        ? 'নমস্কার, আমি সর্বদা আপনার পাশে আছি।'
-        : selectedLanguage === 'mr'
-        ? 'नमस्कार, मी नेहमी तुमच्या पाठीशी आहे.'
-        : companion === 'boy'
+    const cleanLang = (selectedLanguage || 'en').split('-')[0].toLowerCase();
+    const toneMap = VOICE_TONE_SAMPLES[activeTone] || VOICE_TONE_SAMPLES[companion === 'boy' ? 'aarav' : 'ananya'];
+    const sampleText = toneMap?.[cleanLang] || toneMap?.en || (
+      companion === 'boy'
         ? 'Hey, I am always right here whenever you need to talk or just unwind.'
-        : 'Hi there, I am always right here beside you whenever you need to talk.';
+        : 'Hi there, I am always right here beside you whenever you need to talk.'
+    );
 
-    // Use the exact companion gender and selected tone so user hears the real speaker
+    speechGateway.stopSpeaking();
     speechGateway.speak({
       text: sampleText,
       lang: selectedLanguage,
       gender: companion,
       companion,
-      tone: selectedVoice || undefined,
+      tone: activeTone,
       purpose: 'voice_sample',
       onEnd: () => setIsAudioPreviewPlaying(false),
       onError: () => setIsAudioPreviewPlaying(false),
     });
+  };
+
+  // Immediate selection + audio playback + persistence on tone card click
+  const handleToneSelect = (toneId: string) => {
+    setSelectedVoice(toneId);
+    try {
+      const raw1 = localStorage.getItem('manas_twin_profile');
+      const p1 = raw1 ? JSON.parse(raw1) : {};
+      p1.voiceTone = toneId;
+      p1.voicePref = toneId;
+      localStorage.setItem('manas_twin_profile', JSON.stringify(p1));
+
+      const raw2 = localStorage.getItem('manas_user_profile_v2');
+      const p2 = raw2 ? JSON.parse(raw2) : {};
+      p2.voiceTone = toneId;
+      p2.voicePref = toneId;
+      localStorage.setItem('manas_user_profile_v2', JSON.stringify(p2));
+    } catch (_) {}
+
+    playVoiceSample(toneId);
   };
 
   // Validation flags for Next buttons (Phase 3)
@@ -1749,20 +1823,25 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   <div className="grid grid-cols-3 gap-2">
                     {availableTones.map((v) => {
                       const isSelected = selectedVoice === v.id || (!selectedVoice && v.id === availableTones[0].id);
+                      const isThisPlaying = isAudioPreviewPlaying && isSelected;
                       return (
                         <button
                           key={v.id}
                           type="button"
-                          onClick={() => setSelectedVoice(v.id)}
-                          className={`p-3 rounded-2xl border text-center transition-all ${
+                          onClick={() => handleToneSelect(v.id)}
+                          className={`p-3 rounded-2xl border text-center transition-all cursor-pointer ${
                             isSelected
-                              ? 'border-[#8B5CF6] bg-[#8B5CF6]/15 font-bold shadow-sm'
+                              ? 'border-[#8B5CF6] bg-[#8B5CF6]/15 font-bold shadow-sm ring-1 ring-[#8B5CF6]'
                               : 'border-[#0A0A0A]/10 dark:border-[#FFFFFF]/10 hover:border-[#8B5CF6]/30 bg-[#FBF9F5] dark:bg-[#1E2638]/40'
                           }`}
                         >
                           <div className="text-xs font-bold">{v.name}</div>
                           <div className="text-[10px] text-[#0A0A0A]/50 dark:text-[#FFFFFF]/50 mt-0.5">
                             {v.style}
+                          </div>
+                          <div className="mt-1.5 flex items-center justify-center gap-1 text-[10px] text-[#8B5CF6] font-mono">
+                            <Volume2 className="w-3 h-3" />
+                            <span>{isThisPlaying ? 'Speaking...' : 'Tap to hear'}</span>
                           </div>
                         </button>
                       );
@@ -1772,9 +1851,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={playVoiceSample}
+                  onClick={() => playVoiceSample(selectedVoice)}
                   disabled={isAudioPreviewPlaying}
-                  className="py-2.5 px-4 rounded-xl border border-[#8B5CF6]/30 text-xs font-mono font-semibold text-[#8B5CF6] hover:bg-[#8B5CF6]/10 transition-colors flex items-center justify-center gap-1.5"
+                  className="py-2.5 px-4 rounded-xl border border-[#8B5CF6]/30 text-xs font-mono font-semibold text-[#8B5CF6] hover:bg-[#8B5CF6]/10 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Volume2 className="w-3.5 h-3.5" />
                   {isAudioPreviewPlaying ? 'Playing sample...' : t.steps.voice.playPreview}

@@ -91,9 +91,16 @@ export function resolveCompanionFromProfile(): {
   voiceFollowsCompanion: boolean;
 } {
   try {
-    const raw = localStorage.getItem('manas_user_profile_v2') || localStorage.getItem('manas_twin_profile');
-    if (raw) {
-      const p = JSON.parse(raw);
+    const rawV2 = localStorage.getItem('manas_user_profile_v2');
+    const rawTwin = localStorage.getItem('manas_twin_profile');
+    let p: any = {};
+    if (rawV2) {
+      try { p = { ...p, ...JSON.parse(rawV2) }; } catch (_) {}
+    }
+    if (rawTwin) {
+      try { p = { ...p, ...JSON.parse(rawTwin) }; } catch (_) {}
+    }
+    if (Object.keys(p).length > 0) {
       const isBoy = (p.companion || p.avatarType || p.gender) === 'boy';
       const companion: 'boy' | 'girl' = isBoy ? 'boy' : 'girl';
       const voiceFollowsCompanion = p.voice_follows_companion ?? p.voiceFollowsCompanion ?? true;
@@ -101,7 +108,9 @@ export function resolveCompanionFromProfile(): {
       const voiceGender: 'boy' | 'girl' = voiceFollowsCompanion
         ? companion
         : (rawVg === 'boy' || rawVg === 'male' ? 'boy' : 'girl');
-      const voiceTone = (p.voice_tone || p.voiceTone || p.voicePref || (voiceGender === 'boy' ? 'aarav' : 'ananya')).toLowerCase();
+      let rawTone = (p.voice_tone || p.voiceTone || p.voicePref || '').toLowerCase().trim();
+      if (rawTone === 'janani') rawTone = 'meera';
+      const voiceTone = rawTone || (voiceGender === 'boy' ? 'aarav' : 'ananya');
       const speakingStyle = p.speaking_style || p.speakingStyle || 'Warm & Caring';
       const voiceSpeed = Number(p.voice_speed || p.voiceSpeed || 1.0);
       const replyLength = p.reply_length || p.replyLength || 'Balanced';
@@ -328,7 +337,9 @@ class SpeechGateway {
       : profile.voiceGender;
 
     const isBoyVoice = voiceGenderKey === 'boy';
-    const resolvedTone = (opts.tone || profile.voiceTone || (isBoyVoice ? 'aarav' : 'ananya')).toLowerCase().trim();
+    let rawTone = (opts.tone || profile.voiceTone || (isBoyVoice ? 'aarav' : 'ananya')).toLowerCase().trim();
+    if (rawTone === 'janani') rawTone = 'meera';
+    const resolvedTone = rawTone;
 
     // Default speaker from map for current voice gender
     const defaultSpeaker = SARVAM_SPEAKER_MAP[cleanLang]?.[voiceGenderKey]

@@ -21,7 +21,7 @@ interface EditProfileModalProps {
 const GIRL_VOICES = [
   { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
   { id: 'diya',   name: 'Diya',   style: 'Gentle & Soft' },
-  { id: 'janani', name: 'Janani', style: 'Bright & Encouraging' },
+  { id: 'meera',  name: 'Meera',  style: 'Encouraging & Motivating' },
 ];
 
 const BOY_VOICES = [
@@ -122,9 +122,11 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   ) => {
     speechGateway.stopSpeaking();
     setIsPlayingTest(true);
+    const cleanTone = (vTone === 'janani' ? 'meera' : vTone) || (vg === 'boy' ? 'aarav' : 'ananya');
+    const toneLabel = [...GIRL_VOICES, ...BOY_VOICES].find((v) => v.id === cleanTone)?.name || vTone;
     const SAMPLES: Record<string, string> = {
-      en: `Hello ${name}! I am ${companionName}, speaking in a ${vStyle} tone.`,
-      hi: `नमस्ते ${name}! मैं ${companionName} हूँ, हमेशा आपके साथ।`,
+      en: `Hello ${name}! I am ${companionName}, speaking in my ${toneLabel} voice tone.`,
+      hi: `नमस्ते ${name}! मैं ${companionName} हूँ, अपनी ${toneLabel} आवाज़ में हमेशा आपके साथ।`,
       ta: `வணக்கம் ${name}! நான் ${companionName}, எப்போதும் உங்க கூடவே இருப்பேன்.`,
       te: `నమస్కారం ${name}! నేను ${companionName}, ఎల్లప్పుడూ మీ తోడుగా ఉంటాను.`,
       kn: `ನಮಸ್ಕಾರ ${name}! ನಾನು ${companionName}, ಯಾವಾಗಲೂ ನಿಮ್ಮೊಂದಿಗೆ ಇರುತ್ತೇನೆ.`,
@@ -140,7 +142,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       lang: language,
       gender: vg,
       companion,
-      tone: vTone,
+      tone: cleanTone,
       speaking_style: vStyle,
       speed: vSpeed,
       purpose: 'preview',

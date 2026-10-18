@@ -34,7 +34,7 @@ export interface MascotCustomizerProps {
 const GIRL_TONES = [
   { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
   { id: 'diya', name: 'Diya', style: 'Gentle & Soft' },
-  { id: 'janani', name: 'Janani', style: 'Bright & Encouraging' },
+  { id: 'meera', name: 'Meera', style: 'Encouraging & Motivating' },
 ];
 
 const BOY_TONES = [
@@ -106,7 +106,8 @@ export const MascotCustomizer: React.FC<MascotCustomizerProps> = ({
       text,
       lang: language,
       gender: companion,
-      tone: voiceTone,
+      companion: companion,
+      tone: voiceTone === 'janani' ? 'meera' : voiceTone,
       purpose: 'preview',
       pitch: companion === 'girl' ? 1.15 : 0.9,
       onEnergy: (energy) => setTestSpeechEnergy(energy),

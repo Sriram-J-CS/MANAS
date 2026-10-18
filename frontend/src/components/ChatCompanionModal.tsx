@@ -470,13 +470,16 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     let callTimeCompanion: 'girl' | 'boy' = 'girl';
     let callTimeTone = '';
     try {
-      const raw = localStorage.getItem('manas_twin_profile');
-      if (raw) {
-        const p = JSON.parse(raw);
-        const c = (p.companion || p.avatarType || 'girl').toLowerCase();
-        callTimeCompanion = c === 'boy' ? 'boy' : 'girl';
-        callTimeTone = (p.voiceTone || '').toLowerCase();
-      }
+      const raw1 = localStorage.getItem('manas_twin_profile');
+      const raw2 = localStorage.getItem('manas_user_profile_v2');
+      const p1 = raw1 ? JSON.parse(raw1) : {};
+      const p2 = raw2 ? JSON.parse(raw2) : {};
+      const p = { ...p2, ...p1 };
+      const c = (p.companion || p.avatarType || 'girl').toLowerCase();
+      callTimeCompanion = c === 'boy' ? 'boy' : 'girl';
+      let t = (p.voiceTone || p.voice_tone || p.voicePref || '').toLowerCase().trim();
+      if (t === 'janani') t = 'meera';
+      callTimeTone = t || (callTimeCompanion === 'boy' ? 'aarav' : 'ananya');
     } catch (_) { }
 
     const userPitch = userProfile.voicePitch;
@@ -485,6 +488,8 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       voiceSpeed: mascotConfig.voiceSpeed,
       pitch: userPitch,
       gender: callTimeCompanion,
+      companion: callTimeCompanion,
+      tone: callTimeTone,
       purpose: 'chat_reply',
       onEnergy: (energy) => setAudioEnergy(energy),
       onEnd: () => {
@@ -496,10 +501,6 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
         playNextQueuedSentence();
       },
     });
-
-    // Also pass tone through speechEngine → speechGateway (gateway reads localStorage anyway,
-    // but explicit passing ensures consistency for voice sample calls)
-    void callTimeTone; // acknowledged — gateway reads localStorage directly
   }, [
     userProfile.voicePitch,
     userProfile.language,
@@ -527,13 +528,16 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
     let callTimeCompanion: 'girl' | 'boy' = 'girl';
     let callTimeTone = '';
     try {
-      const raw = localStorage.getItem('manas_twin_profile');
-      if (raw) {
-        const p = JSON.parse(raw);
-        const c = (p.companion || p.avatarType || 'girl').toLowerCase();
-        callTimeCompanion = c === 'boy' ? 'boy' : 'girl';
-        callTimeTone = (p.voiceTone || '').toLowerCase();
-      }
+      const raw1 = localStorage.getItem('manas_twin_profile');
+      const raw2 = localStorage.getItem('manas_user_profile_v2');
+      const p1 = raw1 ? JSON.parse(raw1) : {};
+      const p2 = raw2 ? JSON.parse(raw2) : {};
+      const p = { ...p2, ...p1 };
+      const c = (p.companion || p.avatarType || 'girl').toLowerCase();
+      callTimeCompanion = c === 'boy' ? 'boy' : 'girl';
+      let t = (p.voiceTone || p.voice_tone || p.voicePref || '').toLowerCase().trim();
+      if (t === 'janani') t = 'meera';
+      callTimeTone = t || (callTimeCompanion === 'boy' ? 'aarav' : 'ananya');
     } catch (_) { }
 
     setIsAvatarSpeaking(true);
@@ -543,6 +547,7 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
       text: text.trim(),
       lang: activeLanguage || userProfile.language || 'en',
       gender: callTimeCompanion,
+      companion: callTimeCompanion,
       tone: callTimeTone,
       purpose: 'chat_reply',
       pitch: userProfile.voicePitch,
