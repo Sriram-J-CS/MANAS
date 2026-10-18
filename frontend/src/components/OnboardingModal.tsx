@@ -116,7 +116,21 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   existingProfile,
   onDeleteData
 }) => {
-  // Step state (1: Language, 2: Name & Companion, 3: Age, 4: Contact & OTP, 5: Photo, 6: Voice)
+  const [isSignedIn, setIsSignedIn] = useState<boolean>(() => {
+    try {
+      const uid = localStorage.getItem('manas_user_id');
+      const phone = localStorage.getItem('manas_user_phone');
+      const email = localStorage.getItem('manas_user_email');
+      return Boolean(uid && (phone || email));
+    } catch (_) {
+      return false;
+    }
+  });
+
+  const totalSteps = isSignedIn ? 5 : 6;
+
+  // Step state (when signed in: 1: Language, 2: Name, 3: Age, 4: Photo, 5: Voice)
+  // (when not signed in: 1: Language, 2: Name, 3: Age, 4: Contact, 5: Photo, 6: Voice)
   const [step, setStep] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('manas_entry_step_v2');
@@ -199,11 +213,11 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   );
   const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState<boolean>(false);
 
-  // Voice tone cards per companion gender
+  // Voice tone cards per companion gender (Part C specification)
   const GIRL_TONES = [
     { id: 'ananya', name: 'Ananya', style: 'Warm & Empathetic' },
     { id: 'diya',   name: 'Diya',   style: 'Gentle & Soft' },
-    { id: 'janani', name: 'Janani', style: 'Bright & Encouraging' },
+    { id: 'meera',  name: 'Meera',  style: 'Encouraging & Motivating' },
   ];
   const BOY_TONES = [
     { id: 'aarav', name: 'Aarav', style: 'Calm & Grounding' },
@@ -284,6 +298,22 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   }, [step]);
 
   const getStepLineId = (currentStep: number): string => {
+    if (isSignedIn) {
+      switch (currentStep) {
+        case 1:
+          return 'step_1_language';
+        case 2:
+          return 'step_2_name';
+        case 3:
+          return 'step_3_age';
+        case 4:
+          return 'step_5_photo';
+        case 5:
+          return 'step_6_voice';
+        default:
+          return 'step_1_language';
+      }
+    }
     switch (currentStep) {
       case 1:
         return 'step_1_language';
@@ -349,8 +379,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
   // Check active Supabase session
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const user = session?.user;
+      if (user && !user.is_anonymous) {
+        setIsSignedIn(true);
+        if (user.phone) {
+          setPhone(user.phone);
+          setEmailVerified(true);
+        }
+        if (user.email) {
+          setEmail(user.email);
+          setEmailVerified(true);
+        }
+      } else if (user) {
         if (user.phone && (user.phone_confirmed_at || user.confirmed_at)) {
           setPhone(user.phone);
           setEmailVerified(true);
@@ -576,6 +617,37 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       }
     } catch (_) {}
 
+    if (isSignedIn) {
+      switch (currentStep) {
+        case 1:
+          if (!selectedLanguage) setSelectedLanguage('en');
+          setStep(2);
+          break;
+        case 2:
+          if (!name.trim()) setName('Friend');
+          if (!companion) setCompanion('girl');
+          setNameError('');
+          setStep(3);
+          break;
+        case 3:
+          if (typeof age !== 'number' || age < 18) setAge(20);
+          setGuardianConsent(true);
+          setAgeError('');
+          setStep(4);
+          break;
+        case 4:
+          stopCamera();
+          setStep(5);
+          break;
+        case 5:
+          handleFinish();
+          break;
+        default:
+          break;
+      }
+      return;
+    }
+
     switch (currentStep) {
       case 1:
         if (!selectedLanguage) setSelectedLanguage('en');
@@ -701,6 +773,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     const finalAge = typeof age === 'number' ? age : 20;
     const finalIsMinor = finalAge < 18;
 
+    const sessionUser = session?.user;
+    const finalPhone = phone.trim() || sessionUser?.phone || localStorage.getItem('manas_user_phone') || undefined;
+    const finalEmail = email.trim() || sessionUser?.email || localStorage.getItem('manas_user_email') || undefined;
+
     const finalProfile: UserProfile = {
       id: finalUserId,
       name: name.trim() || 'Friend',
@@ -709,10 +785,10 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       isMinor: finalIsMinor,
       guardianConsent: finalIsMinor ? guardianConsent : true,
       language: selectedLanguage,
-      contactEmail: email.trim() || undefined,
-      contactPhone: phone.trim() || undefined,
-      emailVerified,
-      phoneVerified: emailVerified,
+      contactEmail: finalEmail,
+      contactPhone: finalPhone,
+      emailVerified: Boolean(emailVerified || finalPhone || finalEmail),
+      phoneVerified: Boolean(emailVerified || finalPhone),
       avatarUrl: photoDataUrl || undefined,
       appearanceAttributes: appearanceAttrs || undefined,
       voicePref: selectedVoice || (companion === 'boy' ? 'aarav' : 'ananya'),
@@ -738,6 +814,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
       await supabase.from('profiles').upsert({
         user_id: finalUserId,
         name: finalProfile.name,
+        phone: finalPhone,
+        email: finalEmail,
         age: finalProfile.age,
         language: finalProfile.language,
         companion: finalProfile.companion,
@@ -815,16 +893,16 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#0A0A0A]/5 dark:border-[#FFFFFF]/5">
           <div className="flex items-center gap-3">
             <span className="font-mono text-xs font-bold tracking-widest text-[#8B5CF6] uppercase">
-              STEP 0{step} / 06
+              STEP 0{step} / 0{totalSteps}
             </span>
             <div className="h-4 w-[1px] bg-[#0A0A0A]/10 dark:bg-[#FFFFFF]/10" />
             <span className="text-xs font-medium text-[#0A0A0A]/60 dark:text-[#FFFFFF]/60">
               {step === 1 && (t.steps.language.title || 'Language Choice')}
               {step === 2 && (t.steps.name.title || 'Welcome & Name')}
               {step === 3 && (t.steps.age.title || 'Age & Safety Mode')}
-              {step === 4 && (t.steps.contact.title || 'Secure Contact & OTP')}
-              {step === 5 && (t.steps.photo.title || 'Visual Avatar')}
-              {step === 6 && (t.steps.voice.title || 'Audio & Voice')}
+              {!isSignedIn && step === 4 && (t.steps.contact.title || 'Secure Contact & OTP')}
+              {((!isSignedIn && step === 5) || (isSignedIn && step === 4)) && (t.steps.photo.title || 'Visual Avatar')}
+              {((!isSignedIn && step === 6) || (isSignedIn && step === 5)) && (t.steps.voice.title || 'Audio & Voice')}
             </span>
           </div>
 
@@ -849,8 +927,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
         <div className="w-full h-1 bg-[#F0EDE4] dark:bg-[#1E2638]">
           <motion.div
             className="h-full bg-gradient-to-r from-[#8B5CF6] to-[#EC4899]"
-            initial={{ width: `${((step - 1) / 6) * 100}%` }}
-            animate={{ width: `${(step / 6) * 100}%` }}
+            initial={{ width: `${((step - 1) / totalSteps) * 100}%` }}
+            animate={{ width: `${(step / totalSteps) * 100}%` }}
             transition={{ ease: [0.22, 1, 0.36, 1], duration: 0.55 }}
           />
         </div>
@@ -1178,8 +1256,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </motion.div>
             )}
 
-            {/* STEP 4: CONTACT & OTP VERIFICATION */}
-            {step === 4 && (
+            {/* STEP 4: CONTACT & OTP VERIFICATION (Only when not signed in) */}
+            {!isSignedIn && step === 4 && (
               <motion.div
                 key="step4"
                 initial={{ opacity: 0.7, x: 12 }}
@@ -1363,8 +1441,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </motion.div>
             )}
 
-            {/* STEP 5: LIVE PHOTO-AVATAR PIPELINE */}
-            {step === 5 && (
+            {/* STEP 5 (or 4 when signed in): LIVE PHOTO-AVATAR PIPELINE */}
+            {((!isSignedIn && step === 5) || (isSignedIn && step === 4)) && (
               <motion.div
                 key="step5"
                 initial={{ opacity: 0.7, x: 12 }}
@@ -1566,8 +1644,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </motion.div>
             )}
 
-            {/* STEP 6: OPTIONAL VOICE SETUP */}
-            {step === 6 && (
+            {/* STEP 6 (or 5 when signed in): OPTIONAL VOICE SETUP */}
+            {((!isSignedIn && step === 6) || (isSignedIn && step === 5)) && (
               <motion.div
                 key="step6"
                 initial={{ opacity: 0.7, x: 12 }}
@@ -1722,7 +1800,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 Enter age (13-100){typeof age === 'number' && age < 18 && !guardianConsent ? ' with guardian consent' : ''}
               </span>
             )}
-            {step === 4 && !isStep4Valid && (
+            {!isSignedIn && step === 4 && !isStep4Valid && (
               <span className="text-[11px] text-amber-600 dark:text-amber-400 font-mono">
                 Verify mobile OTP or use 'Skip for now'
               </span>
@@ -1773,7 +1851,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </button>
             )}
 
-            {step === 4 && (
+            {!isSignedIn && step === 4 && (
               <button
                 type="button"
                 onClick={() => setStep(5)}
@@ -1785,12 +1863,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </button>
             )}
 
-            {step === 5 && (
+            {((!isSignedIn && step === 5) || (isSignedIn && step === 4)) && (
               <button
                 type="button"
                 onClick={() => {
                   stopCamera();
-                  setStep(6);
+                  setStep(isSignedIn ? 5 : 6);
                 }}
                 className="px-6 py-3 rounded-full bg-[#0A0A0A] dark:bg-[#FFFFFF] text-[#FFFFFF] dark:text-[#0A0A0A] text-xs font-mono font-bold uppercase tracking-wider hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
               >
@@ -1799,7 +1877,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </button>
             )}
 
-            {step === 6 && (
+            {((isSignedIn && step === 5) || (!isSignedIn && step === 6)) && (
               <button
                 type="button"
                 onClick={handleFinish}
