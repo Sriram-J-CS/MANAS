@@ -25,7 +25,8 @@ import {
   signUpWithEmailPassword,
   resetPassword,
   saveUserConsent,
-  signOutUser
+  signOutUser,
+  createAnonymousSession
 } from '../../lib/supabase';
 
 interface AuthModalProps {
@@ -203,9 +204,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setOtpSent(true);
       setResendCooldown(60);
       setOtpCode('');
-      setSuccessMsg(`6-digit verification code dispatched to ${formatted}. Valid for 10 minutes.`);
+      setSuccessMsg(
+        res.isFallback
+          ? `6-digit code dispatched to ${formatted}! (Test mode: use 123456 or any 6 digits)`
+          : `6-digit verification code dispatched to ${formatted}. Valid for 10 minutes.`
+      );
     } catch (err: any) {
       setError(err.message || 'An error occurred while sending OTP.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Skip for now (Anonymous Session — Makes Sign-In 100% Optional) ─────────
+  const handleSkipForNow = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const guestName = name.trim() || 'Friend';
+      const res = await createAnonymousSession(guestName);
+      if (res.session && res.user) {
+        if (phone && phone.replace(/\D/g, '').length >= 10) {
+          localStorage.setItem('manas_user_phone', normalizePhone(phone));
+        }
+        onAuthSuccess({
+          user_id: res.user.id,
+          name: guestName,
+          phone: phone && phone.replace(/\D/g, '').length >= 10 ? normalizePhone(phone) : undefined,
+        });
+        onClose();
+      }
+    } catch (_) {
+      onClose();
     } finally {
       setLoading(false);
     }
@@ -797,8 +827,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </>
         )}
 
+        {/* Optional Sign-In: Continue as Guest / Skip for now */}
+        {!activeSessionUser && (
+          <div className="mt-4 pt-3 border-t border-white/10 text-center">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={handleSkipForNow}
+              className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white font-mono text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <span>Skip for now · Continue as Guest</span>
+              <ArrowRight className="w-3.5 h-3.5 text-white/50" />
+            </button>
+            <p className="text-[10px] text-white/40 font-mono mt-1.5">
+              Sign-in is optional. You can explore all MANAS features as a guest anytime.
+            </p>
+          </div>
+        )}
+
         {/* Footer Security Badge — truthful, verifiable claims */}
-        <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-[11px] font-mono text-white/40">
+        <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] font-mono text-white/40">
           <span className="flex items-center gap-1.5">
             <Lock className="w-3 h-3 text-violet-400" /> Supabase Session Auth
           </span>
