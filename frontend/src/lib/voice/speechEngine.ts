@@ -610,139 +610,68 @@ class SpeechEngine {
     onEnergy?.(0);
   }
 
+  private micMode: 'hands-free' | 'push-to-talk' = 'hands-free';
+  private vadInterval: any = null;
+  private audioSourceNode: MediaStreamAudioSourceNode | null = null;
+  private micAnalyser: AnalyserNode | null = null;
+  private isUserSpeaking = false;
+  private silenceDurationMs = 0;
+
+  public getMicMode(): 'hands-free' | 'push-to-talk' {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('manas_mic_mode');
+      if (saved === 'push-to-talk' || saved === 'hands-free') {
+        this.micMode = saved;
+      }
+    }
+    return this.micMode;
+  }
+
+  public setMicMode(mode: 'hands-free' | 'push-to-talk'): void {
+    this.micMode = mode;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('manas_mic_mode', mode);
+    }
+  }
+
   /**
-   * Continuous Speech-to-Text with hardware echo suppression & server fallback.
-   * Requests getUserMedia with { echoCancellation: true, noiseSuppression: true, autoGainControl: true }.
+   * Professional Speech-to-Text via Sarvam Saaras v3 (Part E):
+   * - Replaces browser speech API with Sarvam Saaras v3 via server proxy (/api/voice/stt).
+   * - Hardware AEC constraints (echoCancellation, noiseSuppression, autoGainControl).
+   * - Real-time Voice Activity Detection (VAD) with ~1.2-1.5s silence endpointing.
+   * - Pauses listening while companion is speaking to prevent acoustic feedback.
+   * - Supports push-to-talk and hands-free modes.
    */
   public startListening(
     lang = 'en',
     onResult: (transcript: string, isFinal: boolean) => void,
     onError: (err: any) => void,
-    onSpeechDetected?: () => void
+    onSpeechDetected?: () => void,
+    onLanguageSuggest?: (suggestedLang: string, message: string) => void
   ): () => void {
     if (typeof window === 'undefined') return () => {};
 
     this.stopListening();
     this.isListeningActive = true;
     this.isPausedForTTS = false;
+    this.isUserSpeaking = false;
+    this.silenceDurationMs = 0;
+    this.recordedChunks = [];
     sharedAudioManager.setDuckingSource('mic', true);
 
-    // Hardware Echo Cancellation, Noise Suppression, and AGC Request
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices
-        .getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        })
-        .then((stream) => {
-          this.micStream = stream;
-        })
-        .catch((err) => {
-          console.warn('getUserMedia mic hardware AEC initialization:', err);
-        });
-    }
-
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (SpeechRecognition) {
-      try {
-        const rec = new SpeechRecognition();
-        rec.continuous = true;
-        rec.interimResults = true;
-        rec.lang = BROWSER_LANG_CODES[lang] || 'en-US';
-
-        rec.onspeechstart = () => {
-          if (this.isSpeaking || this.isPausedForTTS) return;
-          onSpeechDetected?.();
-        };
-
-        rec.onsoundstart = () => {
-          if (this.isSpeaking || this.isPausedForTTS) return;
-          onSpeechDetected?.();
-        };
-
-        rec.onresult = (event: any) => {
-          // Never process or auto-send text that arrives while bot is speaking
-          if (this.isSpeaking || this.isPausedForTTS) {
-            return;
-          }
-
-          onSpeechDetected?.();
-
-          let finalTranscript = '';
-          let interimTranscript = '';
-
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            const res = event.results[i];
-            if (res.isFinal) {
-              finalTranscript += res[0].transcript;
-            } else {
-              interimTranscript += res[0].transcript;
-            }
-          }
-
-          if (interimTranscript) {
-            onResult(interimTranscript, false);
-          }
-          if (finalTranscript) {
-            onResult(finalTranscript, true);
-          }
-        };
-
-        rec.onerror = (event: any) => {
-          if (event.error !== 'no-speech' && event.error !== 'aborted') {
-            onError(event.error);
-          }
-        };
-
-        rec.onend = () => {
-          // Only restart if still active and not paused for TTS
-          if (this.isListeningActive && !this.isPausedForTTS && !this.isSpeaking) {
-            try {
-              rec.start();
-            } catch (_) {}
-          }
-        };
-
-        rec.start();
-        this.recognition = rec;
-
-        return () => {
-          this.stopListening();
-        };
-      } catch (err) {
-        console.warn('Browser SpeechRecognition error, attempting server fallback:', err);
-        return this.startServerSideRecordingFallback(lang, onResult, onError);
-      }
-    } else {
-      return this.startServerSideRecordingFallback(lang, onResult, onError);
-    }
-  }
-
-  /**
-   * MediaRecorder fallback with hardware AEC constraints for browsers without SpeechRecognition.
-   */
-  private startServerSideRecordingFallback(
-    lang: string,
-    onResult: (transcript: string, isFinal: boolean) => void,
-    onError: (err: any) => void
-  ): () => void {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      onError(new Error('Audio input not supported in this browser.'));
+      onError({ type: 'no_mic', message: 'Microphone input not supported on this browser.' });
       return () => {};
     }
 
-    this.recordedChunks = [];
     navigator.mediaDevices
       .getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          sampleRate: 16000,
+          channelCount: 1,
         },
       })
       .then((stream) => {
@@ -752,50 +681,162 @@ class SpeechEngine {
           return;
         }
 
-        const recorder = new MediaRecorder(stream);
+        // Setup Web Audio VAD Analyser
+        try {
+          const ctx = sharedAudioManager.getAudioContext();
+          if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          analyser.smoothingTimeConstant = 0.3;
+          source.connect(analyser);
+
+          this.audioSourceNode = source;
+          this.micAnalyser = analyser;
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          let lastCheckTime = performance.now();
+
+          // VAD Polling Loop throttled to <= 30 Hz (33ms)
+          this.vadInterval = setInterval(() => {
+            if (!this.isListeningActive || !this.micAnalyser) return;
+
+            // Pause listening while companion audio is playing (feedback prevention)
+            if (this.isSpeaking || this.isPausedForTTS || speechGateway.isSpeakingActive()) {
+              this.isUserSpeaking = false;
+              this.silenceDurationMs = 0;
+              return;
+            }
+
+            const now = performance.now();
+            const deltaMs = now - lastCheckTime;
+            lastCheckTime = now;
+
+            this.micAnalyser.getByteFrequencyData(dataArray);
+            let sumSq = 0;
+            const len = Math.min(64, dataArray.length);
+            for (let i = 0; i < len; i++) {
+              sumSq += (dataArray[i] / 255) ** 2;
+            }
+            const rms = Math.sqrt(sumSq / len);
+
+            const isSpeechPresent = rms > 0.018;
+
+            if (isSpeechPresent) {
+              if (!this.isUserSpeaking) {
+                this.isUserSpeaking = true;
+                onSpeechDetected?.();
+              }
+              this.silenceDurationMs = 0;
+            } else if (this.isUserSpeaking) {
+              this.silenceDurationMs += deltaMs;
+
+              // Endpoint utterance after ~1.2-1.5s of silence (Part E)
+              if (this.micMode === 'hands-free' && this.silenceDurationMs >= 1300) {
+                this.isUserSpeaking = false;
+                this.silenceDurationMs = 0;
+                if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                  this.mediaRecorder.stop();
+                }
+              }
+            }
+          }, 33);
+        } catch (vadErr) {
+          console.warn('[VAD INIT ERROR]', vadErr);
+        }
+
+        // Setup MediaRecorder
+        const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/wav'];
+        let chosenMime = 'audio/webm';
+        for (const m of mimeTypes) {
+          if (MediaRecorder.isTypeSupported(m)) {
+            chosenMime = m;
+            break;
+          }
+        }
+
+        const recorder = new MediaRecorder(stream, { mimeType: chosenMime });
         this.mediaRecorder = recorder;
 
         recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
+          if (e.data && e.data.size > 0) {
             this.recordedChunks.push(e.data);
           }
         };
 
         recorder.onstop = async () => {
-          if (this.recordedChunks.length === 0) return;
-          if (this.isSpeaking || this.isPausedForTTS) return;
+          const chunksToProcess = [...this.recordedChunks];
+          this.recordedChunks = [];
 
-          const audioBlob = new Blob(this.recordedChunks, { type: 'audio/webm' });
+          if (chunksToProcess.length === 0) {
+            // Restart recording if still active
+            if (this.isListeningActive && recorder.state === 'inactive') {
+              try { recorder.start(500); } catch (_) {}
+            }
+            return;
+          }
+
+          if (this.isSpeaking || this.isPausedForTTS || speechGateway.isSpeakingActive()) {
+            return;
+          }
+
+          const audioBlob = new Blob(chunksToProcess, { type: chosenMime });
           const reader = new FileReader();
           reader.onloadend = async () => {
             try {
-              const base64Audio = reader.result as string;
+              const base64DataUrl = reader.result as string;
               const res = await fetch('/api/voice/stt', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  audio_base64: base64Audio,
+                  audio_base64: base64DataUrl,
                   language: lang,
-                  content_type: 'audio/webm',
+                  content_type: chosenMime,
+                  mode: 'transcribe',
                 }),
               });
+
+              if (res.status === 429) {
+                onError({ type: 'rate_limited', message: 'Too many voice requests. Please wait a moment.' });
+                return;
+              }
+
               if (res.ok) {
                 const data = await res.json();
                 if (data.transcript && !this.isSpeaking && !this.isPausedForTTS) {
                   onResult(data.transcript, true);
+                  if (data.suggest_switch && data.switch_to_language) {
+                    onLanguageSuggest?.(data.switch_to_language, data.suggest_switch);
+                  }
+                } else if (!data.transcript && data.message) {
+                  // Low-confidence or empty results (no fake text)
+                  onResult('', false);
                 }
+              } else {
+                onError({ type: 'server_error', message: 'Voice recognition server error' });
               }
             } catch (postErr) {
-              onError(postErr);
+              onError({ type: 'network', message: 'Network disconnected while transcribing.' });
+            } finally {
+              // Restart recorder if hands-free listening is still active
+              if (this.isListeningActive && this.micMode === 'hands-free' && recorder.state === 'inactive') {
+                try { recorder.start(500); } catch (_) {}
+              }
             }
           };
           reader.readAsDataURL(audioBlob);
         };
 
-        recorder.start(1000);
+        recorder.start(500);
       })
       .catch((err) => {
-        onError(err);
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          onError({ type: 'mic_denied', message: 'Microphone permission denied. Please allow microphone access.' });
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          onError({ type: 'no_mic', message: 'No microphone found on your device.' });
+        } else {
+          onError({ type: 'mic_error', message: err.message || 'Microphone error' });
+        }
       });
 
     return () => {
@@ -806,17 +847,21 @@ class SpeechEngine {
   public stopListening(): void {
     this.isListeningActive = false;
     this.isPausedForTTS = false;
+    this.isUserSpeaking = false;
+    this.silenceDurationMs = 0;
     sharedAudioManager.setDuckingSource('mic', false);
 
-    if (this.ttsRestartTimer) {
-      clearTimeout(this.ttsRestartTimer);
-      this.ttsRestartTimer = null;
+    if (this.vadInterval) {
+      clearInterval(this.vadInterval);
+      this.vadInterval = null;
     }
-    if (this.recognition) {
-      try {
-        this.recognition.stop();
-      } catch (_) {}
-      this.recognition = null;
+    if (this.audioSourceNode) {
+      try { this.audioSourceNode.disconnect(); } catch (_) {}
+      this.audioSourceNode = null;
+    }
+    if (this.micAnalyser) {
+      try { this.micAnalyser.disconnect(); } catch (_) {}
+      this.micAnalyser = null;
     }
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       try {

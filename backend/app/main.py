@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import time
 from typing import Optional, List, Dict, Any, Union
-from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Form, Depends
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File, Form, Depends, WebSocket
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -2308,10 +2308,25 @@ class VoiceTTSRequest(BaseModel):
     engine: Optional[str] = None     # 'sarvam' | 'legacy' | None (auto based on LEGACY_TTS_FOR)
     pace: Optional[float] = None     # TTS speed pace factor e.g. 0.93, 1.0, 1.05
 
+from collections import defaultdict
+
+STT_CLIENT_RATE_LIMITS: Dict[str, List[float]] = defaultdict(list)
+
+def is_stt_rate_limited(client_ip: str, limit_per_min: int = 60) -> bool:
+    now = time.time()
+    timestamps = STT_CLIENT_RATE_LIMITS[client_ip]
+    valid = [t for t in timestamps if now - t < 60.0]
+    STT_CLIENT_RATE_LIMITS[client_ip] = valid
+    if len(valid) >= limit_per_min:
+        return True
+    STT_CLIENT_RATE_LIMITS[client_ip].append(now)
+    return False
+
 class VoiceSTTBase64Request(BaseModel):
     audio_base64: str
     language: str = "en"
     content_type: Optional[str] = "audio/webm"
+    mode: Optional[str] = "transcribe"
 
 class VoiceStatusUpdateRequest(BaseModel):
     language: str
@@ -2322,14 +2337,20 @@ async def voice_speech_to_text(
     request: Request,
     file: Optional[UploadFile] = File(None),
     language: Optional[str] = Form("en"),
+    mode: Optional[str] = Form("transcribe"),
 ):
     """
-    STT endpoint with server-side fallback (Sarvam AI or Gemini 1.5 Flash).
+    STT endpoint with Sarvam Saaras v3 and per-user rate limit (Part E).
     Accepts either multipart/form-data audio file or JSON body with audio_base64.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    if is_stt_rate_limited(client_ip, limit_per_min=60):
+        raise HTTPException(status_code=429, detail="Too many voice requests. Please wait a moment.")
+
     content_type = "audio/webm"
     audio_bytes = b""
     lang = language or "en"
+    stt_mode = mode or "transcribe"
 
     # Check if request is JSON
     if request.headers.get("content-type", "").startswith("application/json"):
@@ -2338,6 +2359,7 @@ async def voice_speech_to_text(
             audio_b64 = body.get("audio_base64", "")
             lang = body.get("language", lang)
             content_type = body.get("content_type", "audio/webm")
+            stt_mode = body.get("mode", stt_mode)
             if audio_b64:
                 if "," in audio_b64:
                     audio_b64 = audio_b64.split(",", 1)[1]
@@ -2352,8 +2374,71 @@ async def voice_speech_to_text(
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="No audio data provided.")
 
-    result = await transcribe_audio_fallback(audio_bytes, language=lang, content_type=content_type)
+    result = await transcribe_audio_fallback(
+        audio_bytes,
+        language=lang,
+        content_type=content_type,
+        mode=stt_mode
+    )
     return result
+
+@app.websocket("/api/voice/stt-stream")
+async def voice_stt_stream_websocket(websocket: WebSocket):
+    """
+    Streaming WebSocket proxy to Sarvam Saaras v3 (Part E).
+    Proxies live audio chunks (WAV/PCM 16 kHz) from client to Sarvam,
+    and streams transcription events back to the client.
+    """
+    await websocket.accept()
+    query_params = dict(websocket.query_params)
+    lang = query_params.get("language_code", "en-IN")
+    mode = query_params.get("mode", "transcribe")
+    clean_lang = lang.split("-")[0].lower()
+    bcp47 = f"{clean_lang}-IN"
+
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    if is_stt_rate_limited(client_ip, limit_per_min=60):
+        await websocket.send_json({"type": "error", "message": "Too many voice requests. Please wait a moment."})
+        await websocket.close(code=1008)
+        return
+
+    sarvam_key = os.environ.get("SARVAM_API_KEY") or os.environ.get("VOICE_PROVIDER_API_KEY")
+    if not sarvam_key:
+        await websocket.send_json({"type": "error", "message": "Sarvam API key not configured on server"})
+        await websocket.close(code=1011)
+        return
+
+    upstream_url = f"wss://api.sarvam.ai/speech-to-text/ws?model=saaras:v3&language-code={bcp47}&mode={mode}"
+    try:
+        import websockets
+        async with websockets.connect(
+            upstream_url,
+            additional_headers={"api-subscription-key": sarvam_key},
+            open_timeout=6.0
+        ) as upstream_ws:
+            async def client_to_upstream():
+                try:
+                    while True:
+                        msg = await websocket.receive_text()
+                        await upstream_ws.send(msg)
+                except Exception:
+                    pass
+
+            async def upstream_to_client():
+                try:
+                    async for msg in upstream_ws:
+                        await websocket.send_text(msg)
+                except Exception:
+                    pass
+
+            await asyncio.gather(client_to_upstream(), upstream_to_client(), return_exceptions=True)
+    except Exception as e:
+        logger.warning("[STT STREAM WS PROXY] %s", e)
+        try:
+            await websocket.send_json({"type": "fallback_to_rest", "message": str(e)})
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 @app.post("/api/voice/tts")
 async def voice_text_to_speech(req: VoiceTTSRequest):

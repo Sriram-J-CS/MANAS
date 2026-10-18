@@ -28,6 +28,7 @@ interface ChatInputProps {
   className?: string;
   placeholder?: string;
   isBotSpeaking?: boolean;
+  onLanguageChange?: (newLang: string) => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -42,6 +43,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   className = '',
   placeholder = 'Speak or type what you are carrying...',
   isBotSpeaking = false,
+  onLanguageChange,
 }) => {
   const [inputText, setInputText] = useState<string>('');
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -51,6 +53,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [endPhraseTimerLeft, setEndPhraseTimerLeft] = useState<number>(1.2);
   const [transcriptReviewActive, setTranscriptReviewActive] = useState<boolean>(false);
   const [confidenceScore, setConfidenceScore] = useState<number>(94);
+  const [micMode, setMicMode] = useState<'hands-free' | 'push-to-talk'>(() => speechEngine.getMicMode());
+  const [languageSuggestion, setLanguageSuggestion] = useState<{ targetLang: string; message: string } | null>(null);
+  const [sttError, setSttError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const silenceTimerRef = useRef<any>(null);
@@ -173,11 +178,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const startListening = () => {
     clearSilenceTimer();
     clearEndPhraseTimer();
+    setSttError(null);
     setIsListening(true);
 
     const stopFn = speechEngine.startListening(
       language,
-      (transcript, _isFinal) => {
+      (transcript, isFinal) => {
         // Never auto-send text that arrives while the bot is speaking
         if (isBotSpeaking || speechEngine.isSpeakingActive()) {
           return;
@@ -185,18 +191,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
         if (transcript) {
           setInputText(transcript);
+          setSttError(null);
 
-          // Check for end-phrase detection
-          if (isVoiceEndPhrase(transcript, language)) {
-            startEndPhraseCountdown(transcript);
-          } else {
-            // Cancel any pending countdown and restart 1.8s silence timer
-            restartSilenceTimer(transcript);
+          if (isFinal) {
+            // Check for end-phrase detection
+            if (isVoiceEndPhrase(transcript, language)) {
+              startEndPhraseCountdown(transcript);
+            } else if (micMode === 'hands-free') {
+              // Cancel any pending countdown and restart silence timer in hands-free mode
+              restartSilenceTimer(transcript);
+            }
           }
         }
       },
       (err) => {
         console.warn('Voice recognition error:', err);
+        const errMsg = typeof err === 'string' ? err : err?.message || 'Voice recognition failed.';
+        setSttError(errMsg);
         stopListening();
       },
       () => {
@@ -204,6 +215,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         clearSilenceTimer();
         clearEndPhraseTimer();
         speechEngine.triggerBargeIn();
+      },
+      (suggestedLang, message) => {
+        setLanguageSuggestion({ targetLang: suggestedLang, message });
       }
     );
 
@@ -220,8 +234,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       stopListeningFnRef.current = null;
     }
     if (inputText.trim()) {
-      setTranscriptReviewActive(true);
-      setConfidenceScore(Math.floor(88 + Math.random() * 10));
+      if (micMode === 'push-to-talk') {
+        // In push-to-talk mode, stopping immediately dispatches
+        handleDispatch(inputText);
+      } else {
+        setTranscriptReviewActive(true);
+        setConfidenceScore(Math.floor(88 + Math.random() * 10));
+      }
     }
   };
 
@@ -250,6 +269,45 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   return (
     <div className={`w-full font-sans space-y-2 ${className}`}>
+      {/* Language Switch Suggestion Pill (Part E) */}
+      {languageSuggestion && (
+        <div className="flex items-center justify-between px-3.5 py-1.5 bg-blue-500/10 border border-blue-400/30 rounded-xl text-xs text-blue-900 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+            <span>Different language detected. {languageSuggestion.message}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                onLanguageChange?.(languageSuggestion.targetLang);
+                setLanguageSuggestion(null);
+              }}
+              className="px-2.5 py-0.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 text-xs shadow-sm cursor-pointer"
+            >
+              Switch
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguageSuggestion(null)}
+              className="p-1 text-blue-700 hover:text-blue-900 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STT Error Banner */}
+      {sttError && (
+        <div className="flex items-center justify-between px-3 py-1.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs animate-in fade-in">
+          <span>{sttError}</span>
+          <button type="button" onClick={() => setSttError(null)} className="p-0.5 text-rose-700 hover:text-rose-900 cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* End-phrase "Sending… tap to cancel" Banner */}
       {pendingEndPhrase && (
         <div className="flex items-center justify-between px-4 py-2 bg-gradient-to-r from-amber-500/15 via-rose-500/15 to-purple-500/15 border border-amber-500/30 rounded-2xl shadow-sm animate-pulse text-xs text-[#0A0A0A]">
@@ -501,6 +559,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           <Send className="w-4 h-4" />
         </button>
       </form>
+
+      {/* One-line Setting: Mic Mode (Part E) */}
+      <div className="flex items-center justify-between px-3 text-[11px] text-[#0A0A0A]/55">
+        <div className="flex items-center gap-1.5">
+          <span>Mic:</span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = micMode === 'hands-free' ? 'push-to-talk' : 'hands-free';
+              setMicMode(next);
+              speechEngine.setMicMode(next);
+            }}
+            className="font-medium underline hover:text-[#0A0A0A] cursor-pointer"
+            title="Toggle between Hands-free (continuous with silence auto-send) and Push-to-talk"
+          >
+            {micMode === 'hands-free' ? 'hands-free' : 'push-to-talk'}
+          </button>
+          <span className="text-black/25">·</span>
+          <span className="text-[10px] text-black/40">Sarvam Saaras v3</span>
+        </div>
+      </div>
     </div>
   );
 };

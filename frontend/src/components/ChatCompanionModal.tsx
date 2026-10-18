@@ -1546,6 +1546,17 @@ export const ChatCompanionModal: React.FC<ChatCompanionModalProps> = ({
               onOpenMascotUpload={() => setIsCustomizerOpen(true)}
               language={userProfile.language || 'en'}
               isBotSpeaking={isAvatarSpeaking}
+              onLanguageChange={(newLang) => {
+                _onUpdateProfile?.({ ...userProfile, language: newLang });
+                try {
+                  const saved = localStorage.getItem('manas_user_profile_v2');
+                  if (saved) {
+                    const p = JSON.parse(saved);
+                    p.language = newLang;
+                    localStorage.setItem('manas_user_profile_v2', JSON.stringify(p));
+                  }
+                } catch (_) {}
+              }}
             />
           </div>
         </section>

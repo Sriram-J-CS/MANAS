@@ -35,6 +35,7 @@ import urllib.parse
 import urllib.error
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
+import httpx
 
 from .voice_config import (
     is_native_6_language,
@@ -861,46 +862,91 @@ async def synthesize_speech_provider(
         "language": bcp47
     }
 
+INDIAN_LANG_NAMES = {
+    "en": "English",
+    "hi": "Hindi",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "kn": "Kannada",
+    "ml": "Malayalam",
+    "bn": "Bengali",
+    "mr": "Marathi",
+}
+
 async def transcribe_audio_fallback(
     audio_bytes: bytes,
     language: str = "en",
-    content_type: str = "audio/webm"
-) -> Dict[str, str]:
-    """STT fallback using Sarvam AI or Gemini Multimodal audio."""
-    bcp47 = to_bcp47(language)
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    sarvam_key = os.environ.get("SARVAM_API_KEY")
+    content_type: str = "audio/webm",
+    mode: str = "transcribe"
+) -> Dict[str, Any]:
+    """
+    Professional Speech-to-Text via Sarvam Saaras v3 (Part E):
+    - Model: saaras:v3.
+    - Mode: transcribe (native script) or codemix (when mixing English words).
+    - Detects language; if different from user's selected language, offers 'Switch to <Language>?'.
+    - Empty or low-confidence results return 'I didn't catch that, try again' (no fake text).
+    """
+    clean_lang = (language or "en").split("-")[0].lower()
+    bcp47 = f"{clean_lang}-IN" if clean_lang in INDIAN_LANG_NAMES else to_bcp47(language)
+    sarvam_key = os.environ.get("SARVAM_API_KEY") or os.environ.get("VOICE_PROVIDER_API_KEY")
 
     if sarvam_key:
         try:
             url = "https://api.sarvam.ai/speech-to-text"
-            boundary = "----WebKitFormBoundaryVoice7MA4YWxkTrZu0gW"
-            body = (
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="file"; filename="audio.webm"\r\n'
-                f"Content-Type: {content_type}\r\n\r\n"
-            ).encode("utf-8") + audio_bytes + (
-                f"\r\n--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="language_code"\r\n\r\n'
-                f"{bcp47}\r\n"
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="model"\r\n\r\n'
-                f"saarika:v2.5\r\n"
-                f"--{boundary}--\r\n"
-            ).encode("utf-8")
+            filename = "recording.wav" if "wav" in content_type else "recording.webm"
+            files = {"file": (filename, audio_bytes, content_type)}
+            data = {
+                "model": "saaras:v3",
+                "mode": mode if mode in ("codemix", "transcribe", "translate", "verbatim", "translit") else "transcribe",
+                "language_code": bcp47
+            }
+            headers = {"api-subscription-key": sarvam_key}
 
-            req = urllib.request.Request(url, data=body)
-            req.add_header("api-subscription-key", sarvam_key)
-            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                res = await client.post(url, headers=headers, data=data, files=files)
+                if res.status_code == 200:
+                    res_data = res.json()
+                    raw_transcript = (res_data.get("transcript") or "").strip()
+                    detected_bcp47 = res_data.get("language_code") or res_data.get("detected_language_code") or bcp47
+                    detected_short = detected_bcp47.split("-")[0].lower()
 
-            with urllib.request.urlopen(req, timeout=10) as response:
-                res_data = json.loads(response.read().decode("utf-8"))
-                transcript = res_data.get("transcript", "")
-                if transcript:
-                    return {"transcript": transcript, "provider": "sarvam_saarika_v2_5"}
+                    suggest_switch = None
+                    if detected_short != clean_lang and detected_short in INDIAN_LANG_NAMES:
+                        target_name = INDIAN_LANG_NAMES[detected_short]
+                        suggest_switch = f"Switch to {target_name}?"
+
+                    if not raw_transcript:
+                        return {
+                            "transcript": "",
+                            "message": "I didn't catch that, try again",
+                            "provider": "sarvam_saaras_v3",
+                            "detected_language": detected_short,
+                            "suggest_switch": suggest_switch
+                        }
+
+                    return {
+                        "transcript": raw_transcript,
+                        "language_code": detected_bcp47,
+                        "detected_language": detected_short,
+                        "suggest_switch": suggest_switch,
+                        "switch_to_language": detected_short if suggest_switch else None,
+                        "provider": "sarvam_saaras_v3"
+                    }
+                elif res.status_code == 429:
+                    logger.warning("[SARVAM STT 429] Rate limit reached")
+                    return {
+                        "transcript": "",
+                        "message": "Too many voice requests. Please wait a moment.",
+                        "provider": "sarvam_saaras_v3",
+                        "error": "rate_limited"
+                    }
+                else:
+                    logger.warning("[SARVAM STT HTTP %s] %s", res.status_code, res.text[:200])
         except Exception as e:
-            logger.debug("Sarvam STT failed: %s", e)
+            logger.warning("[SARVAM STT EXCEPTION] %s", e)
 
+    # Secondary fallback to Gemini 1.5/2.0 Flash if Sarvam is unreachable
+    gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
@@ -909,28 +955,34 @@ async def transcribe_audio_fallback(
                 "contents": [
                     {
                         "parts": [
-                            {"text": f"Transcribe this speech accurately in {bcp47} language. Return ONLY the verbatim spoken text."},
+                            {"text": f"Transcribe this speech accurately in {bcp47} language. Return ONLY the verbatim spoken text with no additional words."},
                             {"inline_data": {"mime_type": content_type, "data": audio_b64}}
                         ]
                     }
                 ]
             }
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"))
-            req.add_header("Content-Type", "application/json")
-            with urllib.request.urlopen(req, timeout=12) as response:
-                res_data = json.loads(response.read().decode("utf-8"))
-                candidates = res_data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        transcript = parts[0].get("text", "").strip()
-                        return {"transcript": transcript, "provider": "gemini"}
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    res_data = res.json()
+                    candidates = res_data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            transcript = parts[0].get("text", "").strip()
+                            if transcript:
+                                return {
+                                    "transcript": transcript,
+                                    "language_code": bcp47,
+                                    "provider": "gemini_fallback"
+                                }
         except Exception as e:
-            logger.debug("Gemini STT fallback failed: %s", e)
+            logger.debug("[GEMINI STT FALLBACK] %s", e)
 
     return {
-        "transcript": "Hello MANAS, can you help me understand what feels so heavy today?",
-        "provider": "mock_fallback"
+        "transcript": "",
+        "message": "I didn't catch that, try again",
+        "provider": "sarvam_saaras_v3"
     }
 
 def set_voice_language_status(language: str, is_enabled: bool) -> None:
