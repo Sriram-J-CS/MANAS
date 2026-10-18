@@ -2303,9 +2303,10 @@ class VoiceTTSRequest(BaseModel):
     gender: str = "female"           # 'female' | 'male' — drives native speaker selection
     emotion: Optional[str] = "calm"  # calm | happy | sad | concerned | thoughtful | empathetic
     voice: Optional[str] = None      # explicit speaker override (optional)
-    tone: Optional[str] = None       # voice tone key e.g. 'ananya', 'aarav' (maps to Sarvam speaker)
+    tone: Optional[str] = None       # voice tone key e.g. 'ananya', 'diya', 'meera', 'aarav', 'kabir', 'arjun'
     companion: Optional[str] = None  # 'girl' | 'boy' — companion persona gender
     engine: Optional[str] = None     # 'sarvam' | 'legacy' | None (auto based on LEGACY_TTS_FOR)
+    pace: Optional[float] = None     # TTS speed pace factor e.g. 0.93, 1.0, 1.05
 
 class VoiceSTTBase64Request(BaseModel):
     audio_base64: str
@@ -2359,21 +2360,22 @@ async def voice_text_to_speech(req: VoiceTTSRequest):
     """
     TTS endpoint: strips emojis/markdown, expands helpline numbers digit-by-digit,
     selects a native Indic speaker voice (Sarvam Bulbul v3) based on language + gender + tone,
-    tunes pitch/pace from the emotion tag, and returns audio or client-side fallback.
+    tunes pitch/pace from the tone & emotion tag, and returns audio or client-side fallback.
     """
     # If an explicit speaker was provided via 'voice', use it; otherwise resolve via tone+companion
     speaker_override = req.voice or None
+    companion_gender = "boy" if (req.companion or req.gender or "").lower() in ("boy", "male") else "girl"
     if not speaker_override and (req.tone or req.companion):
-        companion_gender = "boy" if (req.companion or "").lower() in ("boy", "male") else "girl"
         speaker_override = get_sarvam_speaker(req.language, companion_gender, req.tone or None)
     res = await synthesize_speech_provider(
         req.text,
         language=req.language,
         voice=speaker_override,
-        gender=req.gender,
+        gender=companion_gender,
         emotion=req.emotion or "calm",
         tone=req.tone,
         engine=req.engine,
+        pace=req.pace,
     )
     return res
 

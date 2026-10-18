@@ -49,10 +49,11 @@ SARVAM_MEMORY_CACHE: Dict[str, str] = {}
 
 RE_SENTENCE_SPLIT = re.compile(r"(?<=[.!?|।\n])\s+")
 
-def get_sarvam_cache_key(text: str, speaker: str, lang: str, gender: str = "girl") -> str:
-    """Computes deterministic hash(text, lang, gender, speaker) for caching."""
+def get_sarvam_cache_key(text: str, speaker: str, lang: str, gender: str = "girl", pace: float = 1.0) -> str:
+    """Computes deterministic hash(text, lang, gender, speaker, pace) for caching."""
     clean_gender = "boy" if (gender or "").lower() in ("boy", "male") else "girl"
-    raw = f"{text.strip()}:{lang.strip().lower()}:{clean_gender}:{speaker.strip().lower()}"
+    clean_pace = round(float(pace or 1.0), 3)
+    raw = f"{text.strip()}:{lang.strip().lower()}:{clean_gender}:{speaker.strip().lower()}:{clean_pace}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 def strip_markdown_and_normalize(text: str) -> str:
@@ -226,14 +227,14 @@ async def synthesize_single_sarvam_chunk(
     chunk: str,
     target_lang_code: str,
     speaker: str,
-    pace: float = 0.92,
+    pace: float = 1.0,
     gender: str = "girl"
 ) -> Tuple[str, Optional[str]]:
     """
     Synthesizes a single chunk using Sarvam Bulbul v3 with caching and fallback.
     Returns (chunk_text, base64_audio_or_none).
     """
-    cache_key = get_sarvam_cache_key(chunk, speaker, target_lang_code, gender)
+    cache_key = get_sarvam_cache_key(chunk, speaker, target_lang_code, gender, pace)
 
     # 1. Check Memory Cache
     if cache_key in SARVAM_MEMORY_CACHE:
@@ -251,20 +252,20 @@ async def synthesize_single_sarvam_chunk(
         except Exception:
             pass
 
-    # 3. Call Sarvam Bulbul v3
+    # 3. Call Sarvam Bulbul v3 with sample rate 24000
     sarvam_key = os.getenv("SARVAM_API_KEY") or os.getenv("VOICE_PROVIDER_API_KEY") or ""
     headers = {
         "api-subscription-key": sarvam_key,
         "Content-Type": "application/json"
     }
 
-    # Primary payload per requirement
     body = {
-        "text": chunk,
+        "inputs": [chunk],
         "target_language_code": target_lang_code,
         "speaker": speaker,
         "model": "bulbul:v3",
-        "pace": pace
+        "pace": round(float(pace or 1.0), 2),
+        "speech_sample_rate": 24000
     }
 
     audio_b64: Optional[str] = None
@@ -272,27 +273,12 @@ async def synthesize_single_sarvam_chunk(
 
     if sarvam_key:
         try:
-            async with httpx.AsyncClient(timeout=6.0) as client:
+            async with httpx.AsyncClient(timeout=8.0) as client:
                 res = await client.post(
                     SARVAM_CONFIG["api_endpoint"],
                     headers=headers,
                     json=body
                 )
-
-                # If body requires inputs array instead of text
-                if res.status_code == 422:
-                    alt_body = {
-                        "inputs": [chunk],
-                        "target_language_code": target_lang_code,
-                        "speaker": speaker,
-                        "model": "bulbul:v3",
-                        "pace": pace
-                    }
-                    res = await client.post(
-                        SARVAM_CONFIG["api_endpoint"],
-                        headers=headers,
-                        json=alt_body
-                    )
 
                 if res.status_code == 200:
                     data = res.json()
@@ -305,17 +291,42 @@ async def synthesize_single_sarvam_chunk(
                         except Exception:
                             pass
                         logger.info(
-                            "[SARVAM BULBUL:V3 SUCCESS] Lang: %s | Speaker: %s | Text: '%s...'",
-                            target_lang_code, speaker, chunk[:30]
+                            "[SARVAM BULBUL:V3 SUCCESS] Lang: %s | Speaker: %s | Pace: %.2f | Text: '%s...'",
+                            target_lang_code, speaker, pace, chunk[:30]
                         )
                         return chunk, audio_b64
                     else:
                         sarvam_failed = True
                 else:
                     logger.warning("[SARVAM BULBUL:V3 HTTP %s] %s", res.status_code, res.text[:200])
+                    # Retry once on failure with the same gender's fallback speaker (Part D3)
+                    is_boy = (gender or "").lower() in ("boy", "male")
+                    fallback_speaker = "ratan" if (speaker == "shubh" or is_boy) else "ishita"
+                    if fallback_speaker != speaker:
+                        logger.info("[SARVAM RETRY SAME GENDER] Retrying with %s for %s", fallback_speaker, target_lang_code)
+                        retry_body = {
+                            "inputs": [chunk],
+                            "target_language_code": target_lang_code,
+                            "speaker": fallback_speaker,
+                            "model": "bulbul:v3",
+                            "pace": round(float(pace or 1.0), 2),
+                            "speech_sample_rate": 24000
+                        }
+                        retry_res = await client.post(
+                            SARVAM_CONFIG["api_endpoint"],
+                            headers=headers,
+                            json=retry_body
+                        )
+                        if retry_res.status_code == 200:
+                            r_data = retry_res.json()
+                            r_audios = r_data.get("audios", [])
+                            if r_audios and r_audios[0]:
+                                audio_b64 = r_audios[0]
+                                SARVAM_MEMORY_CACHE[cache_key] = audio_b64
+                                return chunk, audio_b64
                     sarvam_failed = True
         except asyncio.TimeoutError:
-            logger.warning("[SARVAM TIMEOUT] Sarvam Bulbul v3 timed out after 6.0s for '%s'", chunk[:30])
+            logger.warning("[SARVAM TIMEOUT] Sarvam Bulbul v3 timed out after 8.0s for '%s'", chunk[:30])
             sarvam_failed = True
         except Exception as e:
             logger.warning("[SARVAM ERROR] %s", e)

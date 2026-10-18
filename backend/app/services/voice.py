@@ -732,19 +732,20 @@ async def synthesize_speech_provider(
     emotion: Optional[str] = "calm",
     tone: Optional[str] = None,
     engine: Optional[str] = None,
+    pace: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Main speech synthesis provider:
     - Routes ALL 8 Indian languages to Sarvam Bulbul v3 by default.
     - Legacy Google Cloud Chirp 3 HD engine reserved behind LEGACY_TTS_FOR=en,hi flag or explicit engine='legacy'.
-    - Applies pace 0.95 for empathetic/calming/sad replies, 1.0 normally.
+    - Applies tone pace (Ananya 1.0, Diya 0.93, Meera 1.05, Aarav 0.93, Kabir 1.0, Arjun 1.05) or explicit pace.
     - Groups 2-3 sentences (max ~220 chars) per request for gapless prosody.
     - Resolves speaker strictly by language, companion gender (boy/girl), and tone.
     """
     bcp47 = to_bcp47(language)
     style = get_speech_style(bcp47)
     lang_clean = language.split("-")[0].lower()
-    pace = get_tone_pace(tone) if tone else (0.95 if (emotion or "").lower() in ("empathetic", "calm", "sad") else 1.0)
+    effective_pace = pace if pace is not None else (get_tone_pace(tone) if tone else (0.95 if (emotion or "").lower() in ("empathetic", "calm", "sad") else 1.0))
 
     use_legacy = (engine == "legacy") or (engine != "sarvam" and should_use_legacy_tts(language))
 
@@ -760,7 +761,7 @@ async def synthesize_speech_provider(
             text=speech_text,
             langCode=bcp47,
             speaker=sarvam_speaker,
-            pace=pace,
+            pace=effective_pace,
             gender=gender,
             tone=tone
         )

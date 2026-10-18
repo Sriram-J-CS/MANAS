@@ -73,117 +73,124 @@ SARVAM_VOICE_CATALOG = {
     ]
 }
 
-# Voice Tones mapped strictly to real Sarvam speakers per language:
-# Girl tones: Ananya (Warm & Caring), Diya (Gentle & Soft), Janani (Bright & Encouraging)
-# Boy tones:  Aarav (Calm & Grounding), Kabir (Warm & Steady), Arjun (Soft & Friendly)
-VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {
+# Voice Tones mapped strictly to real Sarvam Bulbul v3 speakers and paces per Part C:
+# Girl: Ananya -> priya (1.0), Diya -> ishita (0.93), Meera -> ritu/neha/pooja/roopa/suhani (1.05)
+# Boy:  Aarav -> shubh (0.93), Kabir -> ratan (1.0), Arjun -> rohan/rehan (1.05)
+VOICE_TONE_SPEAKER_MAP: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {
     "en": {
         "girl": {
-            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "priya",  "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "suhani", "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "ritu",   "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "hi": {
         "girl": {
-            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "suhani", "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "ritu",   "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "ritu",   "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "ta": {
         "girl": {
-            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "ritu",   "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "priya",  "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "ritu",   "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rehan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "te": {
         "girl": {
-            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "neha",   "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "ishita", "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "neha",   "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "kn": {
         "girl": {
-            "ananya": {"speaker": "ishita", "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "neha",   "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "priya",  "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "ritu",   "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rehan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rehan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "ml": {
         "girl": {
-            "ananya": {"speaker": "pooja",  "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "priya",  "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "suhani", "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "pooja",  "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "shubh",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "ratan",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rehan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "bn": {
         "girl": {
-            "ananya": {"speaker": "roopa",  "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "suhani", "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "priya",  "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "roopa",  "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "rehan",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "ratan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rehan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     },
     "mr": {
         "girl": {
-            "ananya": {"speaker": "priya",  "label": "Ananya", "style": "Warm & Caring"},
-            "diya":   {"speaker": "ritu",   "label": "Diya",   "style": "Gentle & Soft"},
-            "janani": {"speaker": "neha",   "label": "Janani", "style": "Bright & Encouraging"},
+            "ananya": {"speaker": "priya",  "pace": 1.0,  "label": "Ananya", "style": "Warm & Empathetic"},
+            "diya":   {"speaker": "ishita", "pace": 0.93, "label": "Diya",   "style": "Gentle & Soft"},
+            "meera":  {"speaker": "ritu",   "pace": 1.05, "label": "Meera",  "style": "Encouraging & Motivating"},
         },
         "boy": {
-            "aarav":  {"speaker": "ratan",  "label": "Aarav",  "style": "Calm & Grounding"},
-            "kabir":  {"speaker": "shubh",  "label": "Kabir",  "style": "Warm & Steady"},
-            "arjun":  {"speaker": "rohan",  "label": "Arjun",  "style": "Soft & Friendly"},
+            "aarav":  {"speaker": "shubh",  "pace": 0.93, "label": "Aarav",  "style": "Calm & Grounding"},
+            "kabir":  {"speaker": "ratan",  "pace": 1.0,  "label": "Kabir",  "style": "Warm & Steady"},
+            "arjun":  {"speaker": "rohan",  "pace": 1.05, "label": "Arjun",  "style": "Soft & Friendly"},
         }
     }
 }
 
-# Speaking tone to TTS pace mapping per specification:
-# Calm/Gentle 0.92, Warm/Casual 1.0, Encouraging 1.05, Direct 1.0
+# Speaking tone to TTS pace mapping per Part C:
 SPEAKING_TONE_PACE: Dict[str, float] = {
+    "ananya": 1.0,
+    "diya": 0.93,
+    "meera": 1.05,
+    "janani": 1.05,
+    "aarav": 0.93,
+    "kabir": 1.0,
+    "arjun": 1.05,
+    "warm & empathetic": 1.0,
     "warm & caring": 1.0,
     "warm": 1.0,
-    "calm & grounding": 0.92,
-    "calm": 0.92,
-    "gentle & soft": 0.92,
-    "gentle": 0.92,
+    "calm & grounding": 0.93,
+    "calm": 0.93,
+    "gentle & soft": 0.93,
+    "gentle": 0.93,
     "friendly & casual": 1.0,
     "casual": 1.0,
     "encouraging & motivating": 1.05,
@@ -269,8 +276,8 @@ def get_sarvam_speaker(language: str, gender: str = "girl", tone: Optional[str] 
     # If a specific tone was selected, look up that exact mapped speaker
     if tone:
         clean_tone = tone.lower().strip()
-        if clean_tone == "meera":
-            clean_tone = "janani"
+        if clean_tone == "janani":
+            clean_tone = "meera"
         lang_tones = VOICE_TONE_SPEAKER_MAP.get(lang_code, {}).get(g_key, {})
         if clean_tone in lang_tones:
             candidate = lang_tones[clean_tone]["speaker"]
@@ -289,22 +296,29 @@ def get_sarvam_speaker(language: str, gender: str = "girl", tone: Optional[str] 
 
     return default_speaker
 
-def get_tones_for_companion(language: str, companion: str = "girl") -> List[Dict[str, str]]:
+def get_tones_for_companion(language: str, companion: str = "girl") -> List[Dict[str, Any]]:
     """
     Returns only valid voice tone cards for the chosen companion in the specified language.
     Never returns male voices to a girl companion or female voices to a boy companion.
+    If a language has fewer than 3 suitable speakers, show only the distinct ones (never fake duplicates).
     """
     lang_code = normalize_lang_code(language)
     g_key = "boy" if (companion or "").lower() in ("boy", "male") else "girl"
     tones_dict = VOICE_TONE_SPEAKER_MAP.get(lang_code, {}).get(g_key, {})
 
+    seen_speakers = set()
     result = []
     for tone_id, info in tones_dict.items():
+        spk = info["speaker"]
+        if spk in seen_speakers:
+            continue
+        seen_speakers.add(spk)
         result.append({
             "id": tone_id,
             "name": info["label"],
             "style": info["style"],
-            "speaker": info["speaker"],
+            "speaker": spk,
+            "pace": info.get("pace", 1.0),
             "gender": g_key
         })
     return result

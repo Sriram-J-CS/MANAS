@@ -305,6 +305,7 @@ class SpeechGateway {
         voice_gender: isBoyVoice ? 'male' : 'female',
         speaking_style: profile.speakingStyle,
         speed: opts.voiceSpeed || profile.voiceSpeed || 1.0,
+        pace: opts.voiceSpeed || profile.voiceSpeed || 1.0,
       };
       if (opts.engine) ttsBody.engine = opts.engine;
       // Only pass tone if set — server will use it to pick exact Sarvam speaker
