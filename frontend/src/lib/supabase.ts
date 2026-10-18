@@ -376,22 +376,6 @@ export async function verifyPhoneLinkOtp(phoneNumber: string, token: string): Pr
 }
 
 /**
- * Create an anonymous session for "Skip for now" onboarding
- * Ensures each anonymous visitor has a completely isolated user_id UUID.
- */
-export async function createAnonymousSession(): Promise<{ success: boolean; user?: User; error?: string }> {
-  try {
-    const { data, error } = await supabase.auth.signInAnonymously();
-    if (error) {
-      return { success: false, error: error.message };
-    }
-    return { success: true, user: data.user || undefined };
-  } catch (err: any) {
-    return { success: false, error: err.message || 'Failed to create anonymous session' };
-  }
-}
-
-/**
  * Sign out and clear all app storage
  */
 export async function signOutUser(): Promise<void> {
