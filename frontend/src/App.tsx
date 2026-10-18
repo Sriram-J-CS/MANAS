@@ -35,6 +35,7 @@ import { registerServiceWorker } from './lib/push/pushService';
 import { PageIntroCurtain } from './components/effects/PageIntroCurtain';
 import { FloatingBackgroundShapes } from './components/effects/FloatingBackgroundShapes';
 import { VoiceDebugHUD } from './components/voice/VoiceDebugHUD';
+import { supabase } from './lib/supabase';
 
 export function App() {
   const [currentLang, setCurrentLang] = useState<Language>('en');
@@ -137,6 +138,44 @@ export function App() {
     registerServiceWorker();
     const lenisInstance = initLenis();
 
+    // Sync active Supabase session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user && !session.user.is_anonymous) {
+        const pName = session.user.user_metadata?.name || session.user.user_metadata?.full_name || 'User';
+        setAuthUser({
+          user_id: session.user.id,
+          name: pName,
+          email: session.user.email,
+          phone: session.user.phone,
+        });
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setAuthUser(null);
+        setHasCompletedOnboarding(false);
+        setUserProfile((prev) => ({
+          ...prev,
+          name: 'Friend',
+          id: undefined,
+        }));
+      } else if (session?.user && !session.user.is_anonymous) {
+        const pName = session.user.user_metadata?.name || session.user.user_metadata?.full_name || 'User';
+        setAuthUser({
+          user_id: session.user.id,
+          name: pName,
+          email: session.user.email,
+          phone: session.user.phone,
+        });
+        setUserProfile((prev) => ({
+          ...prev,
+          name: pName,
+          id: session.user.id,
+        }));
+      }
+    });
+
     // Load server-side user profile if available
     const loadDbProfile = async () => {
       try {
@@ -236,8 +275,19 @@ export function App() {
     handleSelectLanguage(nextLang);
   };
 
-  // Launch Chat / Onboarding trigger
-  const handleStartTalking = () => {
+  // Launch Chat / Onboarding trigger with session check
+  const handleStartTalking = async () => {
+    // Chat requires a session (either authenticated or anonymous from "Skip for now")
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      if (!hasCompletedOnboarding) {
+        setIsOnboardingOpen(true);
+      } else {
+        setIsAuthOpen(true);
+      }
+      return;
+    }
+
     if (!hasCompletedOnboarding) {
       setIsOnboardingOpen(true);
     } else {
