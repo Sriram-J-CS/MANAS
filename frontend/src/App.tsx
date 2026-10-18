@@ -406,6 +406,7 @@ export function App() {
         onOpenDemo={handleStartTalking}
         user={authUser}
         onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenUserDetails={() => setIsOnboardingOpen(true)}
         onOpenVoiceRatingLab={() => setIsVoiceRatingLabOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
       />
@@ -557,9 +558,13 @@ export function App() {
               localStorage.setItem('manas_twin_profile', JSON.stringify(next));
               localStorage.setItem('manas_user_name', u.name);
               localStorage.setItem('manas_user_id', u.user_id);
+              if (u.phone) localStorage.setItem('manas_user_phone', u.phone);
+              if (u.email) localStorage.setItem('manas_user_email', u.email);
             } catch (_) {}
             return next;
           });
+          setIsAuthOpen(false);
+          setIsOnboardingOpen(true);
         }}
       />
 

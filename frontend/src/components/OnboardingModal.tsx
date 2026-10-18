@@ -298,6 +298,31 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     } catch (_) {}
   }, [step]);
 
+  // Sync user details and reset step when opening onboarding
+  useEffect(() => {
+    if (isOpen) {
+      const storedName =
+        existingProfile?.name ||
+        (typeof window !== 'undefined' ? localStorage.getItem('manas_user_name') : null);
+      if (storedName && storedName !== 'Friend') {
+        setName(storedName);
+      }
+      const storedPhone =
+        existingProfile?.contactPhone ||
+        (typeof window !== 'undefined' ? localStorage.getItem('manas_user_phone') : null);
+      if (storedPhone) {
+        setPhone(storedPhone);
+      }
+      const storedEmail =
+        existingProfile?.contactEmail ||
+        (typeof window !== 'undefined' ? localStorage.getItem('manas_user_email') : null);
+      if (storedEmail) {
+        setEmail(storedEmail);
+      }
+      setStep(1);
+    }
+  }, [isOpen]);
+
   const getStepLineId = (currentStep: number): string => {
     if (isSignedIn) {
       switch (currentStep) {

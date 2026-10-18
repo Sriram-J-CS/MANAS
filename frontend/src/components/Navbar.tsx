@@ -8,6 +8,7 @@ interface NavbarProps {
   onOpenDemo: () => void;
   user?: { name: string; email?: string; phone?: string } | null;
   onOpenAuth?: () => void;
+  onOpenUserDetails?: () => void;
   onOpenVoiceRatingLab?: () => void;
   onOpenNotifications?: () => void;
 }
@@ -18,6 +19,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleMenu,
   user,
   onOpenAuth,
+  onOpenUserDetails,
   onOpenVoiceRatingLab,
   onOpenNotifications,
 }) => {
@@ -43,9 +45,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Bell className="w-3.5 h-3.5" />
           </button>
         )}
-        {onOpenAuth && (
+        {(onOpenUserDetails || onOpenAuth) && (
           <button
-            onClick={onOpenAuth}
+            onClick={user?.name && onOpenUserDetails ? onOpenUserDetails : onOpenAuth}
             className="text-[11px] font-bold tracking-[0.05em] uppercase text-white/90 hover:text-white px-3 py-1 rounded-full border border-white/30 hover:border-white transition-all cursor-pointer font-mono"
           >
             {user?.name ? `Hi, ${user.name.split(' ')[0]}` : 'Sign In'}
