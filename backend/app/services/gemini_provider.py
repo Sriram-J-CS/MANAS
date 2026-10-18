@@ -37,9 +37,29 @@ FALLBACK_MODELS = [
 ]
 MODELS_CHAIN = list(dict.fromkeys(FALLBACK_MODELS))
 
+BANNED_STOCK_PHRASES = [
+    "I hear you",
+    "I understand how you feel",
+    "I'm sorry you're going through this",
+    "Take a deep breath",
+    "How does that make you feel?",
+    "It is important to remember",
+    "As an AI",
+    "I am here for you",
+    "Everything will be okay",
+    "Remember that you are not alone",
+    "I'm always here to listen",
+    "I acknowledge your feelings",
+    "That sounds tough",
+    "I'm so sorry to hear that",
+    "Don't hesitate to reach out",
+    "It's okay to not be okay",
+]
+
 def get_structured_output_schema(language: str = "en") -> Dict[str, Any]:
     """
     Returns a dynamic JSON schema binding the exact language and script.
+    Starts with a SHORT hidden diagnostic analysis (<= 60 tokens), followed by reply.
     Guarantees pure native script output without English code-mixing for Indian languages.
     """
     lang_clean = (language or "en").split("-")[0].lower()
@@ -61,7 +81,7 @@ def get_structured_output_schema(language: str = "en") -> Dict[str, Any]:
             f"Speak with complete native fluency exactly how a real native person speaks to a close friend in natural, everyday spoken {lang_name}. "
             f"NEVER use bookish, archaic, or mechanical machine-translation. "
             f"ABSOLUTELY ZERO English words, NO Latin letters, and NO Tanglish/Hinglish transliteration. "
-            f"Deeply personal, warm companion reply (2 to 4 complete sentences, 40-85 words)."
+            f"Deeply personal, warm companion reply mentioning at least one concrete detail the user gave (2 to 4 complete sentences, 40-85 words)."
         )
         speech_desc = (
             f"Spoken text for voice synthesis in 100% fluent native {lang_name} ({script_desc}). "
@@ -70,8 +90,8 @@ def get_structured_output_schema(language: str = "en") -> Dict[str, Any]:
         quick_desc = f"Exactly 3 natural, conversational follow-up options in everyday spoken {lang_name} ({script_desc})."
     else:
         reply_desc = (
-            "Deeply personal, emotionally near, warm, authentic companion reply (2 to 4 complete, heartfelt sentences, about 40-85 words). "
-            "Formulate thoughtful, deeply resonant, and emotionally attuned responses for any topic."
+            "Deeply personal, emotionally near, warm, authentic companion reply mentioning at least one concrete detail the user gave "
+            "(2 to 4 complete, heartfelt sentences, about 40-85 words). Formulate thoughtful, deeply resonant, and emotionally attuned responses."
         )
         speech_desc = "Spoken text for voice synthesis in natural spoken English."
         quick_desc = "Exactly 3 concise, natural follow-up options for the user to tap."
@@ -79,6 +99,38 @@ def get_structured_output_schema(language: str = "en") -> Dict[str, Any]:
     return {
         "type": "OBJECT",
         "properties": {
+            "analysis": {
+                "type": "OBJECT",
+                "description": "SHORT hidden diagnostic analysis (<= 60 tokens). Never shown to user.",
+                "properties": {
+                    "mood": {
+                        "type": "STRING",
+                        "enum": ["anxious", "sad", "angry", "overwhelmed", "happy", "confused", "neutral"]
+                    },
+                    "intensity": {
+                        "type": "INTEGER",
+                        "description": "Emotional intensity from 1 to 5"
+                    },
+                    "need": {
+                        "type": "STRING",
+                        "enum": ["vent", "advice", "grounding", "company"]
+                    },
+                    "key_details": {
+                        "type": "ARRAY",
+                        "items": {"type": "STRING"},
+                        "description": "1 to 3 specific concrete facts or details mentioned by user in this message."
+                    },
+                    "language": {
+                        "type": "STRING",
+                        "description": "Detected language code (e.g. en, ta, hi, te, kn, ml, bn, mr)"
+                    },
+                    "risk": {
+                        "type": "STRING",
+                        "enum": ["none", "low", "medium", "high"]
+                    }
+                },
+                "required": ["mood", "intensity", "need", "key_details", "language", "risk"]
+            },
             "reply": {
                 "type": "STRING",
                 "description": reply_desc,
@@ -118,7 +170,7 @@ def get_structured_output_schema(language: str = "en") -> Dict[str, Any]:
                 "enum": ["none", "low", "medium", "high"]
             }
         },
-        "required": ["reply", "speech_text", "emotion", "suggest_tool", "quick_replies", "risk_level"]
+        "required": ["analysis", "reply", "speech_text", "emotion", "suggest_tool", "quick_replies", "risk_level"]
     }
 
 # Backwards-compatible default schema
@@ -289,6 +341,10 @@ def build_companion_system_prompt(
     turns_since_name_used: int = 5,
     recent_mood: Optional[Dict[str, Any]] = None,
     active_goals: Optional[List[Dict[str, Any]]] = None,
+    user_style_profile: Optional[Dict[str, Any]] = None,
+    feedback_examples: Optional[Dict[str, List[str]]] = None,
+    forbidden_openings: Optional[List[str]] = None,
+    mood_mode: Optional[str] = None,
 ) -> str:
     """
     System prompt adhering strictly to clinical safety and conversational guidelines:
@@ -296,8 +352,10 @@ def build_companion_system_prompt(
     - Never diagnose or prescribe.
     - Strict native language and script fidelity (zero English code-mixing when non-English).
     - Dynamic instant switching if language changes between turns.
-    - 2-4 heartfelt, complete sentences.
-    - Saved memories referenced naturally.
+    - 2-4 heartfelt, complete sentences mentioning at least ONE concrete detail from user's message.
+    - Personalized from user_style_profile + past feedback exemplars.
+    - Mood-adaptive response mode steering.
+    - Banned stock phrases & anti-repetition openings.
     """
     lang_info = {
         "ta": ("Tamil", "தமிழ் (Pure Tamil script)", "Tamil Nadu"),
@@ -342,16 +400,90 @@ def build_companion_system_prompt(
             f"{rules_bullets}\n"
         )
 
-    anti_repetition_prompt = ""
+    # ── ANTI-REPETITION & FORBIDDEN OPENINGS ─────────────────────────────
+    anti_rep_parts = []
+    if forbidden_openings:
+        clean_forbidden = [f"- \"{o.strip()}\"" for o in forbidden_openings[:5] if o.strip()]
+        if clean_forbidden:
+            anti_rep_parts.append(
+                "FORBIDDEN OPENINGS (STRICT MANDATE - NEVER START YOUR REPLY LIKE ANY OF THESE):\n"
+                + "\n".join(clean_forbidden)
+            )
     if recent_bot_messages:
         cleaned_recent = [m.strip() for m in recent_bot_messages[-5:] if m.strip()]
         if cleaned_recent:
             recent_bullets = "\n".join(f"- \"{m}\"" for m in cleaned_recent)
-            anti_repetition_prompt = (
-                f"\nANTI-REPETITION (STRICT MANDATE):\n"
-                f"Never repeat any phrase, opening line, or sentence structure used in your recent bot messages below:\n"
-                f"{recent_bullets}\n"
+            anti_rep_parts.append(
+                "RECENT BOT MESSAGES (DO NOT REPEAT PHRASES, STRUCTURES, OR IDEAS):\n"
+                + recent_bullets
             )
+    anti_rep_parts.append(
+        "BANNED STOCK PHRASES (NEVER USE ANY OF THESE CLICHÉS UNDER ANY CIRCUMSTANCE):\n"
+        + "\n".join(f"- \"{p}\"" for p in BANNED_STOCK_PHRASES)
+    )
+    anti_repetition_prompt = "\n\n" + "\n\n".join(anti_rep_parts) + "\n\n"
+
+    # ── CONCRETE DETAIL REQUIREMENT ──────────────────────────────────────
+    concrete_detail_mandate = (
+        "\nCRITICAL AUTHENTICITY REQUIREMENT (NON-NEGOTIABLE):\n"
+        "Each reply MUST respond directly to the specific situations, people, objects, topics, or events mentioned in THIS exact user message.\n"
+        "Your reply MUST explicitly mention at least ONE concrete detail or fact that the user stated in their message.\n"
+        "NEVER give generic, abstract, or cookie-cutter answers.\n\n"
+    )
+
+    # ── MOOD-TO-RESPONSE MODE MAPPING ─────────────────────────────────────
+    mood_mode_mandate = (
+        "MOOD ATTUNEMENT & RESPONSE MODES (DIAGNOSTIC GUIDELINE):\n"
+        "- ANXIOUS: Speak in a slow, calming, grounding rhythm. Offer ONE small, immediate step. Never overwhelm them.\n"
+        "- SAD / LOW: Prioritize heartfelt presence and validation first. Keep reply short, gentle, and tender. Do not rush to give advice.\n"
+        "- ANGRY: Acknowledge and validate their frustration with deep respect. Give them space to be heard. Offer NO unsolicited advice.\n"
+        "- OVERWHELMED: Shrink the problem down to something tiny. Ask AT MOST one gentle question. Keep cognitive load minimal.\n"
+        "- HAPPY / EXCITED: Celebrate enthusiastically! Match their joy and build upon their positive momentum.\n"
+        "- CONFUSED: Provide clear, calm structure. Help sort through options one by one with simplicity.\n\n"
+    )
+
+    # ── USER STYLE PROFILE & FEEDBACK EXAMPLES ────────────────────────────
+    style_profile_prompt = ""
+    if user_style_profile:
+        pref_len = user_style_profile.get("preferred_reply_length", "balanced")
+        direct = user_style_profile.get("directness", "gentle")
+        humour = user_style_profile.get("humour", "light")
+        lang_mix = user_style_profile.get("language_mix", "pure")
+        helped = user_style_profile.get("techniques_helped", [])
+        unhelped = user_style_profile.get("techniques_unhelpful", [])
+        trigs = user_style_profile.get("triggers", [])
+        low_t = user_style_profile.get("low_times_of_day", [])
+
+        style_profile_prompt = (
+            f"USER INTERACTION STYLE PROFILE (ADAPT RESPONSE TO THIS USER):\n"
+            f"- Preferred Reply Length: {pref_len}\n"
+            f"- Directness: {direct}\n"
+            f"- Humour Level: {humour}\n"
+            f"- Language Register: {lang_mix}\n"
+            + (f"- Techniques That Helped: {', '.join(helped)}\n" if helped else "")
+            + (f"- Techniques That Didn't Feel Understood (AVOID): {', '.join(unhelped)}\n" if unhelped else "")
+            + (f"- Sensitive Triggers: {', '.join(trigs)}\n" if trigs else "")
+            + (f"- Typical Low Times: {', '.join(low_t)}\n" if low_t else "")
+            + "\n"
+        )
+
+    feedback_prompt = ""
+    if feedback_examples:
+        helpful_ex = feedback_examples.get("helpful_examples", [])
+        unhelpful_ex = feedback_examples.get("unhelpful_examples", [])
+        f_parts = []
+        if helpful_ex:
+            f_parts.append(
+                "PAST REPLIES USER RATED 'HELPFUL' (EMULATE THIS WARMTH AND ATTUNEMENT):\n"
+                + "\n".join(f"- \"{ex}\"" for ex in helpful_ex[:2])
+            )
+        if unhelpful_ex:
+            f_parts.append(
+                "PAST REPLIES USER RATED 'DIDN'T FEEL UNDERSTOOD' (DO NOT REPEAT THIS REGISTER):\n"
+                + "\n".join(f"- \"{ex}\"" for ex in unhelpful_ex[:1])
+            )
+        if f_parts:
+            feedback_prompt = "\n".join(f_parts) + "\n\n"
 
     memory_prompt = ""
     if session_memory:
@@ -368,14 +500,14 @@ def build_companion_system_prompt(
     saved_mem_prompt = ""
     if saved_memories:
         m_lines = []
-        for m in saved_memories[:8]:
+        for m in saved_memories[:5]:
             cat = m.get("category", "fact")
             fct = m.get("fact", "")
             if fct:
                 m_lines.append(f"- [{cat.capitalize()}] {fct}")
         if m_lines:
             saved_mem_prompt = (
-                f"\nSAVED MEMORIES (REFERENCE NATURALLY WHEN GENUINELY RELEVANT, DO NOT RECITE ROBOTICALLY):\n"
+                f"\nSAVED MEMORIES (TOP 5 RELEVANT - REFERENCE NATURALLY WHEN GENUINELY RELEVANT):\n"
                 + "\n".join(m_lines) + "\n"
             )
 
@@ -496,7 +628,7 @@ HOW YOU SPEAK & ACT AS A TRUE EMOTIONAL COMPANION ACROSS ALL MESSAGES:
    - First establish a real emotional bond: listen closely, validate what they are carrying, offer tender presence, and make them feel safe and understood.
    - Only later, once a deep bond, mutual trust, and emotional rapport have genuinely developed across the conversation, may you naturally and organically call them your friend.
 
-{anti_repetition_prompt}{saved_mem_prompt}{memory_prompt}{mood_context_prompt}{goals_prompt}{rolling_prompt}{name_rule}{breathing_rule}
+{concrete_detail_mandate}{mood_mode_mandate}{anti_repetition_prompt}{style_profile_prompt}{feedback_prompt}{saved_mem_prompt}{memory_prompt}{mood_context_prompt}{goals_prompt}{rolling_prompt}{name_rule}{breathing_rule}
 USER IDENTITY & PROFILE:
 - Name: {user_name}
 - Age: {age}
@@ -580,14 +712,22 @@ class GeminiProvider:
         breathing_shown_recently: bool = False,
         recent_mood: Optional[Dict[str, Any]] = None,
         active_goals: Optional[List[Dict[str, Any]]] = None,
+        user_style_profile: Optional[Dict[str, Any]] = None,
+        feedback_examples: Optional[Dict[str, List[str]]] = None,
+        forbidden_openings: Optional[List[str]] = None,
+        mood_mode: Optional[str] = None,
     ) -> AsyncGenerator[Tuple[str, Any], None]:
         """
         Streams response from Gemini API using Server-Sent Events.
+        Fast token streaming (thinking LOW, last ~12 turns + rolling summary + top 5 memories).
+        First sentence anti-repetition check against last 10 bot replies.
         Yields:
           ("token", token_string) as reply tokens are parsed from stream
-          ("meta", structured_dict) containing { reply, emotion, suggest_tool, quick_replies, risk_level }
+          ("meta", structured_dict) containing { reply, emotion, suggest_tool, quick_replies, risk_level, analysis }
           ("error", error_message) on API failure
         """
+        from .embedding_service import is_too_similar
+
         if not self.is_configured():
             logger.warning("Gemini API key is not configured, streaming via autonomous companion")
             async for kind, payload in stream_autonomous_companion(
@@ -602,6 +742,12 @@ class GeminiProvider:
                 yield (kind, payload)
             return
 
+        active_forbidden = list(forbidden_openings or [])
+        if recent_bot_messages:
+            for bm in recent_bot_messages[:10]:
+                if bm and bm.strip() and bm.strip() not in active_forbidden:
+                    active_forbidden.append(bm.strip())
+
         system_instruction = build_companion_system_prompt(
             user_name=user_name,
             age=age,
@@ -610,19 +756,21 @@ class GeminiProvider:
             recent_bot_messages=recent_bot_messages,
             rolling_summary=rolling_summary,
             session_memory=session_memory,
-            saved_memories=saved_memories,
+            saved_memories=saved_memories[:5] if saved_memories else None,
             turns_since_name_used=turns_since_name_used,
             breathing_shown_recently=breathing_shown_recently,
             recent_mood=recent_mood,
             active_goals=active_goals,
+            user_style_profile=user_style_profile,
+            feedback_examples=feedback_examples,
+            forbidden_openings=active_forbidden[:5],
+            mood_mode=mood_mode,
         )
 
-        # Build contents from last 20 turns + current message
+        # Build contents from last ~12 turns + current message (optimized for sub-1.2s TTFT)
         contents: List[Dict[str, Any]] = []
         if history_turns:
-            # Keep at most last 20 turns
-            trimmed = history_turns[-20:]
-            # Ensure proper alternating roles for Gemini
+            trimmed = history_turns[-12:]
             last_role = None
             for turn in trimmed:
                 sender = turn.get("sender", "user")
@@ -630,7 +778,6 @@ class GeminiProvider:
                 text = turn.get("text", "").strip()
                 if not text:
                     continue
-                # Clean any stray JSON from prior history before sending to Gemini
                 if text.startswith('{') and '"reply"' in text:
                     m_hist = re.search(r'"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', text)
                     if m_hist:
@@ -638,13 +785,11 @@ class GeminiProvider:
                     else:
                         continue
                 if role == last_role and contents:
-                    # Append text to previous turn if consecutive same role
                     contents[-1]["parts"][0]["text"] += f"\n{text}"
                 else:
                     contents.append({"role": role, "parts": [{"text": text}]})
                     last_role = role
 
-        # Append current user message
         if contents and contents[-1]["role"] == "user":
             contents[-1]["parts"][0]["text"] += f"\n{message.strip()}"
         else:
@@ -659,7 +804,7 @@ class GeminiProvider:
                 "responseMimeType": "application/json",
                 "responseSchema": get_structured_output_schema(language),
                 "temperature": 0.75,
-                "maxOutputTokens": 1200,
+                "maxOutputTokens": 1000,
                 "thinkingConfig": {
                     "thinkingLevel": "LOW"
                 }
@@ -675,6 +820,9 @@ class GeminiProvider:
             yielded_len = 0
             reply_started = False
             reply_finished = False
+            first_sentence_buffer = ""
+            first_sentence_verified = False
+            retried_similarity = False
 
             try:
                 async with httpx.AsyncClient(timeout=25.0) as client:
@@ -683,10 +831,12 @@ class GeminiProvider:
                             err_body = await response.aread()
                             err_str = err_body.decode(errors="ignore")
                             logger.warning(
-                                "Gemini model %s returned status %d: %s. Trying next fallback model...",
+                                "Gemini model %s returned status %d: %s.",
                                 target_model, response.status_code, err_str[:200]
                             )
-                            # If thinkingConfig was rejected, remove it and retry this model once
+                            if response.status_code == 429:
+                                logger.info("Gemini quota rate limit (429) reached; switching directly to resilient companion.")
+                                break
                             if "thinkingConfig" in payload.get("generationConfig", {}) and ("thinking" in err_str.lower() or response.status_code == 400):
                                 payload["generationConfig"].pop("thinkingConfig", None)
                             continue
@@ -728,10 +878,18 @@ class GeminiProvider:
                                                     reply_finished = True
                                                     if reply_token:
                                                         yield ("token", reply_token)
+                                                        first_sentence_verified = True
                                                 else:
-                                                    if content_after:
-                                                        yield ("token", content_after)
+                                                    first_sentence_buffer = content_after
+                                                    # Check if first sentence is complete or long enough
+                                                    if any(punct in first_sentence_buffer for punct in [".", "?", "!", "\n", "।"]) or len(first_sentence_buffer) >= 40:
+                                                        if active_forbidden and is_too_similar(first_sentence_buffer, active_forbidden):
+                                                            logger.info("Opening repetition detected: '%s'. Regenerating.", first_sentence_buffer[:30])
+                                                            retried_similarity = True
+                                                            break
+                                                        yield ("token", first_sentence_buffer)
                                                         yielded_len = len(content_after)
+                                                        first_sentence_verified = True
                                         elif not reply_finished:
                                             m = re.search(r'"reply"\s*:\s*"', raw_accumulated)
                                             if m:
@@ -739,18 +897,60 @@ class GeminiProvider:
                                                 end_m = re.search(r'(?<!\\)"', content_after)
                                                 if end_m:
                                                     full_reply = content_after[:end_m.start()]
-                                                    new_token = full_reply[yielded_len:]
+                                                    if not first_sentence_verified:
+                                                        new_token = full_reply
+                                                        first_sentence_verified = True
+                                                    else:
+                                                        new_token = full_reply[yielded_len:]
                                                     if new_token:
                                                         yield ("token", new_token)
                                                     reply_finished = True
                                                 else:
-                                                    new_token = content_after[yielded_len:]
-                                                    if new_token:
-                                                        yield ("token", new_token)
-                                                        yielded_len = len(content_after)
+                                                    if not first_sentence_verified:
+                                                        first_sentence_buffer = content_after
+                                                        if any(punct in first_sentence_buffer for punct in [".", "?", "!", "\n", "।"]) or len(first_sentence_buffer) >= 40:
+                                                            if active_forbidden and is_too_similar(first_sentence_buffer, active_forbidden):
+                                                                logger.info("Opening repetition detected: '%s'. Regenerating.", first_sentence_buffer[:30])
+                                                                retried_similarity = True
+                                                                break
+                                                            yield ("token", first_sentence_buffer)
+                                                            yielded_len = len(content_after)
+                                                            first_sentence_verified = True
+                                                    else:
+                                                        new_token = content_after[yielded_len:]
+                                                        if new_token:
+                                                            yield ("token", new_token)
+                                                            yielded_len = len(content_after)
                                 except Exception as parse_err:
                                     logger.debug("Chunk JSON parse note: %s", parse_err)
                                     continue
+
+                            if retried_similarity:
+                                break
+
+                        if retried_similarity:
+                            # Add opening to forbidden and retry once with same model
+                            active_forbidden.insert(0, first_sentence_buffer[:60])
+                            system_instruction = build_companion_system_prompt(
+                                user_name=user_name,
+                                age=age,
+                                language=language,
+                                companion_tone=companion_tone,
+                                recent_bot_messages=recent_bot_messages,
+                                rolling_summary=rolling_summary,
+                                session_memory=session_memory,
+                                saved_memories=saved_memories[:5] if saved_memories else None,
+                                turns_since_name_used=turns_since_name_used,
+                                breathing_shown_recently=breathing_shown_recently,
+                                recent_mood=recent_mood,
+                                active_goals=active_goals,
+                                user_style_profile=user_style_profile,
+                                feedback_examples=feedback_examples,
+                                forbidden_openings=active_forbidden[:5],
+                                mood_mode=mood_mode,
+                            )
+                            payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+                            continue
 
                         # Flush any remaining buffer from incremental decoder
                         line_buffer += decoder.decode(b"", final=True)
@@ -781,7 +981,6 @@ class GeminiProvider:
                     rep_match = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', raw_accumulated, re.DOTALL)
                     if rep_match:
                         try:
-                            # Safely unescape standard JSON escapes without corrupting raw UTF-8 bytes
                             final_reply = json.loads(f'"{rep_match.group(1)}"')
                         except Exception:
                             final_reply = rep_match.group(1).replace('\\"', '"').replace('\\n', '\n').strip()
@@ -808,16 +1007,17 @@ class GeminiProvider:
                             final_speech_text = sp_match.group(1).replace('\\"', '"').replace('\\n', '\n').strip()
 
                 if final_reply:
+                    # Flush first sentence buffer if it hadn't flushed yet
+                    if not first_sentence_verified and final_reply:
+                        yield ("token", final_reply)
                     final_emotion = parsed_data.get("emotion") if parsed_data.get("emotion") in ("calm", "empathetic", "encouraging", "concerned") else "calm"
                     final_tool = parsed_data.get("suggest_tool") if parsed_data.get("suggest_tool") in ("none", "breathing", "grounding", "music", "journaling") else "none"
                     final_quick = parsed_data.get("quick_replies") if isinstance(parsed_data.get("quick_replies"), list) else []
                     final_risk = parsed_data.get("risk_level") if parsed_data.get("risk_level") in ("none", "low", "medium", "high") else "none"
+                    final_analysis = parsed_data.get("analysis", {})
 
-                    # Requirement 5: show breathing card only when suggested and not shown in the last 4 turns
                     if breathing_shown_recently and final_tool == "breathing":
                         final_tool = "none"
-
-
 
                     yield ("meta", {
                         "reply": final_reply,
@@ -826,6 +1026,7 @@ class GeminiProvider:
                         "suggest_tool": final_tool,
                         "quick_replies": final_quick[:3],
                         "risk_level": final_risk,
+                        "analysis": final_analysis,
                         "is_error": False,
                     })
                     stream_succeeded = True

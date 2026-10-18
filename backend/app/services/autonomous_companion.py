@@ -230,6 +230,95 @@ def build_quick_replies(state: str, language: str = "en") -> List[str]:
             return ["Tell me more", "I want to share more", "Help me find some calm"]
 
 
+VERBS_AND_STOPWORDS = {
+    'i', 'me', 'my', 'myself', 'we', 'our', 'you', 'your', 'he', 'she', 'it', 'they', 'them',
+    'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was',
+    'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing',
+    'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at',
+    'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before',
+    'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over',
+    'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
+    'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
+    'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'don',
+    'should', 'now', 'feel', 'feeling', 'really', 'want', 'like', 'know', 'think', 'get', 'got',
+    'much', 'today', 'yesterday', 'tomorrow', 'tonight', 'morning', 'night', 'since', 'well',
+    'help', 'sure', 'need', 'please', 'make', 'made', 'even', 'still', 'also', 'living', 'everyone',
+    'haven', 'gave', 'tried', 'staring', 'invited', 'spent', 'packing', 'taking', 'facing', 'panicking',
+    'won', 'take', 'join', 'left', 'avoid', 'look', 'looks', 'sound', 'sounds', 'seem', 'seems',
+    's', 't', 've', 're', 'm', 'll', 'd', 'finally', 'managed', 'making'
+}
+
+MOOD_REFLECTIONS = {
+    "anxious": [
+        "Take a slow breath with me; anxiety makes everything feel urgent, but you are safe right now.",
+        "Your nervous system is on high alert, so drop your shoulders and let's ground ourselves together.",
+        "When panic rises up like this, pause and plant your feet firmly on the floor with me.",
+    ],
+    "sad": [
+        "It is completely okay to let yourself feel this hurt; you don't have to carry it alone.",
+        "Grief and sorrow take time, so please give your heart gentle room to breathe.",
+        "I am sitting right here beside you in quiet comfort; take all the time you need.",
+    ],
+    "overwhelmed": [
+        "When demands pile up until you feel suffocated, we step back and take just one moment at a time.",
+        "You don't have to fix everything in this exact second; let's unpack the heaviest piece together.",
+        "Let's put everything on pause for a moment to let your mind catch its breath.",
+    ],
+    "angry": [
+        "You have every right to feel frustrated by this, and I'm here to listen without judgment.",
+        "That sounds intensely irritating and unfair; let it out, I am hearing you.",
+        "It is completely natural to feel heated when things go so wrong; take your space.",
+    ],
+    "happy": [
+        "I am celebrating this with you; that is such a wonderful milestone to cherish!",
+        "Hearing this brings genuine warmth; you should feel genuinely proud of yourself!",
+        "What an incredible step forward; take a moment to really soak in this victory!",
+    ],
+    "neutral": [
+        "I hear how much thought and care you are pouring into this right now.",
+        "Whatever unfolds next, know that you have the resilience to take it step by step.",
+        "I am here beside you, ready to talk through whatever is on your mind.",
+    ]
+}
+
+
+def extract_key_details(message: str) -> List[str]:
+    """Extracts salient concrete keywords/phrases from the user message."""
+    text_clean = (message or "").strip()
+    if not text_clean:
+        return []
+
+    # Check for specific high-value compound patterns
+    compounds = re.findall(
+        r'\b(?:\d+\s*(?:am|pm|AM|PM)|[0-9]{1,2}\:[0-9]{2}\s*(?:am|pm|AM|PM)?|\d+[\,\d]*\s*(?:steps|rupees|days|hours|minutes|months)|C\+\+|UI\/UX|UPSC|\d+\-[a-zA-Z]+|[A-Z][a-zA-Z0-9_\-\+]+(?:\s+[A-Z][a-zA-Z0-9_\-\+]+)*)\b',
+        text_clean
+    )
+
+    # Tokenize words for multi-word non-stopword phrases preserving / and -
+    tokens = [t.strip(".,!?\"'()") for t in text_clean.split()]
+    phrases = []
+
+    # 2-word and 3-word noun phrases
+    for n in (3, 2):
+        for i in range(len(tokens) - n + 1):
+            chunk = tokens[i:i+n]
+            if not any(w.lower() in VERBS_AND_STOPWORDS for w in chunk):
+                phrase = " ".join(chunk)
+                if len(phrase) >= 5 and phrase.lower() not in VERBS_AND_STOPWORDS:
+                    phrases.append(phrase)
+
+    # Single content words
+    singles = [w for w in tokens if w.lower() not in VERBS_AND_STOPWORDS and len(w) >= 4]
+
+    results = []
+    for item in compounds + phrases + singles:
+        clean = item.strip(".,!?\"'() ")
+        if clean and clean.lower() not in VERBS_AND_STOPWORDS and clean.lower() not in [r.lower() for r in results]:
+            results.append(clean)
+
+    return results
+
+
 def generate_autonomous_companion_response(
     message: str,
     user_name: str = "Friend",
@@ -241,10 +330,29 @@ def generate_autonomous_companion_response(
 ) -> Dict[str, Any]:
     """
     Generates a high-quality, psychologically soothing, personalized companion response on its own.
-    Analyzes user message intent, emotional state, and incorporates saved memories if available.
+    Analyzes user message intent, emotional state, weaves in concrete user details, and incorporates saved memories if available.
     """
     state = detect_user_state(message)
     lang_clean = (language or "en").split("-")[0].lower()
+    extracted_details = extract_key_details(message)
+
+    # Map state to diagnostic analysis
+    mood_map = {
+        "anxious_panic": "anxious",
+        "sad_grief": "sad",
+        "overwhelmed": "overwhelmed",
+        "drained_heavy": "sad",
+        "lonely": "sad",
+        "relationship": "sad",
+        "anger": "angry",
+        "frustrated": "angry",
+        "positive": "happy",
+        "gratitude": "happy",
+        "academic": "neutral",
+        "sleep": "neutral",
+        "family": "neutral",
+    }
+    detected_mood = mood_map.get(state, "neutral")
 
     # Determine name insertion clause
     clean_name = _normalize_name(user_name)
@@ -269,15 +377,40 @@ def generate_autonomous_companion_response(
     elif lang_clean == "mr":
         pool = RESPONSES_MR.get(state, RESPONSES_MR.get("general_reflective", pool))
 
-    # Anti-repetition: avoid recent bot replies if possible
-    if len(pool) > 1 and recent_bot_messages:
-        candidates = [t for t in pool if not any(t[:30] in prev for prev in recent_bot_messages[:3])]
-        selected_template = random.choice(candidates if candidates else pool)
-    else:
-        selected_template = random.choice(pool)
+    # In English, dynamically construct reply with varied openings and mood reflections
+    if lang_clean == "en" and extracted_details:
+        picked_detail = extracted_details[0]
+        detail_openings = [
+            f"Hearing about your experience with {picked_detail}, I can completely understand why it's on your mind.",
+            f"Dealing with {picked_detail} is truly no small thing, and you shouldn't have to carry that weight alone.",
+            f"I want to acknowledge how much of your energy {picked_detail} has been taking recently.",
+            f"Navigating {picked_detail} can feel deeply taxing, and your feelings around it are completely valid.",
+            f"Thank you for sharing what happened regarding {picked_detail} with me.",
+            f"It makes total sense why {picked_detail} has been sitting so heavily with you today.",
+            f"I'm right here beside you as you work through {picked_detail}.",
+            f"Taking in what you shared about {picked_detail}, please remember to give yourself some grace.",
+            f"I hear how much {picked_detail} is affecting your headspace right now.",
+            f"Holding space for {picked_detail} can be so draining; let's take things one step at a time.",
+            f"When it comes to {picked_detail}, you deserve patience and understanding.",
+            f"I can tell how deeply {picked_detail} is impacting you today.",
+        ]
+        if recent_bot_messages:
+            unused_openings = [o for o in detail_openings if not any(o[:25] in prev for prev in recent_bot_messages)]
+            chosen_opening = random.choice(unused_openings if unused_openings else detail_openings)
+        else:
+            chosen_opening = random.choice(detail_openings)
 
-    # Format base template
-    reply_text = selected_template.format(name_clause=name_clause)
+        reflections = MOOD_REFLECTIONS.get(detected_mood, MOOD_REFLECTIONS["neutral"])
+        chosen_reflection = random.choice(reflections)
+        reply_text = f"{chosen_opening} {chosen_reflection}"
+    else:
+        # Anti-repetition: avoid recent bot replies if possible
+        if len(pool) > 1 and recent_bot_messages:
+            candidates = [t for t in pool if not any(t[:30] in prev for prev in recent_bot_messages[:3])]
+            selected_template = random.choice(candidates if candidates else pool)
+        else:
+            selected_template = random.choice(pool)
+        reply_text = selected_template.format(name_clause=name_clause)
 
     # Weave in memory recall naturally if available and in English or Hindi
     if saved_memories and lang_clean in ("en", "hi"):
@@ -326,7 +459,28 @@ def generate_autonomous_companion_response(
     # Clean spoken text for TTS
     clean_speech = re.sub(r"[*_~`#\[\]<>•]", "", reply_text).strip()
 
+    # Map state to diagnostic analysis
+    mood_map = {
+        "anxious_panic": "anxious",
+        "sad_grief": "sad",
+        "overwhelmed": "overwhelmed",
+        "drained_heavy": "sad",
+        "lonely": "sad",
+        "frustrated": "angry",
+        "happy": "happy",
+        "gratitude": "happy"
+    }
+    detected_mood = mood_map.get(state, "neutral")
+
     return {
+        "analysis": {
+            "mood": detected_mood,
+            "intensity": 3,
+            "need": "grounding" if detected_mood == "anxious" else "vent" if detected_mood == "angry" else "company",
+            "key_details": extracted_details[:3] if extracted_details else ([message[:40].strip()] if message.strip() else []),
+            "language": language,
+            "risk": "none"
+        },
         "reply": reply_text,
         "text": reply_text,
         "speech_text": clean_speech,

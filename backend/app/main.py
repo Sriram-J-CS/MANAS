@@ -22,8 +22,12 @@ from .database import (
     init_db,
     save_session_summary,
     get_latest_session_summary,
-    delete_user_session_summaries
+    delete_user_session_summaries,
+    get_user_style_profile,
+    update_user_style_profile,
+    get_feedback_examples_for_user
 )
+from .services.embedding_service import search_memories_hybrid
 from .safety.rules import check_safety, get_polite_inappropriate_response
 from .safety.templates import get_crisis_response, get_medication_response
 from .services.gemini_provider import gemini
@@ -768,7 +772,7 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
     """, (user_msg_id, uid, encrypt_user_text(uid, req.message), req.language, req.typing_cps))
     conn.commit()
 
-    # 3. Retrieve prior turns (decrypted per user)
+    # 3. Retrieve prior turns (decrypted per user) - last ~12 turns + rolling summary
     cur.execute("""
         SELECT sender, text FROM chat_messages
         WHERE user_id = ? AND id != ?
@@ -776,20 +780,20 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
     """, (uid, user_msg_id))
     prior_messages = [{"sender": r["sender"], "text": decrypt_user_text(uid, r["text"])} for r in cur.fetchall()]
 
-    if len(prior_messages) > 20:
-        older = prior_messages[:-20]
-        last_20 = prior_messages[-20:]
-        summary_points = [f"{m['sender']}: {m['text'][:80]}" for m in older[-10:]]
+    if len(prior_messages) > 12:
+        older = prior_messages[:-12]
+        last_12 = prior_messages[-12:]
+        summary_points = [f"{m['sender']}: {m['text'][:80]}" for m in older[-8:]]
         rolling_summary = "Older conversation context:\n" + "\n".join(summary_points)
     else:
-        last_20 = prior_messages
+        last_12 = prior_messages
         rolling_summary = ""
 
-    # Retrieve last 6 bot messages for anti-repetition, name frequency, and breathing throttle
+    # Retrieve last 10 bot messages for anti-repetition check and breathing throttle
     cur.execute("""
         SELECT text, suggested_exercise FROM chat_messages
         WHERE user_id = ? AND sender = 'mascot'
-        ORDER BY created_at DESC LIMIT 6
+        ORDER BY created_at DESC LIMIT 10
     """, (uid,))
     recent_bot_rows = cur.fetchall()
     recent_bot_messages = [decrypt_user_text(uid, r["text"]) for r in recent_bot_rows]
@@ -806,13 +810,12 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
     # Check if breathing was suggested in the last 4 turns
     breathing_shown_recently = any(r["suggested_exercise"] == "breathing_4_7_8" for r in recent_bot_rows[:4])
 
-    # Retrieve saved long-term memories for user (decrypted)
-    cur.execute("""
-        SELECT category, fact FROM user_memories
-        WHERE user_id = ?
-        ORDER BY created_at DESC LIMIT 15
-    """, (uid,))
-    saved_memories = [{"category": m["category"], "fact": decrypt_user_text(uid, m["fact"])} for m in cur.fetchall()]
+    # Retrieve top 5 semantic + recency hybrid memories for this message
+    saved_memories = await search_memories_hybrid(uid, req.message, conn, top_k=5)
+
+    # Retrieve per-user style profile and few-shot feedback exemplars
+    user_style_profile = get_user_style_profile(uid)
+    feedback_examples = get_feedback_examples_for_user(uid)
 
     # Retrieve latest mood check-in (score, tags, note)
     cur.execute("""
@@ -881,7 +884,7 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
             age=req.age,
             language=req.language,
             companion_tone=req.tone,
-            history_turns=last_20,
+            history_turns=last_12,
             rolling_summary=rolling_summary,
             session_memory=session_mem,
             recent_bot_messages=recent_bot_messages,
@@ -889,7 +892,11 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
             turns_since_name_used=turns_since_name,
             breathing_shown_recently=breathing_shown_recently,
             recent_mood=recent_mood,
-            active_goals=active_goals
+            active_goals=active_goals,
+            user_style_profile=user_style_profile,
+            feedback_examples=feedback_examples,
+            forbidden_openings=recent_bot_messages[:5],
+            mood_mode=user_style_profile.get("last_mood_mode") if user_style_profile else None
         ):
             if kind == "token":
                 accumulated_text += payload
@@ -900,20 +907,43 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
                 display_text = final_meta.get("reply") or accumulated_text
                 final_meta["display_text"] = display_text
 
+                # ── Mood-Adaptive Response Mode Steering ─────────────────────────
+                detected_mood = (final_meta.get("analysis", {}).get("mood") or final_meta.get("emotion") or "calm").lower()
+                mood_pace_map = {
+                    "anxious": 0.92,
+                    "sad": 0.90,
+                    "angry": 0.95,
+                    "overwhelmed": 0.92,
+                    "happy": 1.05,
+                    "confused": 1.00,
+                    "neutral": 1.00,
+                }
+                mood_expr_map = {
+                    "anxious": "calm",
+                    "sad": "empathetic",
+                    "angry": "concerned",
+                    "overwhelmed": "calm",
+                    "happy": "encouraging",
+                    "confused": "calm",
+                    "neutral": "calm",
+                }
+                adaptive_pace = mood_pace_map.get(detected_mood, 1.0)
+                adaptive_expr = mood_expr_map.get(detected_mood, final_meta.get("emotion", "calm"))
+                final_meta["emotion"] = adaptive_expr
+                final_meta["expression"] = adaptive_expr
+                final_meta["mood_mode"] = detected_mood
+
                 # ── Voice pipeline: resolve companion gender & tone at call-time ─────────
-                # Priority: req.companion > DB lookup > fallback to 'girl'
                 raw_speech = final_meta.get("speech_text") or display_text
                 bcp47_code = to_bcp47(req.language)
                 style_str = get_speech_style(bcp47_code)
 
-                # Resolve companion and voice_tone from DB if not already on the request
                 resolved_companion = (req.companion or "").strip().lower() or None
                 resolved_tone = (req.voice_tone or "").strip().lower() or None
                 if not resolved_companion and uid and uid != "anonymous":
                     try:
                         conn_vp = get_db()
                         cur_vp = conn_vp.cursor()
-                        # Check avatar_profiles for base_mascot (boy/girl)
                         cur_vp.execute(
                             "SELECT base_mascot FROM avatar_profiles WHERE user_id = ?",
                             (uid,)
@@ -922,7 +952,6 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
                         if vp_row and vp_row["base_mascot"]:
                             resolved_companion = vp_row["base_mascot"].strip().lower()
                         if not resolved_tone:
-                            # Check voice_profiles for voice_name (used as tone key)
                             cur_vp.execute(
                                 "SELECT voice_name FROM voice_profiles WHERE user_id = ?",
                                 (uid,)
@@ -933,7 +962,6 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
                         conn_vp.close()
                     except Exception:
                         pass
-                # Normalize: only accept 'boy' or 'girl'; anything else → 'girl'
                 companion_gender = "boy" if resolved_companion in ("boy", "male") else "girl"
                 companion_tone = resolved_tone or None
                 sarvam_speaker = get_sarvam_speaker(req.language, companion_gender, companion_tone)
@@ -952,7 +980,9 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
                     "speaker": sarvam_speaker,
                     "gender": companion_gender,
                     "tone": companion_tone or "",
+                    "pace": adaptive_pace,
                 }
+                final_meta["voice_speed"] = adaptive_pace
                 final_meta["bcp47"] = bcp47_code
 
                 if final_meta.get("risk_level") == "high":
@@ -1008,6 +1038,18 @@ async def chat(req: ChatRequest, request: Request, current_uid: str = Depends(ge
             ))
             conn_b.commit()
             conn_b.close()
+        except Exception:
+            pass
+
+        # Background update of user style profile
+        try:
+            analysis_obj = final_meta.get("analysis", {})
+            style_updates = {
+                "last_mood_mode": final_meta.get("mood_mode", "calm"),
+            }
+            if analysis_obj.get("key_details"):
+                style_updates["triggers"] = analysis_obj["key_details"][:2]
+            update_user_style_profile(uid, style_updates)
         except Exception:
             pass
 

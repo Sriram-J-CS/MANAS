@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import httpx
 
+from dotenv import load_dotenv
+
 from .voice_config import (
     SARVAM_CONFIG,
     is_native_6_language,
@@ -40,6 +42,14 @@ from .voice_config import (
 )
 
 logger = logging.getLogger("manas.sarvam_tts")
+
+# Load environment from root or backend directory
+root_env = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+backend_env = Path(__file__).resolve().parent.parent.parent / ".env"
+if root_env.exists():
+    load_dotenv(root_env)
+if backend_env.exists():
+    load_dotenv(backend_env)
 
 CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "cache" / "audio"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)

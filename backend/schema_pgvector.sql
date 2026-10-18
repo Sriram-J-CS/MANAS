@@ -205,3 +205,21 @@ CREATE TABLE IF NOT EXISTS deletion_requests (
     reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 14. Per-User Interaction Style Profile & Feedback Learning
+CREATE TABLE IF NOT EXISTS user_style_profiles (
+    user_id VARCHAR(64) PRIMARY KEY,
+    preferred_reply_length VARCHAR(32) DEFAULT 'balanced',
+    directness VARCHAR(32) DEFAULT 'gentle',
+    humour VARCHAR(32) DEFAULT 'light',
+    language_mix VARCHAR(32) DEFAULT 'pure',
+    techniques_helped JSONB DEFAULT '[]'::jsonb,
+    techniques_unhelpful JSONB DEFAULT '[]'::jsonb,
+    triggers JSONB DEFAULT '[]'::jsonb,
+    low_times_of_day JSONB DEFAULT '[]'::jsonb,
+    last_mood_mode VARCHAR(32) DEFAULT 'calm',
+    total_turns INTEGER DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_user_style_profiles ON user_style_profiles(user_id);
+

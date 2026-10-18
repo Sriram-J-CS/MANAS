@@ -159,7 +159,30 @@ def init_db():
         category TEXT DEFAULT 'general',
         fact TEXT NOT NULL,
         importance REAL DEFAULT 1.0,
+        embedding TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    try:
+        cursor.execute("ALTER TABLE user_memories ADD COLUMN embedding TEXT")
+    except Exception:
+        pass
+
+    # Per-user style profile table for personalization without fine-tuning
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_style_profiles (
+        user_id TEXT PRIMARY KEY,
+        preferred_reply_length TEXT DEFAULT 'balanced',
+        directness TEXT DEFAULT 'gentle',
+        humour TEXT DEFAULT 'light',
+        language_mix TEXT DEFAULT 'pure',
+        techniques_helped TEXT DEFAULT '[]',
+        techniques_unhelpful TEXT DEFAULT '[]',
+        triggers TEXT DEFAULT '[]',
+        low_times_of_day TEXT DEFAULT '[]',
+        last_mood_mode TEXT DEFAULT 'calm',
+        total_turns INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -758,7 +781,144 @@ def delete_user_session_summaries(user_id: str) -> int:
     affected = cursor.rowcount
     conn.commit()
     conn.close()
-    return affected
+def get_user_style_profile(user_id: str) -> Dict[str, Any]:
+    """Retrieves user style profile or returns default row."""
+    default_profile = {
+        "user_id": user_id,
+        "preferred_reply_length": "balanced",
+        "directness": "gentle",
+        "humour": "light",
+        "language_mix": "pure",
+        "techniques_helped": [],
+        "techniques_unhelpful": [],
+        "triggers": [],
+        "low_times_of_day": [],
+        "last_mood_mode": "calm",
+        "total_turns": 0
+    }
+    if not user_id:
+        return default_profile
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT user_id, preferred_reply_length, directness, humour, language_mix,
+               techniques_helped, techniques_unhelpful, triggers, low_times_of_day,
+               last_mood_mode, total_turns, updated_at
+        FROM user_style_profiles
+        WHERE user_id = ?
+    """, (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return default_profile
+
+    profile = dict(row)
+    for json_col in ["techniques_helped", "techniques_unhelpful", "triggers", "low_times_of_day"]:
+        val = profile.get(json_col)
+        if isinstance(val, str):
+            try:
+                profile[json_col] = json.loads(val)
+            except Exception:
+                profile[json_col] = [val] if val else []
+        elif not isinstance(val, list):
+            profile[json_col] = []
+    return profile
+
+
+def update_user_style_profile(user_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Upserts or updates user style profile attributes."""
+    if not user_id:
+        return {}
+
+    existing = get_user_style_profile(user_id)
+    # Merge updates
+    for k, v in updates.items():
+        if k in existing:
+            if isinstance(existing[k], list) and isinstance(v, list):
+                # Union of lists preserving order
+                combined = existing[k] + [item for item in v if item not in existing[k]]
+                existing[k] = combined[-15:]
+            else:
+                existing[k] = v
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO user_style_profiles (
+            user_id, preferred_reply_length, directness, humour, language_mix,
+            techniques_helped, techniques_unhelpful, triggers, low_times_of_day,
+            last_mood_mode, total_turns, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            preferred_reply_length = excluded.preferred_reply_length,
+            directness = excluded.directness,
+            humour = excluded.humour,
+            language_mix = excluded.language_mix,
+            techniques_helped = excluded.techniques_helped,
+            techniques_unhelpful = excluded.techniques_unhelpful,
+            triggers = excluded.triggers,
+            low_times_of_day = excluded.low_times_of_day,
+            last_mood_mode = excluded.last_mood_mode,
+            total_turns = excluded.total_turns + 1,
+            updated_at = CURRENT_TIMESTAMP
+    """, (
+        user_id,
+        existing.get("preferred_reply_length", "balanced"),
+        existing.get("directness", "gentle"),
+        existing.get("humour", "light"),
+        existing.get("language_mix", "pure"),
+        json.dumps(existing.get("techniques_helped", [])),
+        json.dumps(existing.get("techniques_unhelpful", [])),
+        json.dumps(existing.get("triggers", [])),
+        json.dumps(existing.get("low_times_of_day", [])),
+        existing.get("last_mood_mode", "calm"),
+        existing.get("total_turns", 0) + 1
+    ))
+    conn.commit()
+    conn.close()
+    return existing
+
+
+def get_feedback_examples_for_user(user_id: str) -> Dict[str, List[str]]:
+    """
+    Returns up to 2 past bot replies rated 'Helpful' and 1 rated 'Didn't feel understood'.
+    Used as few-shot exemplars in the system prompt.
+    """
+    if not user_id:
+        return {"helpful_examples": [], "unhelpful_examples": []}
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT bot_reply, user_message, rating, felt_understood
+        FROM message_feedback
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 25
+    """, (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    helpful = []
+    unhelpful = []
+
+    for r in rows:
+        reply_txt = (r["bot_reply"] or "").strip()
+        if not reply_txt or len(reply_txt) < 10:
+            continue
+        # Check rating or felt_understood flag
+        felt = r["felt_understood"]
+        rating = r["rating"]
+        if (felt == 1 or (rating is not None and rating >= 4)) and len(helpful) < 2:
+            if reply_txt not in helpful:
+                helpful.append(reply_txt[:200])
+        elif (felt == 0 or (rating is not None and rating <= 2)) and len(unhelpful) < 1:
+            if reply_txt not in unhelpful:
+                unhelpful.append(reply_txt[:200])
+
+    return {"helpful_examples": helpful, "unhelpful_examples": unhelpful}
 
 
 if __name__ == "__main__":
