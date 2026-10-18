@@ -73,6 +73,7 @@ export class VRMLipSync {
   private attackSpeed: number = 1 / 0.035; // ~28.6 s^-1
   private releaseSpeed: number = 1 / 0.080; // ~12.5 s^-1
   private fastCloseSpeed: number = 1 / 0.040; // Fast decay within 120ms
+  private analysisAccumulator: number = 0;
 
   /**
    * Resets all vowel weights and closes mouth immediately.
@@ -84,6 +85,7 @@ export class VRMLipSync {
     this.prevRms = 0;
     this.smoothedRms = 0;
     this.silenceTimer = 1.0;
+    this.analysisAccumulator = 0;
 
     if (vrm && vrm.expressionManager) {
       try {
@@ -118,6 +120,7 @@ export class VRMLipSync {
       this.isGateOpen = false;
       this.targetWeights = { ...EMPTY_VOWELS };
       this.silenceTimer += dt;
+      this.analysisAccumulator = 0;
 
       // Swift decay to 0 within 120ms
       const decayFactor = 1 - Math.exp(-dt * this.fastCloseSpeed);
@@ -138,20 +141,22 @@ export class VRMLipSync {
       return this.currentWeights;
     }
 
-    // 1. Fetch real frequency and time-domain data from AnalyserNode
-    if (this.freqData.length !== analyser.frequencyBinCount) {
-      this.freqData = new Uint8Array(analyser.frequencyBinCount);
-      this.timeData = new Float32Array(analyser.fftSize);
-    }
-    analyser.getByteFrequencyData(this.freqData as any);
-    if (analyser.getFloatTimeDomainData) {
-      analyser.getFloatTimeDomainData(this.timeData as any);
-    }
+    // 1. Fetch real frequency and time-domain data from AnalyserNode throttled to <= 30 Hz (Part D)
+    this.analysisAccumulator += dt;
+    if (this.analysisAccumulator >= 0.033) {
+      this.analysisAccumulator = 0;
+      if (this.freqData.length !== analyser.frequencyBinCount) {
+        this.freqData = new Uint8Array(analyser.frequencyBinCount);
+        this.timeData = new Float32Array(analyser.fftSize);
+      }
+      analyser.getByteFrequencyData(this.freqData as any);
+      if (analyser.getFloatTimeDomainData) {
+        analyser.getFloatTimeDomainData(this.timeData as any);
+      }
 
-    const sampleRate = analyser.context.sampleRate || 44100;
-    const computed = this.computeVowelsFromData(this.timeData, this.freqData, sampleRate, dt);
-
-    this.targetWeights = computed;
+      const sampleRate = analyser.context.sampleRate || 24000;
+      this.targetWeights = this.computeVowelsFromData(this.timeData, this.freqData, sampleRate, 0.033);
+    }
 
     // 2. Exponential attack (~35ms) and release (~80ms) smoothing at 60fps
     const smoothFactor = (current: number, target: number) => {

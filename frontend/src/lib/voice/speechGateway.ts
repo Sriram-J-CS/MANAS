@@ -146,15 +146,87 @@ class VoiceDebugStore {
 
 export const voiceDebugStore = new VoiceDebugStore();
 
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const clean = base64.replace(/^data:audio\/\w+;base64,/, '').trim();
+  const binary = window.atob(clean);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function trimAudioBufferSilence(ctx: AudioContext, buffer: AudioBuffer, threshold = 0.005): AudioBuffer {
+  const numChannels = buffer.numberOfChannels;
+  const length = buffer.length;
+  let start = 0;
+  let end = length - 1;
+
+  outerStart: for (let i = 0; i < length; i++) {
+    for (let c = 0; c < numChannels; c++) {
+      if (Math.abs(buffer.getChannelData(c)[i]) > threshold) {
+        start = Math.max(0, i - 128);
+        break outerStart;
+      }
+    }
+  }
+
+  outerEnd: for (let i = length - 1; i >= start; i--) {
+    for (let c = 0; c < numChannels; c++) {
+      if (Math.abs(buffer.getChannelData(c)[i]) > threshold) {
+        end = Math.min(length - 1, i + 128);
+        break outerEnd;
+      }
+    }
+  }
+
+  const trimmedLength = end - start + 1;
+  if (trimmedLength <= 0 || trimmedLength === length) {
+    return buffer;
+  }
+
+  const trimmedBuffer = ctx.createBuffer(numChannels, trimmedLength, buffer.sampleRate);
+  for (let c = 0; c < numChannels; c++) {
+    trimmedBuffer.copyToChannel(buffer.getChannelData(c).subarray(start, end + 1), c);
+  }
+  return trimmedBuffer;
+}
+
+function normalizeAudioBuffer(buffer: AudioBuffer, targetPeak = 0.88): void {
+  const numChannels = buffer.numberOfChannels;
+  let maxVal = 0;
+  for (let c = 0; c < numChannels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < data.length; i++) {
+      const v = Math.abs(data[i]);
+      if (v > maxVal) maxVal = v;
+    }
+  }
+
+  if (maxVal > 0.01) {
+    const gain = Math.min(2.5, targetPeak / maxVal);
+    for (let c = 0; c < numChannels; c++) {
+      const data = buffer.getChannelData(c);
+      for (let i = 0; i < data.length; i++) {
+        data[i] *= gain;
+      }
+    }
+  }
+}
+
 class SpeechGateway {
   private currentSessionId = 0;
   private currentAbortController: AbortController | null = null;
   private activeAudios: Set<HTMLAudioElement> = new Set();
+  private activeBufferSources: Set<AudioBufferSourceNode> = new Set();
   private currentAudio: HTMLAudioElement | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private analyserRAF: number | null = null;
   private isSpeaking = false;
   private analyserNode: AnalyserNode | null = null;
+  private nextScheduledStartTime = 0;
+  private lastAnalyserPollTime = 0;
 
   public isSpeakingActive(): boolean {
     return this.isSpeaking;
@@ -176,7 +248,17 @@ class SpeechGateway {
       this.currentAbortController = null;
     }
 
-    // 3. Immediately halt, silence, and clean up all active audio elements
+    // 3. Halt all active scheduled AudioBuffer sources
+    this.activeBufferSources.forEach((source) => {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch (_) {}
+    });
+    this.activeBufferSources.clear();
+    this.nextScheduledStartTime = 0;
+
+    // 4. Immediately halt, silence, and clean up all active audio elements
     this.activeAudios.forEach((audio) => {
       try {
         audio.pause();
@@ -199,7 +281,7 @@ class SpeechGateway {
       this.currentAudio = null;
     }
 
-    // 4. Cancel browser speech synthesis if active
+    // 5. Cancel browser speech synthesis if active
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -207,7 +289,7 @@ class SpeechGateway {
     }
     this.currentUtterance = null;
 
-    // 5. Cancel analyser loop
+    // 6. Cancel analyser loop
     if (this.analyserRAF) {
       cancelAnimationFrame(this.analyserRAF);
       this.analyserRAF = null;
@@ -330,7 +412,37 @@ class SpeechGateway {
           return;
         }
 
-        if (data.audio_base64) {
+        if (data.audios && Array.isArray(data.audios) && data.audios.length > 0) {
+          const latencyMs = Math.round(performance.now() - startTime);
+          const usedSpeaker = data.voice_used || data.speech_metadata?.speaker || defaultSpeaker;
+          const engineTag = data.speech_metadata?.engine === 'google_chirp_legacy' || opts.engine === 'legacy'
+            ? 'google_chirp3_hd'
+            : 'sarvam_bulbul_v3';
+          voiceDebugStore.addEntry({
+            id: Math.random().toString(36).slice(2),
+            timestamp: new Date().toLocaleTimeString(),
+            lang: cleanLang,
+            bcp47: targetBcp47,
+            engine: engineTag,
+            speaker: usedSpeaker,
+            companion: companionKey,
+            voice_gender: voiceGenderKey,
+            gender: voiceGenderKey,
+            tone: resolvedTone || profile.speakingStyle || '(default)',
+            text: rawText,
+            latencyMs,
+            hasLatin,
+            hasDigits,
+            isWarning,
+            warningReason,
+            purpose: opts.purpose,
+          });
+          console.log(
+            `[VOICE GATEWAY] lang=${cleanLang} companion=${companionKey} voice_gender=${voiceGenderKey} tone=${resolvedTone} speaker=${usedSpeaker} latency=${latencyMs}ms chunks=${data.audios.length}`
+          );
+          await this.playMultiChunkAudio(data.audios, opts, sessionId);
+          return;
+        } else if (data.audio_base64) {
           const latencyMs = Math.round(performance.now() - startTime);
           const usedSpeaker = data.voice_used || data.speech_metadata?.speaker || defaultSpeaker;
           const engineTag = data.speech_metadata?.engine === 'google_chirp_legacy' || opts.engine === 'legacy'
@@ -470,8 +582,60 @@ class SpeechGateway {
     }
   }
 
-  /** Plays base64 audio through shared AudioContext for lip-sync. */
+  /** Plays multi-chunk synthesized audio gaplessly using Web Audio AudioBuffer scheduling. */
+  private async playMultiChunkAudio(chunks: string[], opts: SpeakOptions, sessionId: number): Promise<void> {
+    if (this.currentSessionId !== sessionId || chunks.length === 0) return;
+
+    try {
+      const ctx = sharedAudioManager.getAudioContext();
+      if (ctx.state === 'suspended') {
+        try { await ctx.resume(); } catch (_) {}
+      }
+      if (this.currentSessionId !== sessionId) return;
+
+      const decodePromises = chunks.map(async (b64) => {
+        const arr = base64ToArrayBuffer(b64);
+        const decoded = await ctx.decodeAudioData(arr);
+        const trimmed = trimAudioBufferSilence(ctx, decoded);
+        normalizeAudioBuffer(trimmed);
+        return trimmed;
+      });
+
+      const buffers = await Promise.all(decodePromises);
+      if (this.currentSessionId !== sessionId) return;
+
+      await this.playAudioBufferSequence(buffers, opts, sessionId);
+    } catch (err) {
+      console.warn('[VOICE GATEWAY] AudioBuffer decoding error, falling back to sequential audio element:', err);
+      if (chunks[0]) {
+        await this.playBase64Audio(chunks[0], opts, sessionId);
+      }
+    }
+  }
+
+  /** Plays base64 audio through Web Audio AudioBuffer or fallback Audio element. */
   private async playBase64Audio(base64Data: string, opts: SpeakOptions, sessionId: number): Promise<void> {
+    if (this.currentSessionId !== sessionId) return;
+
+    try {
+      const ctx = sharedAudioManager.getAudioContext();
+      if (ctx.state === 'suspended') {
+        try { await ctx.resume(); } catch (_) {}
+      }
+      if (this.currentSessionId !== sessionId) return;
+
+      const arr = base64ToArrayBuffer(base64Data);
+      const decoded = await ctx.decodeAudioData(arr);
+      const trimmed = trimAudioBufferSilence(ctx, decoded);
+      normalizeAudioBuffer(trimmed);
+
+      if (this.currentSessionId !== sessionId) return;
+      await this.playAudioBufferSequence([trimmed], opts, sessionId);
+      return;
+    } catch (_) {
+      // Graceful fallback to HTML5 Audio element if decodeAudioData fails
+    }
+
     if (this.currentSessionId !== sessionId) return;
 
     const isMp3 = base64Data.startsWith('//O') || base64Data.startsWith('SUQz') || base64Data.startsWith('/+M');
@@ -509,6 +673,78 @@ class SpeechGateway {
     }
   }
 
+  /** Gapless sequential playback of AudioBuffers scheduled on AudioContext.currentTime */
+  private async playAudioBufferSequence(
+    buffers: AudioBuffer[],
+    opts: SpeakOptions,
+    sessionId: number
+  ): Promise<void> {
+    if (this.currentSessionId !== sessionId || buffers.length === 0) return;
+
+    const ctx = sharedAudioManager.getAudioContext();
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch (_) {}
+    }
+
+    if (this.currentSessionId !== sessionId) return;
+
+    this.isSpeaking = true;
+    opts.onStart?.();
+
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.7;
+    analyser.connect(sharedAudioManager.getVoiceMasterGainNode());
+    this.analyserNode = analyser;
+
+    // Throttle analyser poller loop to <= 30 Hz (interval >= 33 ms)
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const poll = () => {
+      if (!this.isSpeaking || !this.analyserNode || this.currentSessionId !== sessionId) return;
+      const now = performance.now();
+      if (now - this.lastAnalyserPollTime >= 33) {
+        this.lastAnalyserPollTime = now;
+        this.analyserNode.getByteFrequencyData(dataArray);
+        const len = Math.min(80, dataArray.length);
+        let sumSq = 0;
+        for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
+        const rms = Math.sqrt(sumSq / len);
+        opts.onEnergy?.(Math.min(1.0, Math.max(0.0, rms * 2.2)));
+      }
+      this.analyserRAF = requestAnimationFrame(poll);
+    };
+    this.analyserRAF = requestAnimationFrame(poll);
+
+    // Schedule chunks gaplessly: start = max(now, nextStart)
+    const startLeadTime = 0.01;
+    this.nextScheduledStartTime = Math.max(ctx.currentTime + startLeadTime, this.nextScheduledStartTime);
+
+    for (let i = 0; i < buffers.length; i++) {
+      if (this.currentSessionId !== sessionId) return;
+      const buf = buffers[i];
+      const source = ctx.createBufferSource();
+      source.buffer = buf;
+      source.connect(analyser);
+
+      const scheduledStart = Math.max(ctx.currentTime + 0.005, this.nextScheduledStartTime);
+      source.start(scheduledStart);
+      this.nextScheduledStartTime = scheduledStart + buf.duration;
+      this.activeBufferSources.add(source);
+
+      const isLast = i === buffers.length - 1;
+      source.onended = () => {
+        this.activeBufferSources.delete(source);
+        if (isLast && this.currentSessionId === sessionId && this.activeBufferSources.size === 0) {
+          this.isSpeaking = false;
+          opts.onEnergy?.(0);
+          opts.onEnd?.();
+        }
+      };
+    }
+  }
+
   /** Connects HTML5 audio element to Web Audio analyser for VRM avatar visemes. */
   private setupAudioPlayback(audio: HTMLAudioElement, opts: SpeakOptions, sessionId: number): void {
     if (this.currentSessionId !== sessionId) return;
@@ -520,7 +756,6 @@ class SpeechGateway {
       if (ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
-      // If context is running, route to viseme analyser and voice master gain node
       if (ctx.state === 'running') {
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
@@ -534,12 +769,16 @@ class SpeechGateway {
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         const poll = () => {
           if (!this.isSpeaking || !this.analyserNode || this.currentSessionId !== sessionId) return;
-          this.analyserNode.getByteFrequencyData(dataArray);
-          const len = Math.min(80, dataArray.length);
-          let sumSq = 0;
-          for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
-          const rms = Math.sqrt(sumSq / len);
-          opts.onEnergy?.(Math.min(1.0, Math.max(0.0, rms * 2.2)));
+          const now = performance.now();
+          if (now - this.lastAnalyserPollTime >= 33) {
+            this.lastAnalyserPollTime = now;
+            this.analyserNode.getByteFrequencyData(dataArray);
+            const len = Math.min(80, dataArray.length);
+            let sumSq = 0;
+            for (let i = 0; i < len; i++) sumSq += (dataArray[i] / 255) ** 2;
+            const rms = Math.sqrt(sumSq / len);
+            opts.onEnergy?.(Math.min(1.0, Math.max(0.0, rms * 2.2)));
+          }
           this.analyserRAF = requestAnimationFrame(poll);
         };
         this.analyserRAF = requestAnimationFrame(poll);

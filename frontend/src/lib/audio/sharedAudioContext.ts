@@ -70,14 +70,19 @@ class SharedAudioManager {
   }
 
   /**
-   * Lazily initializes and returns the single shared AudioContext.
+   * Lazily initializes and returns the single shared AudioContext at fixed 24000 Hz sample rate.
    */
   public getAudioContext(): AudioContext {
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
       const AudioCtxClass =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioCtx = new AudioCtxClass();
+      try {
+        // Fix for Part D: Request fixed sample rate 24000 Hz to match Sarvam Bulbul v3
+        this.audioCtx = new AudioCtxClass({ sampleRate: 24000 });
+      } catch (_) {
+        this.audioCtx = new AudioCtxClass();
+      }
       this.buildAudioGraph();
     }
     if (this.audioCtx.state === 'suspended') {

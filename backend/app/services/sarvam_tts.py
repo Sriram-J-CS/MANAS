@@ -56,36 +56,120 @@ def get_sarvam_cache_key(text: str, speaker: str, lang: str, gender: str = "girl
     raw = f"{text.strip()}:{lang.strip().lower()}:{clean_gender}:{speaker.strip().lower()}:{clean_pace}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-def strip_markdown_and_normalize(text: str) -> str:
+def normalize_text_for_speech(text: str, lang_code: str = "en") -> str:
     """
-    Removes markdown symbols, emojis, and normalizes punctuation for clean, continuous acoustic prosody.
-    Eliminates awkward long gaps at '.' and ',' by regularizing spacing and collapsing redundant punctuation.
+    Pre-process text for natural TTS prosody (Part D4):
+    - Normalizes numbers, dates, units, and abbreviations.
+    - Strips markdown and emojis.
+    - Preserves native Indic script.
+    - Inserts natural acoustic pauses at commas and sentence boundaries.
     """
     if not text:
         return ""
-    # Strip markdown bold, italics, headers, links, code backticks
-    clean = re.sub(r"[*_~`#\[\]\(\)<>]|https?://\S+", " ", text)
-    # Strip emojis and pictographs
+
+    clean = text
+
+    # 1. Expand common abbreviations and units
+    lang_short = (lang_code or "en").split("-")[0].lower()
+    if lang_short == "en":
+        abbreviations = [
+            (r"\bDr\.\s*", "Doctor "),
+            (r"\bMr\.\s*", "Mister "),
+            (r"\bMrs\.\s*", "Missus "),
+            (r"\bMs\.\s*", "Miss "),
+            (r"\b(\d+)\s*mins?\b", r"\1 minutes"),
+            (r"\b(\d+)\s*hrs?\b", r"\1 hours"),
+            (r"\b(\d+)\s*secs?\b", r"\1 seconds"),
+            (r"\b(\d+)\s*km\b", r"\1 kilometers"),
+            (r"\b(\d+)\s*kg\b", r"\1 kilograms"),
+            (r"%", " percent "),
+            (r"&", " and "),
+            (r"\b1st\b", "first"),
+            (r"\b2nd\b", "second"),
+            (r"\b3rd\b", "third"),
+        ]
+        for pattern, repl in abbreviations:
+            clean = re.sub(pattern, repl, clean, flags=re.IGNORECASE)
+    elif lang_short == "hi":
+        abbreviations = [
+            (r"\b(\d+)\s*mins?\b", r"\1 मिनट"),
+            (r"\b(\d+)\s*hrs?\b", r"\1 घंटे"),
+            (r"\b(\d+)\s*secs?\b", r"\1 सेकंड"),
+            (r"%", " प्रतिशत "),
+        ]
+        for pattern, repl in abbreviations:
+            clean = re.sub(pattern, repl, clean, flags=re.IGNORECASE)
+    elif lang_short == "ta":
+        abbreviations = [
+            (r"\b(\d+)\s*mins?\b", r"\1 நிமிடங்கள்"),
+            (r"\b(\d+)\s*hrs?\b", r"\1 மணிநேரம்"),
+            (r"%", " சதவீதம் "),
+        ]
+        for pattern, repl in abbreviations:
+            clean = re.sub(pattern, repl, clean, flags=re.IGNORECASE)
+
+    # 2. Strip markdown bold, italics, headers, links, code backticks
+    clean = re.sub(r"[*_~`#\[\]\(\)<>]|https?://\S+", " ", clean)
+
+    # 3. Strip emojis and pictographs
     clean = re.sub(r"[\U00010000-\U0010ffff]|[\u200d\uFE0F\u2060\u200B]|[\u2600-\u27BF]|[\uD83C-\uDBFF\uDC00-\uDFFF]", "", clean)
 
-    # Normalize multiple ellipses (...) and double periods (..) to a single clean period
+    # 4. Normalize multiple punctuation to clean pause marks
     clean = re.sub(r"\.{2,}", ".", clean)
-    # Normalize multiple commas
     clean = re.sub(r",+", ",", clean)
-    # Normalize mixed punctuation like ',.' or '.,' or ';,'
     clean = re.sub(r"[,;]+\.", ".", clean)
     clean = re.sub(r"\.[,;]+", ".", clean)
 
-    # Strip space BEFORE punctuation (e.g. 'word , word' -> 'word, word')
+    # 5. Natural spacing around commas and sentence ends
     clean = re.sub(r"\s+([,.!?|।])", r"\1", clean)
-
-    # Ensure single clean space AFTER punctuation (e.g. 'word,word' -> 'word, word')
     clean = re.sub(r"([,.!?|।])(?=[^\s\d])", r"\1 ", clean)
 
-    # Replace linebreaks with a single space so sentences flow continuously
+    # 6. Replace multiple linebreaks with single space
     clean = re.sub(r"\s*\n+\s*", " ", clean)
 
     return re.sub(r"\s+", " ", clean).strip()
+
+def strip_markdown_and_normalize(text: str) -> str:
+    """Legacy compatibility wrapper."""
+    return normalize_text_for_speech(text, "en")
+
+def combine_wav_chunks(wav_b64_list: List[str]) -> Optional[str]:
+    """
+    Seamlessly concatenates multiple base64-encoded WAV chunks into a single valid WAV stream
+    by combining the underlying PCM audio frames under a single RIFF header.
+    """
+    if not wav_b64_list:
+        return None
+    if len(wav_b64_list) == 1:
+        return wav_b64_list[0]
+
+    try:
+        import io
+        import wave
+        first_bytes = base64.b64decode(wav_b64_list[0])
+        if first_bytes.startswith(b"RIFF"):
+            with wave.open(io.BytesIO(first_bytes), "rb") as w_in:
+                params = w_in.getparams()
+                frames = [w_in.readframes(w_in.getnframes())]
+
+            for subsequent in wav_b64_list[1:]:
+                sub_bytes = base64.b64decode(subsequent)
+                try:
+                    with wave.open(io.BytesIO(sub_bytes), "rb") as w_sub:
+                        frames.append(w_sub.readframes(w_sub.getnframes()))
+                except Exception:
+                    pass
+
+            out_buf = io.BytesIO()
+            with wave.open(out_buf, "wb") as w_out:
+                w_out.setparams(params)
+                for f in frames:
+                    w_out.writeframes(f)
+            return base64.b64encode(out_buf.getvalue()).decode("ascii")
+    except Exception as e:
+        logger.warning("[COMBINE WAV] Error combining WAV chunks: %s", e)
+
+    return wav_b64_list[0]
 
 def split_text_into_chunks(text: str, max_chars: int = 2000) -> List[str]:
     """
@@ -403,16 +487,7 @@ async def sarvamTts(
             audios.append(audio_b64)
 
     # Concatenate all synthesized segments into one seamless, continuous audio stream
-    primary_audio = None
-    if audios:
-        if len(audios) == 1:
-            primary_audio = audios[0]
-        else:
-            try:
-                combined_bytes = b"".join(base64.b64decode(a) for a in audios)
-                primary_audio = base64.b64encode(combined_bytes).decode("ascii")
-            except Exception:
-                primary_audio = audios[0]
+    primary_audio = combine_wav_chunks(audios) if audios else None
 
     return {
         "audio_base64": primary_audio,
